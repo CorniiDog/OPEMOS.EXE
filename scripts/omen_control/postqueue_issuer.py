@@ -135,6 +135,13 @@ class NativeIssueOps:
   self.assignment_intake_diagnostics=metrics
   # No success-summary callback or report IO is part of intake.
   return result
+ def check_prepared_disks(self,c,disks):
+  # The retained immutable working role has an authenticated VM UID owner;
+  # use its existing current custody/ACL/kernel-mount reader, never relax Held.
+  from libvirt_access import held_disk
+  for key in('original','working'):
+   with held_disk(c,key,disks[key])as h:p.need(h.check()==disks[key]['identity'],'same held original/working post-ACL capture identity')
+
  def observe(self,parent,parent_ref,request,value,evidence,g):
   c=parent['candidate'];before=set(os.listdir('/proc/self/fd'));old=protected(parent['prequeuePreflightPin']);now=self.now()
   p.need(parent['sudoPin']is not None and parent['nativeTools']is not None,'actual sudo/native tool operands before grant')
@@ -147,9 +154,7 @@ class NativeIssueOps:
   p.need(old['queuePrograms']==parent['queuePrograms']and old.get('abi')==pre.MACHINE_PREFLIGHT_ABI and old['privateHistory']['rawSHA256']==parent['priorHistory']['sha256'],'original prequeue proof/current prior history/machine preflight source')
   for ref in parent['queuePrograms']:pre.measured(ref,1048576,False)
   for ref in parent['sourceRoles'].values():pre.measured(ref,65536)
-  from libvirt_access import Held
-  for key in('original','working'):
-   with Held(parent['preparedDiskPins'][key]['path'])as h:p.need(h.check()==parent['preparedDiskPins'][key]['identity'],'same held original/working post-ACL capture identity')
+  self.check_prepared_disks(c,parent['preparedDiskPins'])
   from libvirt_access import verify_prepared
   verify_prepared(c,parent['preparedAccessPin'],parent['preparedDiskPins'])
   queue=load(parent['queuePrograms'][0],'postqueue_pool_queue',1048576)

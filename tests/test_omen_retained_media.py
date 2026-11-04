@@ -646,6 +646,9 @@ except peer.Refused as error:
                             adapter.verify_inputs(dict(request,currentControl=control),wrong_inputs,boot,include_context=False)
                 with adapter.load_pair(accepted)as(current_peer,current_access):
                     import postqueue_issuer as issuer
+                    issuer.NativeIssueOps(parent,str(runtime)).check_prepared_disks(c,disks)
+                    wrong_disks=copy.deepcopy(disks);wrong_disks['working']['identity']['st_uid']=1000
+                    with self.assertRaises(RuntimeError):issuer.NativeIssueOps(parent,str(runtime)).check_prepared_disks(c,wrong_disks)
                     current_peer.SOURCE_PLACEMENT_PIN=None
                     issuer.bind_placement(current_peer,parent,parent_ref)
                     entry=types.ModuleType('actual_installed_entry');entry.__file__=roles['runtime_entry']['path']

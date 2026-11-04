@@ -5291,3 +5291,20 @@ R121 publication: normal receive-pack returned server500 three times with ref ab
   Existing actual namespace/ACL/UID/issuer/submission/finalqueue tests retained.
   Current automatic CI + exact Core source/caller/effects review before changed
   deployment or fresh run. Existing EXE sole implementation/runtime owner.
+
+- Actual approvedb656/fresh5e828 submitted genuine job, scope binding passed,
+  real kernel-FLOCK worker/assignment intake1.627s within original30s (archive
+  afterguard/read/closure intact). Root observer then generic Held rejected
+  retained working.raw owner64055/993. Canonical failed/CLOSED/released
+  finished1793829145.9434755, NOT_PREPARED/no lease/leader/domain; RootFIRST and
+  real logger preserve first. No rearm/replay/forcedSQL/source or ACL changes.
+- NativeIssueOps.observe now calls its check_prepared_disks method, which uses
+  EXISTING libvirt_access.held_disk(candidate,role,pin): ordinary original stays
+  strictRoot; adopted working requires existing protected current media custody,
+  exact UID/GID/full9/ACL/readonly kernelmount/source proof. No generic Held
+  weakening, arbitrary owner acceptance or new media reader/cache/framework.
+  SAME installed-entry fixture invokes actual NativeIssueOps method with real
+  Root files and wrong-pin refusal/FD closure; genuine retained F9AA positive
+  remains actual next run (tiny fixture media/native facts explicitly modeled,
+  never fabricated content or grant). All current Root/fullconsumer tests and
+  exact Core source/caller/effects review before changed deployment/freshrun.
