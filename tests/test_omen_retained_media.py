@@ -60,7 +60,7 @@ def operand():
 
 class RetainedMediaContract(unittest.TestCase):
     def test_attempt_bound_placement_preserves_failed_namespace(self):
-        c = {'nonce': 'a' * 32, 'run': '/run/opemos-libvirt-io-' + 'a' * 32 + '-' + 'b' * 32 + '/run',
+        c = {'nonce': 'a' * 32, 'jobId': 'fixture-e' + 'b' * 16, 'run': '/run/opemos-libvirt-io-' + 'a' * 32 + '-' + 'b' * 32 + '/run',
              'output': '/run/opemos-libvirt-io-' + 'a' * 32 + '-' + 'b' * 32 + '/output'}
         self.assertEqual(str(media.placement_root(c)), '/run/opemos-steamos-placement-' + 'a' * 32 + '-' + 'b' * 32)
         for bad in ('/run/foreign/run', c['run'] + '/../run'):
@@ -252,8 +252,9 @@ class RetainedMediaContract(unittest.TestCase):
         public_parent=Path('/run/opemos-libvirt-parent-cd9ef0826364409da287f6f3e3830c95.json')
         if os.path.lexists(public_parent): self.skipTest('existing public owner preserved')
         parent_identity=None
-        fixture=Path('/run/opemos-connected-fixture-'+token)
-        placement=Path('/run/opemos-steamos-placement-cd9ef0826364409da287f6f3e3830c95')
+        fixture=Path('/run/opemos-libvirt-io-cd9ef0826364409da287f6f3e3830c95-'+token)
+        placement=media.placement_root({'nonce':'cd9ef0826364409da287f6f3e3830c95',
+            'jobId':'fixture-fresh-job-e'+token[:16], 'run':str(fixture/'run'),'output':str(fixture/'output')})
         runtime=Path('/run/opemos-libvirt-runtime-cd9ef0826364409da287f6f3e3830c95')
         for path in (fixture,placement,runtime):
             if os.path.lexists(path):self.skipTest('existing connected fixture owner preserved')
@@ -308,7 +309,7 @@ class RetainedMediaContract(unittest.TestCase):
             observer={k:roles['libvirt_peer'][k]for k in ('path','bytes','sha256')}
             domain={'leaseNonce':nonce,'name':'opemos-libvirt-'+nonce,
                     'uuid':'64f43b0c-9a98-494d-adc1-0782aea1d32e','observer':observer}
-            spec={'id':'fixture-fresh-job','platform':'steamos','owner':'root','cwd':'/run',
+            spec={'id':'fixture-fresh-job-e'+token[:16],'platform':'steamos','owner':'root','cwd':'/run',
                   'files':[{k:roles[n][k]for k in ('path','bytes','sha256')}for n in sorted(roles)],
                   'cores':4,'memory':10737418240,'timeout_seconds':900,'depends_on':[],'requires_success':True,
                   'resources':['omen-iommu-group-1'],'libvirt_domain':domain,
@@ -399,12 +400,20 @@ class RetainedMediaContract(unittest.TestCase):
                     self.assertEqual(entry.validate_context_sources({'sourceRoles':roles}),roles)
                     entry.bind_placement(current_peer,parent,parent_ref)
                     issuer.submission_manifest(parent,parent_ref,'/run')
-                    for fault in ('missing','foreign','original-current'):
+                    for fault in ('missing','foreign','original-current','wrong-attempt','wrong-job','old-path'):
                         bad=copy.deepcopy(parent)
                         if fault=='missing':bad['sourceRoles'].pop('libvirt_storage')
                         elif fault=='foreign':bad['sourceRoles']['foreign']=bad['sourceRoles']['libvirt_storage']
-                        else:bad['sourceRoles']['libvirt_peer']['sha256']=adapter.ORIGINAL_PEER_SHA
+                        elif fault=='original-current':bad['sourceRoles']['libvirt_peer']['sha256']=adapter.ORIGINAL_PEER_SHA
+                        elif fault=='wrong-attempt':
+                            bad['candidate']['run']=c['run'].replace(token,'f'*32)
+                            bad['candidate']['output']=c['output'].replace(token,'f'*32)
+                        elif fault=='wrong-job':bad['candidate']['jobId']='foreign-job'
+                        else:
+                            bad['sourcePlacementPin']['path']='/run/opemos-steamos-placement-'+nonce+'/storage-contract.json'
+                            bad['placementQualificationPin']['path']='/run/opemos-steamos-placement-'+nonce+'/placement-qualified.json'
                         with self.assertRaises(Exception):issuer.bind_placement(current_peer,bad,parent_ref)
+                        with self.assertRaises(Exception):entry.bind_placement(current_peer,bad,parent_ref)
                 queue_spec=importlib.util.spec_from_file_location('actual_connected_queue',SOURCE/'test_queue.py')
                 queue=importlib.util.module_from_spec(queue_spec);sys.modules[queue_spec.name]=queue
                 try:

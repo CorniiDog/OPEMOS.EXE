@@ -14,6 +14,13 @@ SOURCE_ROOT='/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r122'
 ACCESS_SHA='43afe945afde15f62a0733cb1dfde430a075b3521c35e4027174264cd6a156de';ACCESS_BYTES=35714
 ORIGINAL_ACCESS_SHA='ee32a4e84df796d6932062ded9e1049ce5e82cbbf01315d8c74da96b9e03aa9e';ORIGINAL_ACCESS_BYTES=33928
 ROLES={'libvirt_peer','libvirt_access','libvirt_native','libvirt_preflight','libvirt_producer','queue_assignment','runtime_entry','guest_delta','guest_firmware_probe','held_history_reader','two_boot_contract','postqueue_issuer','libvirt_storage','retained_media','source_contract'}
+def placement_root(candidate):
+ nonce=candidate['nonce'];need(nonce==NONCE,'same placement nonce')
+ io=Path(candidate['run']).parent;prefix='opemos-libvirt-io-'+nonce+'-'
+ if candidate.get('installer',{}).get('kind')=='AUTHENTICATED_RETAINED_F9AA_READONLY_USB' or io.name.startswith(prefix):
+  need(io.parent==Path('/run')and re.fullmatch(re.escape(prefix)+'[0-9a-f]{32}',io.name)and Path(candidate['run'])==io/'run'and Path(candidate['output'])==io/'output'and type(candidate.get('jobId'))is str and candidate['jobId'].endswith('-e'+io.name[len(prefix):][:16]),'protected same attempt IO/job placement')
+  return '/run/opemos-steamos-placement-'+nonce+'-'+io.name[len(prefix):]
+ return '/run/opemos-steamos-placement-'+nonce
 def canonical(v):return json.dumps(v,sort_keys=True,separators=(',',':'),allow_nan=False)
 def need(v,m):
  if not v:raise RuntimeError(m)
@@ -78,7 +85,7 @@ class RootInputs:
    need(stat.S_ISDIR(x['st_mode'])and x['st_uid']==x['st_gid']==0,'Root directory nofollow custody')
    need(stat.S_IMODE(x['st_mode'])in((0o755,0o777)if path=='/'else(0o755,)if path=='/run'else(0o555,)if path==SOURCE_ROOT else(0o755,)if path.startswith('/run/opemos-steamos-source-')else(0o700,)),'exact role-specific directory mode')
  def directory(self,path):
-  allowed={SOURCE_ROOT,ORIGINAL_SOURCE_ROOT,'/run/opemos-libvirt-runtime-'+NONCE,'/run/opemos-steamos-placement-'+NONCE}
+  allowed={SOURCE_ROOT,ORIGINAL_SOURCE_ROOT,'/run/opemos-libvirt-runtime-'+NONCE,getattr(self,'placementRoot','/run/opemos-steamos-placement-'+NONCE)}
   need(path in allowed,'declared finite source/context/placement root only')
   if path not in self.dirs:
    fd=os.open(Path(path).name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=self.run);self.fds.append(fd);self.dirs[path]=(fd,ident(os.fstat(fd)),True)
@@ -126,7 +133,7 @@ class RootInputs:
   except BaseException as error:error.placementCustody=value;raise
  @contextlib.contextmanager
  def hold_placement(self,ref):
-  root='/run/opemos-steamos-placement-'+NONCE;need(ref['path']in(root+'/storage-contract.json',root+'/placement-qualified.json'),'two exact placement metadata leaves only');i=ref['identity'];need(set(ref)=={'path','bytes','sha256','identity'}and 0<ref['bytes']<=1048576 and stat.S_ISREG(i['st_mode'])and stat.S_IMODE(i['st_mode'])==0o400 and i['st_uid']==i['st_gid']==0 and i['st_nlink']==1 and i['st_size']==ref['bytes'],'exact Root0400 placement full pin/custody')
+  root=getattr(self,'placementRoot','/run/opemos-steamos-placement-'+NONCE);need(ref['path']in(root+'/storage-contract.json',root+'/placement-qualified.json'),'two exact placement metadata leaves only');i=ref['identity'];need(set(ref)=={'path','bytes','sha256','identity'}and 0<ref['bytes']<=1048576 and stat.S_ISREG(i['st_mode'])and stat.S_IMODE(i['st_mode'])==0o400 and i['st_uid']==i['st_gid']==0 and i['st_nlink']==1 and i['st_size']==ref['bytes'],'exact Root0400 placement full pin/custody')
   parentfd=self.directory(root);fd=os.open(Path(ref['path']).name,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=parentfd)
   try:
    original=self.placement_bytes(fd,parentfd,ref);self.check()
@@ -191,6 +198,7 @@ def verify_inputs(request,io,boot,include_context=True):
   need(assignment['kind']=='ROOT_CANONICAL_QUEUE_LIBVIRT_ASSIGNMENT_R4'and assignment['request']==request and grant['assignmentPin']==assignmentRef and grant['parentPin']==parentRef and grant['normalizedSpecSHA256']==request['specSHA256'],'canonical assignment and child grant exact request/spec/parent')
   need(grant['queuePrograms']==parent['queuePrograms']and grant['sourcePlacementPin']==context['sourcePlacementPin']==parent['sourcePlacementPin']and grant['placementQualificationPin']==context['placementQualificationPin']==parent['placementQualificationPin'],'current queue authority and placement pins across child/context/parent')
   need(grant['RootIssued']is True and grant['MODEL_ONLY']is False and grant['runtimeAuthorized']is True and grant['jobId']==request['jobId']and grant['leaseNonce']==NONCE and grant['bootID']==boot and parent['issuedUnix']<=grant['issuedUnix']<grant['startBeforeUnix']<=parent['startBeforeUnix']and grant['wholeDeadlineUnix']<=parent['wholeDeadlineUnix'],'existing finite Root child only, no new runtime grant')
+ io.placementRoot=placement_root(parent['candidate'])
  return {'implementationAccessRaw':accessRaw,'implementationAccessPin':accessRef,'implementationPeerRaw':implRaw,'implementationPeerPin':implRef,'originalInputOnly':original,'parent':parent,'parentPin':parentRef,'parentRaw':parentRaw,'context':context,'contextPin':contextRef,'contextRaw':contextRaw,'source':source,'assignmentPin':assignmentRef,'assignmentRaw':None if assignment is None else canonical(assignment).encode(),'grantPin':grantRef,'grantRaw':None if grant is None else canonical(grant).encode()}
 
 def _bind_placement(peer,parent,parent_ref,context,verify_access):
@@ -203,7 +211,7 @@ def _bind_placement(peer,parent,parent_ref,context,verify_access):
  __import__('source_contract').validate(roles,parent['queuePrograms'],parent['installedSourceContractPin'])
  peer.need((roles['libvirt_peer']['sha256'],roles['libvirt_peer']['bytes'])in((PEER_SHA,PEER_BYTES),(ORIGINAL_PEER_SHA,ORIGINAL_PEER_BYTES))and (roles['libvirt_access']['sha256'],roles['libvirt_access']['bytes'])in((ACCESS_SHA,ACCESS_BYTES),(ORIGINAL_ACCESS_SHA,ORIGINAL_ACCESS_BYTES)),'frozen exact D23 peer and unchanged access bytes')
  for name,ref in roles.items():peer.need(ref['path']==str(Path(roles['libvirt_peer']['path']).parent/(name+'.py'))and str(Path(roles['libvirt_peer']['path']).parent)in(SOURCE_ROOT,ORIGINAL_SOURCE_ROOT)and ref['identity']['st_uid']==ref['identity']['st_gid']==0 and stat.S_IMODE(ref['identity']['st_mode'])==0o444 and ref['identity']['st_nlink']==1,'same immutable Root source12 namespace')
- ref=parent['sourcePlacementPin'];qr=parent['placementQualificationPin'];root='/run/opemos-steamos-placement-'+nonce
+ ref=parent['sourcePlacementPin'];qr=parent['placementQualificationPin'];root=placement_root(candidate)
  peer.need(ref['path']==root+'/storage-contract.json'and qr['path']==root+'/placement-qualified.json','fresh exact placement+qualification names, no historical receipt')
  files=peer.RootFiles(root);primary=None;result=None
  try:

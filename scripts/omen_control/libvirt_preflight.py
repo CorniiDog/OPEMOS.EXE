@@ -12,7 +12,7 @@ import libvirt_peer as p
 from libvirt_native import held
 from libvirt_access import Held,hashfd
 
-QUEUE_SHA='9e4fd1435cf86bfb7781b4c2b759c1555e47162eef31b26ee553d5bb5f2a9f44'
+QUEUE_SHA='87774cd3f04c161cea085a0adfd0e2132e8886b0a3e47dff2b3f0f8abe2221f8'
 CONTROL_QUEUE_SHA='16177e18b25de4b5b4a45849f5eddb7f7b58527f7d3425d48849927d5843103e'
 HISTORY_SHA='03f36772612aabffdbe6be6b76f4353402797fd9e17d4896ced3739de7b6f1c3'
 
@@ -258,7 +258,7 @@ def storage_for_preflight_phase(c,e,stage_only):
  # Readonly first phase consumes the existing authentic raw placement seed,
  # not the final source/ACL qualification that it is about to enable.
  p.need(p.SOURCE_PLACEMENT_PIN is None,'access-stage cannot replace/replay an existing final placement binding')
- ref=e['placementSeedPin'];root='/run/opemos-steamos-placement-'+c['nonce'];p.need(str(Path(ref['path']).parent)==root and ref['identity']['st_uid']==ref['identity']['st_gid']==0 and stat.S_IMODE(ref['identity']['st_mode'])==0o400,'exact current protected original placement seed')
+ ref=e['placementSeedPin'];root=str(__import__('retained_media').placement_for_candidate(c));p.need(str(Path(ref['path']).parent)==root and ref['identity']['st_uid']==ref['identity']['st_gid']==0 and stat.S_IMODE(ref['identity']['st_mode'])==0o400,'exact current protected original placement seed')
  with p.RootFiles(root)as files:
   raw,actual=files.read(Path(ref['path']).name);p.need(actual==ref,'seed full9/raw-SHA/name at stage use')
  seed=json.loads(raw);p.need(seed['kind']=='ROOT_EXACT_STEAMOS_INSTALLER_GAMES_PLACEMENT'and seed['nonce']==c['nonce']and seed['boot']==c['hostBoot']and seed['original']==c['original']and seed['working']==c['working']and seed['installer']==c['installer']and 'preparationBinding'not in seed,'genuine pre-ACL seed, no final/preparation receipt relabel')

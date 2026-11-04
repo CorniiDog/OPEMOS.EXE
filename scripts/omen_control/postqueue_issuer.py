@@ -178,7 +178,7 @@ def bind_placement(peer,parent,parent_ref,context=None):
  peer.need(parent['RootIssued']is True and parent['kind']=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'and parent['bootID']==candidate['hostBoot']and parent_ref['path']=='/run/opemos-libvirt-parent-'+nonce+'.json','existing exact Root parent/boot/source scope')
  peer.need(set(roles)==__import__('source_contract').RUNTIME_ROLES,'closed twelve-role binding')
  __import__('source_contract').validate(roles,parent['queuePrograms'],parent['installedSourceContractPin'])
- ref=parent['sourcePlacementPin'];qr=parent['placementQualificationPin'];root='/run/opemos-steamos-placement-'+nonce
+ ref=parent['sourcePlacementPin'];qr=parent['placementQualificationPin'];root=str(__import__('retained_media').placement_for_candidate(candidate))
  peer.need(ref['path']==root+'/storage-contract.json'and qr['path']==root+'/placement-qualified.json','fresh exact placement+qualification names, no historical receipt')
  files=peer.RootFiles(root);primary=None;result=None
  try:

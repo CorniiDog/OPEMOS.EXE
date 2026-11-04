@@ -393,6 +393,15 @@ def placement_root(c):
     io = Path(c['run']).parent
     prefix = 'opemos-libvirt-io-' + c['nonce'] + '-'
     need(io.parent == Path('/run') and re.fullmatch(re.escape(prefix) + '[0-9a-f]{32}', io.name)
-         and Path(c['run']) == io / 'run' and Path(c['output']) == io / 'output',
-         'same typed attempt IO and placement identity')
+         and Path(c['run']) == io / 'run' and Path(c['output']) == io / 'output'
+         and type(c.get('jobId')) is str and c['jobId'].endswith('-e' + io.name[len(prefix):][:16]),
+         'same typed attempt IO/job and placement identity')
     return Path('/run/opemos-steamos-placement-' + c['nonce'] + '-' + io.name[len(prefix):])
+
+
+def placement_for_candidate(c):
+    """Current retained/attempt IO is strict; original raw-copy lineage stays exact."""
+    prefix = 'opemos-libvirt-io-' + c['nonce'] + '-'
+    if is_adopted(c) or Path(c['run']).parent.name.startswith(prefix):
+        return placement_root(c)
+    return Path('/run/opemos-steamos-placement-' + c['nonce'])
