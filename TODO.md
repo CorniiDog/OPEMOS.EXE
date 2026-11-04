@@ -5261,3 +5261,12 @@ R121 publication: normal receive-pack returned server500 three times with ref ab
   UID fixture also invokes actual final queue ancestor consumer with owner/mode
   refusals and FD closure. Complete installed normal observer is still the CI
   acceptance path, not a helper-only success. Same data/device/queue/GPU guards.
+
+- Core a638 source review found remaining actual Run.prepare load_queue(ref)
+  caller not passing the V2 source context. Fix that actual caller through one
+  load_current_queue(candidate, actual protected profile) function, exercised in
+  SAME installed-entry fixture plus wrong queue/source refusals. Current generic
+  queue namespaces now explicitly refuse source=None legacy fallback. Original
+  contextless historical paths retain their exact old source check. No per-run
+  executable generation, static current nonce/root allowlist or source waiver.
+  This joins the preceding final-stage schema consumer fix before any deployment.

@@ -38,6 +38,17 @@ import source_contract
 
 
 
+
+def load_current_queue(c,profile):
+    """The actual normal caller supplies its authenticated installed definition."""
+    import queue_assignment
+    p.need('operationContext' in c, 'current media queue requires current operation context')
+    source = {'candidate':c,'sourceRoles':profile['sourceRoles'],
+              'queuePrograms':profile['queuePrograms'],
+              'installedSourceContractPin':profile['installedSourceContractPin']}
+    return queue_assignment.load_queue(profile['queuePrograms'][0],source)
+
+
 def create_io_namespace(c):
     """Owned grouping directory permits traversal, never listing or writes.
 
@@ -312,7 +323,7 @@ class Run:
     def prepare(self):
         values, history, private = self.private_queue()
         p.need(all(r['id'] != self.c['jobId'] for r in values['rows']), 'never rearm or replay an existing job')
-        queue = __import__('queue_assignment').load_queue(self.profile['queuePrograms'][0])
+        queue = load_current_queue(self.c,self.profile)
         leases = [p.historical_lease_provenance(str(x), values['rows'], values['bindings'], queue, self.boot)
                   for x in sorted(Path('/run').glob('opemos-vfio-*'))]
         p.verify_historical_lease_set(leases, values['rows'], values['bindings'], queue, self.boot)

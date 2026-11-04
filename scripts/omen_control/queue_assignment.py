@@ -69,6 +69,7 @@ def from_values(value,prior,c,g,queue,parent=None):
  return request,{'ownRowSHA256':hashlib.sha256(p.canon(row)).hexdigest(),'ownBindingSHA256':hashlib.sha256(bindings[row['id']].encode()).hexdigest(),'priorRawSHA256':g['priorHistorySHA256'],'priorCounts':counts,'currentRawSHA256':hashlib.sha256(p.canon(value)).hexdigest(),'currentCounts':{k:len(v)for k,v in value.items()}}
 
 def load_queue(ref,source=None):
+ if source is None:p.need(not __import__('pathlib').Path(ref['path']).parent.name.startswith('opemos-media-queue-'),'current media queue requires authenticated definition, no legacy fallback')
  expected=QUEUE_SHA
  if source is not None:
   p.need(ref==source['queuePrograms'][0],'same exact queue member from parent/expectation');expected=__import__('libvirt_preflight').paired_queue_sha(source)

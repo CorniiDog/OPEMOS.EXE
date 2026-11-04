@@ -543,6 +543,14 @@ class RetainedMediaContract(unittest.TestCase):
                'original':original,'working':working,'run':str(fixture/'run'),'output':str(fixture/'output'),
                'installer':{'kind':'AUTHENTICATED_F9AA_RAW_RECOVERY_USB_FIRSTBOOT','noInstallTarget':True},
                'operationContext':{'deploymentId':deployment_id,'attempt':attempt,'paths':paths},'lineageNonce':guest_nonce}
+            profile=normal_entry.protected(installed['operationProfilePin'],0o444)
+            loaded=normal_entry.load_current_queue(c,profile)
+            self.assertEqual(loaded.__file__,installed['queuePrograms'][0]['path'])
+            for key in ('queue','source'):
+                wrong=copy.deepcopy(profile)
+                if key=='queue':wrong['queuePrograms'][0]['sha256']='0'*64
+                else:wrong['sourceRoles']['libvirt_access']['sha256']='0'*64
+                with self.assertRaises(RuntimeError):normal_entry.load_current_queue(c,wrong)
             def save(label,value):return installer.put(fixture/(label+'.json'),installer.canon(value),0o400)
             rows=[];after=[]
             leaves=[(fixture/'media','working-parent'),(fixture/'media/working.raw','working'),
