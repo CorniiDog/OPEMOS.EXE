@@ -85,3 +85,10 @@ installation must bind all unchanged counterparts and the actual merged changed
 bodies in one coherent current source graph; merely importing this helper is not
 an installed or executed launcher. Deployment and real first-init/cleanup remain
 unverified until exact Core source/caller/effects approval and native receipts.
+
+Actual OMEN modprobe is a symlink to kmod; kmod does not accept a `modprobe`
+subcommand. Installation therefore makes one stable Root-owned executable copy
+of the measured existing `/usr/bin/kmod` at
+`/var/lib/opemos-vfio-idle-d3/modprobe`, retaining its recognized multicall name.
+The exact whole body and original system binary provenance are pinned before
+use; no candidate executable or changed tool interpreter is substituted.

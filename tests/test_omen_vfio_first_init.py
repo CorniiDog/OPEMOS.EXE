@@ -9,7 +9,7 @@ V=importlib.util.module_from_spec(SPEC);SPEC.loader.exec_module(V)
 class FirstInitializationTests(unittest.TestCase):
     def test_unloaded_driver_and_core_use_existing_first_initialization(self):
         self.assertEqual(V.initial_plan({'vfio_pci':False,'vfio_pci_core':False}),
-            ['/usr/sbin/modprobe','--ignore-install','--first-time','vfio-pci','disable_idle_d3=1'])
+            ['/var/lib/opemos-vfio-idle-d3/modprobe','--ignore-install','--first-time','vfio-pci','disable_idle_d3=1'])
     def test_loaded_or_unknown_option_lifetime_never_reloads(self):
         for state in ({'vfio_pci':True,'vfio_pci_core':True},
                       {'vfio_pci':False,'vfio_pci_core':True},

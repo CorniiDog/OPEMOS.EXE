@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 MODULES=('vfio_pci','vfio_pci_core')
-TOOL='/usr/sbin/modprobe'
+TOOL='/var/lib/opemos-vfio-idle-d3/modprobe'
 
 def cached():
     """Cached power attributes only; never PCI config, link or nvidia-smi."""
