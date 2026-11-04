@@ -614,6 +614,11 @@ class RetainedMediaContract(unittest.TestCase):
                     self.assertEqual(entry.validate_context_sources({'sourceRoles':roles}),roles)
                     entry.bind_placement(current_peer,parent,parent_ref)
                     issuer.submission_manifest(parent,parent_ref,'/run')
+                    for key in ('queue','source'):
+                        wrong=copy.deepcopy(parent)
+                        if key=='queue':wrong['queuePrograms'][0]['sha256']='0'*64
+                        else:wrong['sourceRoles']['libvirt_access']['sha256']='0'*64
+                        with self.assertRaises(Exception):issuer.submission_manifest(wrong,parent_ref,'/run')
                     # SAME real storage declaration boundary -> strict production walker.
                     # Device/media geometry is still an explicit model in this connected case.
                     storage_module=sys.modules['libvirt_storage']
@@ -889,7 +894,7 @@ class RetainedMediaContract(unittest.TestCase):
                              (SOURCE / 'standalone_peer_access_adapter.py').read_text())
             import libvirt_preflight as preflight
             import queue_assignment as assignment
-            self.assertEqual(preflight.QUEUE_SHA,hashlib.sha256((SOURCE/'test_queue.py').read_bytes()).hexdigest())
+            self.assertEqual(preflight.CONTROL_QUEUE_SHA,'16177e18b25de4b5b4a45849f5eddb7f7b58527f7d3425d48849927d5843103e')
             self.assertEqual(assignment.QUEUE_SHA,preflight.QUEUE_SHA)
         finally: sys.modules.pop(spec.name, None)
 

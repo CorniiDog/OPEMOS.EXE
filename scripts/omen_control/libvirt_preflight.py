@@ -12,7 +12,7 @@ import libvirt_peer as p
 from libvirt_native import held
 from libvirt_access import Held,hashfd
 
-QUEUE_SHA='0e978ca7972cb104689e142a12b0801631cb22222e062d51bf26e8bd8940b52c'
+QUEUE_SHA='ec8a377b96a4c7b1bac2edab75183011e3c8aad9efeb51130b18d61c42d47e42'
 CONTROL_QUEUE_SHA='16177e18b25de4b5b4a45849f5eddb7f7b58527f7d3425d48849927d5843103e'
 HISTORY_SHA='03f36772612aabffdbe6be6b76f4353402797fd9e17d4896ced3739de7b6f1c3'
 
@@ -267,6 +267,22 @@ def storage_for_preflight_phase(c,e,stage_only):
   return p.storage_contract(c['nonce'])
  finally:p.SOURCE_PLACEMENT_PIN=None
 
+
+def paired_queue_sha(record):
+ """Current media queue comes from its authenticated installed definition.
+
+ The separate historical control queue identity remains unchanged. No supplied
+ hash, branch head, path name or Boolean can substitute for the Root definition.
+ """
+ c=record.get('candidate',{})
+ if 'operationContext'not in c:return QUEUE_SHA
+ shared=__import__('source_contract')
+ definition=shared.validate(record['sourceRoles'],record['queuePrograms'],record['installedSourceContractPin'])
+ shared.candidate_paths(c)
+ p.need(c['operationContext']['deploymentId']==definition['deployment']['id']and c['lineageNonce']==definition['guestNonce'],'same authenticated media queue deployment/origin')
+ return definition['queuePrograms'][0]['sha256']
+
+
 def produce(c,e,persist):
  __import__('guest_firmware_probe').require_firstboot_only(c)
  stage_only=e['purpose']=='INSTALLER_ACCESS_STAGE'
@@ -290,7 +306,7 @@ def produce(c,e,persist):
  # Timestamp is intentionally assigned only AFTER full disk hashes and all
  # observation work. Nothing extends/reuses an earlier30s freshness receipt.
  for key,cap in(('firmwareCode',4194304),('firmwareVarsTemplate',1048576),('qemu',33554432)):measured(c[key],cap)
- p.need(len(e['queuePrograms'])==7 and len({x['path']for x in e['queuePrograms']})==7 and e['queuePrograms'][0]['sha256']==QUEUE_SHA,'exact paired queue deployment first; old04f cannot be relabeled')
+ p.need(len(e['queuePrograms'])==7 and len({x['path']for x in e['queuePrograms']})==7 and e['queuePrograms'][0]['sha256']==paired_queue_sha(e),'exact paired queue deployment first; old04f cannot be relabeled')
  for ref in e['queuePrograms']:measured(ref,1048576,False)
  for ref in e['sourceRoles'].values():
   p.need(ref['identity']['st_uid']==ref['identity']['st_gid']==0 and stat.S_IMODE(ref['identity']['st_mode'])==0o444,'Root0444 frozen source role');measured(ref,65536)
@@ -322,7 +338,7 @@ def produce(c,e,persist):
  finally:
   if conn is not None:p.need(conn.close()==0,'readonly connection closed')
  from queue_assignment import load_queue
- historical_queue=load_queue(e['queuePrograms'][0])
+ historical_queue=load_queue(e['queuePrograms'][0],e)
  p.verify_historical_lease_set(e['priorLeases'],values['rows'],values['bindings'],historical_queue,boot)
  for path in e['unusedPaths']:p.need(path not in(c['run'],c['output'])or e.get('preparedAccessPin')is None,'staged IO cannot be silently declared unused');p.need(not os.path.lexists(path),'exact unused runtime/source/lease scope '+path)
  placement=storage_for_preflight_phase(c,e,stage_only);freebytes=placement['outerAvailableBytes'];p.need(freebytes>=72000000000,'literal60GB plus20percent actual placement host margin')

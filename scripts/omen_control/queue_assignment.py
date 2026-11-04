@@ -4,7 +4,7 @@ No SQLite API, DB copy/index or closure inference on this postlaunch path.
 import hashlib,json,time,types,sys
 import libvirt_peer as p
 from libvirt_native import held
-from libvirt_preflight import QUEUE_SHA
+QUEUE_SHA='ec8a377b96a4c7b1bac2edab75183011e3c8aad9efeb51130b18d61c42d47e42'
 CONTROL_QUEUE_SHA='16177e18b25de4b5b4a45849f5eddb7f7b58527f7d3425d48849927d5843103e'
 
 def protected_continuation_value(ref,mode=0o400):
@@ -68,14 +68,17 @@ def from_values(value,prior,c,g,queue,parent=None):
  p.need(request['domainName']==c['name']and request['domainUUID']==c['guestUUID']and request['leaseNonce']==c['nonce']and request['observer']==g['observerPin'],'same exact domain/lease/source scope')
  return request,{'ownRowSHA256':hashlib.sha256(p.canon(row)).hexdigest(),'ownBindingSHA256':hashlib.sha256(bindings[row['id']].encode()).hexdigest(),'priorRawSHA256':g['priorHistorySHA256'],'priorCounts':counts,'currentRawSHA256':hashlib.sha256(p.canon(value)).hexdigest(),'currentCounts':{k:len(v)for k,v in value.items()}}
 
-def load_queue(ref):
- p.need(ref['sha256']==QUEUE_SHA,'exact reviewed paired live-export queue source');raw=held(ref,1048576);q=types.ModuleType('held_live_export_queue_R6');q.__file__=ref['path'];sys.modules[q.__name__]=q
+def load_queue(ref,source=None):
+ expected=QUEUE_SHA
+ if source is not None:
+  p.need(ref==source['queuePrograms'][0],'same exact queue member from parent/expectation');expected=__import__('libvirt_preflight').paired_queue_sha(source)
+ p.need(ref['sha256']==expected,'exact reviewed paired live-export queue source');raw=held(ref,1048576);q=types.ModuleType('held_live_export_queue_R6');q.__file__=ref['path'];sys.modules[q.__name__]=q
  try:exec(compile(raw,ref['path'],'exec'),q.__dict__)
  finally:sys.modules.pop(q.__name__,None)
  return q
 
 def produce(c,g,parent,prior,persist,worker_guard,end,metrics=None):
- qref=g['queuePrograms'][0];started=time.monotonic();queue=load_queue(qref);polls=0;observations={'kind':'ROOT_CURRENT_ASSIGNMENT_INTAKE_MEASUREMENTS','originalEndUnix':end,'readinessPolls':0,'workerChecks':0};archive={}
+ qref=g['queuePrograms'][0];started=time.monotonic();queue=load_queue(qref,parent);polls=0;observations={'kind':'ROOT_CURRENT_ASSIGNMENT_INTAKE_MEASUREMENTS','originalEndUnix':end,'readinessPolls':0,'workerChecks':0};archive={}
  try:
   while True:
    p.need(time.time()<end,'no current exact canonical export inside original30s entry wait')

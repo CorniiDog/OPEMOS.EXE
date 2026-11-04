@@ -5236,3 +5236,15 @@ R121 publication: normal receive-pack returned server500 three times with ref ab
   control lineage. Existing normal-queue test now asserts complete queue ->
   shared preflight -> assignment join before the larger installed fixture.
   No security/hash predicate removed, no new manifest or authority bypass.
+
+- Core exact b1 R122-SUBMIT-QUEUE-DEFINITION-1 directs proper identity separation:
+  the unused5cd global queue repin is superseded, NOT installed or approved.
+  Restore historical/control QUEUE_SHA constants unchanged. Current media
+  preflight/placement/submission/assignment instead obtain their exact seven
+  queue members/current SHA from the existing authenticated V2 source definition,
+  complete roles/Root full9/hash/layout/current deployment+origin join. Existing
+  held queue reread and complete normalization checks stay. Current load_queue
+  calls carry actual parent/expectation; legacy contextless calls stay exact.
+  Extend SAME installed-entry/fullconsumer fixture with wrong current queue and
+  source refusals. No new manifest/framework, source relabel, hash waiver or
+  control policy/source change. Retain b1 full raw/failed checks and5cd history.

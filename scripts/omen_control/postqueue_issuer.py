@@ -65,9 +65,9 @@ def submission_manifest(parent,parent_ref,base):
  This emits data only. The existing Root producer must supply the real parent,
  current source custody and admission; no Boolean or output grants hardware.
  """
- expected=expected_spec(parent,parent_ref);qref=parent['queuePrograms'][0]
- p.need(qref['sha256']==pre.QUEUE_SHA,'current exact paired queue before submit manifest')
- qraw=held(qref,1048576);p.need(hashlib.sha256(qraw).hexdigest()==pre.QUEUE_SHA,'same full paired queue bytes')
+ expected=expected_spec(parent,parent_ref);qref=parent['queuePrograms'][0];queue_sha=pre.paired_queue_sha(parent)
+ p.need(qref['sha256']==queue_sha,'current exact paired queue before submit manifest')
+ qraw=held(qref,1048576);p.need(hashlib.sha256(qraw).hexdigest()==queue_sha,'same full paired queue bytes')
  raw=copy.deepcopy(expected);raw['files']=[ref['path']for ref in expected['files']];raw['approval']={k:expected['approval'][k]for k in('path','sha256')};raw['libvirt_domain']['observer']=expected['libvirt_domain']['observer']['path']
  name='held_firstboot_submit_queue';p.need(name not in sys.modules,'no reused submit queue module');q=types.ModuleType(name);q.__file__=qref['path'];sys.modules[name]=q
  try:
@@ -354,7 +354,7 @@ def _issue(parent_ref,ops=None):
   # Full immutable accepted prior bytes; counts are data-derived, not37/33.
   expected=parent['priorHistory'];prior=adopted_history(parent)
   import queue_assignment
-  queue=queue_assignment.load_queue(parent['queuePrograms'][0]);digest=hashlib.sha256(queue.canonical(spec).encode()).hexdigest();g=copy.deepcopy(parent['childGrantTemplate']);c=parent['candidate']
+  queue=queue_assignment.load_queue(parent['queuePrograms'][0],parent);digest=hashlib.sha256(queue.canonical(spec).encode()).hexdigest();g=copy.deepcopy(parent['childGrantTemplate']);c=parent['candidate']
   g.update(installerContract=c.get('installer'),sourcePlacementPin=parent['sourcePlacementPin'],placementQualificationPin=parent['placementQualificationPin'],jobId=parent['jobId'],domainName=c['name'],domainUUID=c['guestUUID'],leaseNonce=c['nonce'],bootID=parent['bootID'],normalizedSpecSHA256=digest,observerPin=spec['libvirt_domain']['observer'],originalPin=c['original'],workingPin=c['working'],guestUUID=c['guestUUID'],firmwareCodePin=c['firmwareCode'],producerPin=parent['sourceRoles']['libvirt_producer'],peerPin=parent['sourceRoles']['libvirt_peer'],accessPin=parent['sourceRoles']['libvirt_access'],nativePin=parent['sourceRoles']['libvirt_native'],historyReaderPin=parent['sourceRoles']['held_history_reader'],queuePrograms=parent['queuePrograms'],priorHistorySHA256=expected['sha256'],priorHistoryBytes=expected['bytes'],priorHistoryCounts=expected['counts'])
   assignment,value=ops.assignment_export(c,g,parent,prior,end);p.need(ops.now()<end,'whole entry30s includes genuine postlaunch export')
   p.need(json.loads(value['rows'][-1]['spec'])==spec,'entire late-parent reconstructed normalized spec equality')

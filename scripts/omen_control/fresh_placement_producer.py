@@ -34,7 +34,7 @@ def produce(expectation_pin,seed_pin,persist):
  for role,ref in e['sourceRoles'].items():
   peer.need(ref['identity']['st_uid']==ref['identity']['st_gid']==0 and stat.S_IMODE(ref['identity']['st_mode'])==0o444 and Path(ref['path']).name==role+'.py','immutable installed role');compile(held(ref,1048576),ref['path'],'exec')
  for ref in e['queuePrograms']:pre.measured(ref,1048576,False)
- peer.need(len(e['queuePrograms'])==7 and e['queuePrograms'][0]['sha256']==pre.QUEUE_SHA,'current independently adopted full5 paired queue authority')
+ peer.need(len(e['queuePrograms'])==7 and e['queuePrograms'][0]['sha256']==pre.paired_queue_sha(e),'current independently adopted full5 paired queue authority')
  # Reuse whole-hash captures, then exact post-ACL custody; no duplicate40GiB hash.
  captures={key:protected(ref)for key,ref in e['splitDiskCapturePins'].items()};peer.need(set(captures)=={'original','working'},'both original/working whole captures')
  disks={key:pre.disk_capture(e['preparedDiskPins'][key],captures[key],e['bootID'],candidate=c)for key in('original','working')};access.verify_prepared(c,e['preparedAccessPin'],disks)
