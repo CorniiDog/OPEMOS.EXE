@@ -16,6 +16,23 @@ def working_geometry(evidence,expected,installer,adopted,persist=None,config=Non
   raise
  return value,errors
 
+def declared_metadata_roots(ref,nonce,config,v,adopted,request=None):
+ """Declare each exact path once; distinct paths still face strict inode-alias checks."""
+ from libvirt_peer import need
+ roots=[str(Path(ref['path']).parent),str(Path(__file__).parent),'/var/lib/opemos-queue-r113-f276aacd8a994f30bfc4097c15cdb945','/run/opemos-closed-e842-r111-runtime','/run/opemos-root-source239-cd9ef0826364409da287f6f3e3830c95-e842cfa1daa5412aba5d454cca9ab58f','/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r110b','/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r109b','/var/lib/opemos-queue-r109-f55b98f9f6e8406086a22a4b58fa502b','/run/opemos-root-source239-cd9ef0826364409da287f6f3e3830c95-6b6443deca894d1e96e326b6f428d491','/var/lib/opemos-queue-r110-21f60c09e156455daab0410c6c374fda','/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r107b','/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r109','/run/opemos-root-source239-cd9ef0826364409da287f6f3e3830c95-34117bbb1f4d4418b4eff9c1190233f2','/run/opemos-closed-34117-r109-runtime','/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r106','/run/opemos-root-source239-cd9ef0826364409da287f6f3e3830c95-96af5ac9637c40309055725bb9df0c17','/run/opemos-closed-e87-96af5ac9637c40309055725bb9df0c17-runtime','/run/opemos-closed-e87-96af5ac9637c40309055725bb9df0c17-lease','/run/opemos-closed-e87-96af5ac9637c40309055725bb9df0c17-results','/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r104','/run/opemos-steamos-source-' + nonce,'/run/opemos-libvirt-runtime-' + nonce,'/run/opemos-libvirt-results-' + nonce,'/run/opemos-vfio-' + nonce,'/run/opemos-steamos-prequeue-' + nonce,'/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r110','/var/lib/opemos-queue-r110-f49013fb03dd4b3db0079c99a7c41dba']
+ socket=None
+ if adopted:
+  io=v['ioScope'];need(set(io)=={'run','output'}and Path(io['run']).parent==Path(io['output']).parent and Path(io['run']).parent.parent==Path('/run')and Path(io['run']).name=='run'and Path(io['output']).name=='output','declared current writable IO only')
+  if 'operationContext'in config:
+   shared=__import__('source_contract');paths=shared.candidate_paths(config);layout=shared.deployment_paths(config['operationContext']['deploymentId'])
+   need(io=={'run':config['run'],'output':config['output']}and v['operationRoot']==paths['operationRoot']and v['currentQueueRoot']==layout['queueRoot'],'one protected current operation/source/queue layout');roots+=[paths[k]for k in('operationRoot','placementRoot','runtimeRoot','parentPath','jobPath')]+list(layout.values())
+  else:
+   need(Path(io['run']).parent.name.startswith('opemos-libvirt-io-'+nonce+'-')and re.fullmatch('/run/opemos-current-media-[0-9a-f]{32}',v['operationRoot'])and re.fullmatch('/var/lib/opemos-queue-r120-[0-9a-f]{32}',v['currentQueueRoot']),'exact historical retained input layout')
+   roots += [v['operationRoot'],v['currentQueueRoot']]
+  roots+=list(io.values());socket=io['run']+'/vnc.sock'
+ if request is not None:roots+=['/run/opemos-libvirt-queue-'+request['jobToken'],'/home/connor/.local/state/opemos-test-queue-r2/state/logs/'+request['jobId']]
+ return list(dict.fromkeys(roots)),socket
+
 def storage_contract(nonce,request=None,persist=None):
  """Exact one declared Games regular-file container; no physical-device API."""
  from libvirt_peer import need,SOURCE_PLACEMENT_NONCE,SOURCE_PLACEMENT_PIN,RootFiles,CORE,ident,working_metadata,require_working_metadata,metadata_cohort
@@ -67,18 +84,7 @@ def storage_contract(nonce,request=None,persist=None):
   for(path,fd),old in zip(chain,before):
    now=ident(os.fstat(fd));need(now==ident(os.lstat(path))and all(now[k]==old[k]for k in CORE),'current placement ancestor core/FD/name after check')
   afterBack=epoch(bf,v['backing']['path']);afterWorking=epoch(wf,v['working']['path']);need(all(afterBack[k]==back[k]for k in CORE+('st_size',))and all(afterWorking[k]==wi[k]for k in('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size')),'same only declared mutable backing/working core after use')
-  roots=[str(Path(ref['path']).parent),str(Path(__file__).parent),'/var/lib/opemos-queue-r113-f276aacd8a994f30bfc4097c15cdb945','/run/opemos-closed-e842-r111-runtime','/run/opemos-root-source239-cd9ef0826364409da287f6f3e3830c95-e842cfa1daa5412aba5d454cca9ab58f','/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r110b','/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r109b','/var/lib/opemos-queue-r109-f55b98f9f6e8406086a22a4b58fa502b','/run/opemos-root-source239-cd9ef0826364409da287f6f3e3830c95-6b6443deca894d1e96e326b6f428d491','/var/lib/opemos-queue-r110-21f60c09e156455daab0410c6c374fda','/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r107b','/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r109','/run/opemos-root-source239-cd9ef0826364409da287f6f3e3830c95-34117bbb1f4d4418b4eff9c1190233f2','/run/opemos-closed-34117-r109-runtime','/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r106','/run/opemos-root-source239-cd9ef0826364409da287f6f3e3830c95-96af5ac9637c40309055725bb9df0c17','/run/opemos-closed-e87-96af5ac9637c40309055725bb9df0c17-runtime','/run/opemos-closed-e87-96af5ac9637c40309055725bb9df0c17-lease','/run/opemos-closed-e87-96af5ac9637c40309055725bb9df0c17-results','/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r104','/run/opemos-steamos-source-' + nonce,'/run/opemos-libvirt-runtime-' + nonce,'/run/opemos-libvirt-results-' + nonce,'/run/opemos-vfio-' + nonce,'/run/opemos-steamos-prequeue-' + nonce,'/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r110','/var/lib/opemos-queue-r110-f49013fb03dd4b3db0079c99a7c41dba']
-  socket=None
-  if adopted:
-   io=v['ioScope'];need(set(io)=={'run','output'}and Path(io['run']).parent==Path(io['output']).parent and Path(io['run']).parent.parent==Path('/run')and Path(io['run']).name=='run'and Path(io['output']).name=='output','declared current writable IO only')
-   if 'operationContext'in config:
-    shared=__import__('source_contract');paths=shared.candidate_paths(config);layout=shared.deployment_paths(config['operationContext']['deploymentId'])
-    need(io=={'run':config['run'],'output':config['output']}and v['operationRoot']==paths['operationRoot']and v['currentQueueRoot']==layout['queueRoot'],'one protected current operation/source/queue layout');roots+=[paths[k]for k in('operationRoot','placementRoot','runtimeRoot','parentPath','jobPath')]+list(layout.values())
-   else:
-    need(Path(io['run']).parent.name.startswith('opemos-libvirt-io-'+nonce+'-')and re.fullmatch('/run/opemos-current-media-[0-9a-f]{32}',v['operationRoot'])and re.fullmatch('/var/lib/opemos-queue-r120-[0-9a-f]{32}',v['currentQueueRoot']),'exact historical retained input layout')
-    roots += [v['operationRoot'],v['currentQueueRoot']]
-   roots+=list(io.values());socket=io['run']+'/vnc.sock'
-  if request is not None:roots+=['/run/opemos-libvirt-queue-'+request['jobToken'],'/home/connor/.local/state/opemos-test-queue-r2/state/logs/'+request['jobId']]
+  roots,socket=declared_metadata_roots(ref,nonce,config,v,adopted,request)
   observedExtra,entries,metadataClosure=__import__('guest_firmware_probe').metadata_cohort(roots,allowed_socket=socket);need(observedExtra<=500000000,'all metadata/source/capture/private SQL growth remains in declared500MB reserve')
   return{'receiptPin':ref,'wholeGraphUpperBound':v['wholeGraphUpperBound'],'outerAvailableBytes':outer.f_bavail*outer.f_frsize,'backingCurrent':ident(os.fstat(bf)),'backingCharge':v['backingCharge'],'innerAvailableBytes':inner.f_bavail*inner.f_frsize,'innerAllocatedWorkingBytes':os.fstat(wf).st_blocks*512,'currentMountID':mid,'loop':looprow,'workingCurrent':wi,'workingAfter':afterWorking,'workingObservation':evidence,'extraIOObservedBytes':observedExtra,'extraIOEntries':entries,'metadataFDClosure':metadataClosure,'mutableEpochsOnlyForDeclaredBackingWorkingAndMount':True,'optionalDiagnosticErrors':diagnosticErrors}
  except BaseException as error:

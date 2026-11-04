@@ -418,6 +418,52 @@ class RetainedMediaContract(unittest.TestCase):
                     self.assertEqual(entry.validate_context_sources({'sourceRoles':roles}),roles)
                     entry.bind_placement(current_peer,parent,parent_ref)
                     issuer.submission_manifest(parent,parent_ref,'/run')
+                    # SAME real storage declaration boundary -> strict production walker.
+                    # Device/media geometry is still an explicit model in this connected case.
+                    storage_module=sys.modules['libvirt_storage']
+                    walker=sys.modules['guest_firmware_probe'].metadata_cohort
+                    declared_config=copy.deepcopy(c)
+                    declared_config['installer']['kind']=media.KIND
+                    storage_value={'ioScope':{'run':c['run'],'output':c['output']},
+                                   'operationRoot':paths['operationRoot'],'currentQueueRoot':str(queue_root)}
+                    roots,socket=storage_module.declared_metadata_roots(storagepin,nonce,declared_config,
+                                                                       storage_value,True,request)
+                    self.assertEqual(roots.count(str(placement)),1)
+                    self.assertEqual(roots.count(str(source_root)),1)
+                    self.assertEqual(len(roots),len(set(roots)))
+                    baseline=set(os.listdir('/proc/self/fd'))
+                    charged,entries,closure=walker(roots,allowed_socket=socket)
+                    expected=0;seen=set()
+                    for declared in roots:
+                        if not os.path.lexists(declared):continue
+                        node=Path(declared)
+                        objects=[node]
+                        if node.is_dir():objects+=list(node.rglob('*'))
+                        for obj in objects:
+                            st=os.lstat(obj);key=(st.st_dev,st.st_ino)
+                            self.assertNotIn(key,seen);seen.add(key)
+                            expected+=max(st.st_size,st.st_blocks*512)
+                    self.assertEqual(charged,expected)
+                    self.assertGreater(entries,0)
+                    self.assertTrue(closure['allClosed'] and closure['FDSetRestored'])
+                    self.assertEqual(set(os.listdir('/proc/self/fd')),baseline)
+                    # The walker itself remains strict, including distinct operands for one inode.
+                    with self.assertRaises(Exception):walker(roots+[str(source_root)],allowed_socket=socket)
+                    self.assertEqual(set(os.listdir('/proc/self/fd')),baseline)
+                    alias=fixture/'metadata-alias';alias.mkdir(mode=0o700)
+                    import libvirt_native as native
+                    import time
+                    mount=native.native_child(['/usr/bin/mount','--bind',str(source_root),str(alias)],
+                                               time.time()+10,installer.pin('/usr/bin/mount'))
+                    self.assertEqual(mount['numeric'],0)
+                    try:
+                        with self.assertRaises(Exception):walker(roots+[str(alias)],allowed_socket=socket)
+                        self.assertEqual(set(os.listdir('/proc/self/fd')),baseline)
+                    finally:
+                        unmount=native.native_child(['/usr/bin/umount',str(alias)],time.time()+10,
+                                                   installer.pin('/usr/bin/umount'))
+                        self.assertEqual(unmount['numeric'],0)
+                    alias.rmdir()
                     for fault in ('missing','foreign','original-current','wrong-attempt','wrong-job','old-path'):
                         bad=copy.deepcopy(parent)
                         if fault=='missing':bad['sourceRoles'].pop('libvirt_storage')
