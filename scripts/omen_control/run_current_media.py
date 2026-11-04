@@ -406,8 +406,14 @@ class Run:
                and (root / 'ro').read_text().strip() == '1', 'own association after unmount, before detach')
         if self.loop_fd is not None:
             os.close(self.loop_fd); self.loop_fd = None
-        self.tool(['/usr/sbin/losetup', '--detach', self.loop], 15, stage=False)
+        # An earlier detach may have requested autoclear: last-reference close can finish it.
+        # Never issue detach against a now absent or reused loop association.
+        if (root / 'loop/backing_file').exists():
+            p.need((root / 'loop/backing_file').read_text().strip() == self.c['installer']['backing']['path']
+                   and (root / 'ro').read_text().strip() == '1', 'same own association after held FD close')
+            self.tool(['/usr/sbin/losetup', '--detach', self.loop], 15, stage=False)
         p.need(not (root / 'loop/backing_file').exists(), 'own loop detached')
+        p.need(not media.owned_mount(self.mount, self.loop), 'actual own mount gone')
         p.need(pin(self.c['installer']['backing']['path'], self.c['installer']['backing']['bytes'])
                == self.c['installer']['backing'], 'entire retained backing unchanged after operation')
         self.diagnostic('current-media-closed', {'loop': self.loop, 'mount': str(self.mount),
