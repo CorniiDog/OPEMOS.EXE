@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "role": "Existing installed OMEN controller source predecessors; candidate code is never installed from a test request",
+  "source": {
+    "job_guard.py": {
+      "installed_predecessor_sha256": "c5e95560429d8f0fa3477cc3d802e1db5498067e7a78a1e9696eaffd3f31f1e2"
+    },
+    "control.py": {
+      "installed_predecessor_sha256": "5ee62ccfdf88f5371e7e44d47210a8b3ae535c79a0008b6a161c892a0c411c8c"
+    },
+    "host_engine.py": {
+      "installed_predecessor_sha256": "685de3f64d1ae8cbb1d16ea96ca4830a030679e8d083287a3abaca55414b0505"
+    },
+    "planner.py": {
+      "installed_predecessor_sha256": "d292db204ab5b65738e94be874ed64f2d647b3cfbf91267676789c926be7c8ef"
+    }
+  },
+  "job_guard_predecessor_authenticated_by": "actual R118 machine source observation before media entry",
+  "other_roles": "Same retained normal installed-controller source capture; independent exact source/effects review required before changed deployment",
+  "per_run_data_is_not_source": true
+}

@@ -24,7 +24,9 @@ class OPEMOSRobot:
         if name=='Execute Every Platform Artifact':return self._execute(self._engine().platform,args[0])
         if name=='Retain Independent Outcomes':
             if self.engine is not None:
-                self.engine.persist();self._summary()
+                try:self.engine.persist();self._summary()
+                except Exception as error:
+                    print('::warning::Optional Robot outcome summary unavailable: '+type(error).__name__)
 
     def _execute(self,function,subject):
         try:

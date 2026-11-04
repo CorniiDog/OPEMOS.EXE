@@ -111,7 +111,7 @@ _inventory_path = Path(__file__).with_name("omen_ci_inventory.py")
 _inventory_pin, _inventory_raw = _READER.read_verified(_inventory_path, 1024**2, expected_sha=_INVENTORY_SHA, uid=os.getuid())
 _INVENTORY = _READER.verified_namespace(_inventory_raw, _inventory_path, "opemos_ci_inventory")
 
-_EXECUTABLES_SHA = "435aa0901a39981fc26d2b5a87f283aa918985318fcd28213c86da918c4c5b1f"
+_EXECUTABLES_SHA = "0a94a6068019795bbb3698fcacabd60dc632f863b6504fc183791b00aad56440"
 _executables_path = Path(__file__).with_name("omen_ci_executables.py")
 _executable_pin, _executable_raw = _READER.read_verified(_executables_path, 1024**2,
     expected_sha=_EXECUTABLES_SHA, uid=os.getuid())
@@ -967,7 +967,9 @@ def validate_gui_pointer(receipt,plan,operand,expected_executable=None):
         retained_converter,_=pointer_file(files,receipt.get("gui_converter_ref"),"gui-converter-source",operand,8*1024**2)
         require(retained_converter["sha256"]==operand["gui_converter"]["sha256"]and retained_converter["bytes"]==len(converter_bytes),"Actual converter source not retained")
     executable=expected_executable or operand.get("gui_executable")
-    _EXECUTABLES["descriptor"](executable,plan["source_commit"])
+    # Pointer/control source is pinned by plan; the candidate package has its
+    # own authenticated producer descriptor and byte identity.
+    _EXECUTABLES["descriptor"](executable)
     require(executable["package_sha256"]==operand["package_sha256"]and executable["platform"]=={"windows":"windows","linux":"ubuntu","darwin":"macos"}[session["platform"]],"Pointer executable descriptor/package/platform differs")
     controls=operand.get("gui_controls",{})
     require(isinstance(controls,dict)and set(controls)==set(POINTER_ACTIONS),"Exact current-source native control map missing")
@@ -1312,7 +1314,7 @@ def verify_original_operand(operand,cap):
 
 
 def validate_executable_transaction(value, expected, entry, plan, request, rows):
-    _EXECUTABLES["descriptor"](expected, request["source_commit"])
+    _EXECUTABLES["descriptor"](expected)
     nonce = entry.get("operation_nonce")
     require(re.fullmatch(r"[0-9a-f]{32}", nonce or "") and value.get("operation_nonce") == nonce
             and value.get("executable") == expected and value.get("source_commit") == request["source_commit"]

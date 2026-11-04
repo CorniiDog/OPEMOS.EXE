@@ -67,7 +67,7 @@ class PerExecutableIdentity(unittest.TestCase):
 
     def test_pr_foreign_source_wrong_workflow_or_attempt_cannot_be_expected(self):
         value = descriptor("windows", 1)
-        for field, wrong in (("source_commit","e"*40),("event","pull_request"),("ref","refs/pull/1/merge"),
+        for field, wrong in (("source_commit","e"*40),("event","pull_request"),("ref","refs/heads/"),
                              ("workflow", E["PRODUCERS"]["ubuntu"]["workflow"]),("producer_attempt","0")):
             changed = dict(value, **{field:wrong})
             with self.assertRaises(ValueError):E["descriptor"](changed, SOURCE)

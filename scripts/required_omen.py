@@ -66,6 +66,36 @@ def metadata_download(path,token=None):
  except error.HTTPError as refused:
   try:raise Refusal('signed metadata archive refused HTTP '+str(refused.code))from None
   finally:refused.close()
+
+def download_candidate(expected, destination, cap, token):
+ """Root host stores the exact API-bound archive as opaque guest input.
+
+ No package member is extracted, imported or executed on the controller. The
+ existing guest consumer independently checks package/executable hashes.
+ """
+ descriptor(expected);require(type(cap)is int and 0<cap<=60_000_000_000,'existing whole-VM candidate bound')
+ path=f"actions/artifacts/{expected['artifact_id']}/zip"
+ opener=request.build_opener(NoArtifactRedirect)
+ response=None
+ try:
+  try:response=opener.open(request.Request('https://api.github.com/repos/'+REPO+'/'+path,headers=token_headers(token)),timeout=20)
+  except error.HTTPError as redirect:
+   try:
+    require(redirect.code==302,'candidate archive API refused');location=redirect.headers.get('Location','')
+   finally:redirect.close()
+   url=parse.urlsplit(location)
+   require(url.scheme=='https'and not url.username and not url.password and url.port in(None,443)and
+           (url.hostname or '').endswith(('.blob.core.windows.net','.actions.githubusercontent.com','.githubusercontent.com')),'GitHub signed candidate archive host required')
+   response=opener.open(request.Request(location),timeout=20)
+  h=hashlib.sha256();size=0
+  with response:
+   while block:=response.read(1024**2):
+    size+=len(block);require(size<=cap,'candidate archive exceeds existing storage bound')
+    destination.write(block);h.update(block)
+  require(size>0 and h.hexdigest()==expected['artifact_archive_sha256'],'candidate archive differs from exact API artifact')
+  return size
+ finally:
+  if response is not None:response.close()
 def root_api_reader(token):
  """Same existing GitHub API trust, finite original 1MiB Root metadata bound."""
  opener=request.build_opener(NoRedirect)
@@ -83,11 +113,15 @@ def items(read,path,key):
  require(type(value['total_count'])is int and value['total_count']==len(value[key])<=100,'complete finite '+key+' inventory')
  return value[key]
 def producer_ready(source,platform,run_id,attempt,read,download):
- require(platform in NATIVE and re.fullmatch('[0-9a-f]{40}',source or '')and all(re.fullmatch('[1-9][0-9]{0,19}',x or '')for x in(run_id,attempt)),'exact platform/source/producer identity')
+ require(platform in NATIVE and (source is None or re.fullmatch('[0-9a-f]{40}',source or ''))and all(re.fullmatch('[1-9][0-9]{0,19}',x or '')for x in(run_id,attempt)),'exact platform/source/producer identity')
  path=f'actions/runs/{run_id}/attempts/{attempt}';run=read(path)
+ if source is None:source=run['head_sha']
+ require(type(source)is str and re.fullmatch('[0-9a-f]{40}',source),'exact candidate commit from authenticated producer API')
  current=read(f'actions/runs/{run_id}');require(str(current['run_attempt'])==attempt and current['head_sha']==source,'latest producer attempt required')
- require(str(run['id'])==run_id and str(run['run_attempt'])==attempt and run['head_sha']==source and run['head_branch']=='main'and run['path']==PRODUCER_PATH[platform]and run['event']in('push','workflow_dispatch')and run['repository']['full_name']==REPO and run['head_repository']['id']==run['repository']['id'],'protected canonical producer identity')
- require(run['status']=='in_progress'or run['status']=='completed'and run['conclusion']=='success','producer not current/in-progress or successful')
+ require(str(run['id'])==run_id and str(run['run_attempt'])==attempt and run['head_sha']==source and type(run['head_branch'])is str and bool(run['head_branch'])and run['path']==PRODUCER_PATH[platform]and run['event']in('push','workflow_dispatch','pull_request')and run['repository']['full_name']==REPO and run['head_repository']['id']==run['repository']['id'],'canonical same-repository candidate producer identity')
+ # Downstream diagnostics/OMEN jobs must not make package admission circular.
+ # The native package JOB and its exact artifacts are authenticated below.
+ require(run['status']in('in_progress','completed'),'producer not current/in-progress or completed')
  jobs=items(read,path+'/jobs','jobs');matches=[j for j in jobs if j['name']==NATIVE[platform][0]]
  require(len(matches)==1,'exact native package job')
  job=matches[0];require(job['run_id']==int(run_id)and job['head_sha']==source and job['status']=='completed'and job['conclusion']=='success','native package JOB must actually pass before GUI dispatch')
@@ -98,6 +132,11 @@ def producer_ready(source,platform,run_id,attempt,read,download):
  require(len(att)==1,'exact producer metadata artifact unavailable')
  value=archive_json(download(f"actions/artifacts/{att[0]['id']}/zip"),att[0],'executable-producer.json');descriptor(value,source)
  require(value['platform']==platform and value['producer_run_id']==run_id and value['producer_attempt']==attempt,'downloaded producer descriptor identity')
+ require(value['event']==run['event'],'candidate descriptor event differs from authenticated producer')
+ if run['event']=='pull_request':
+  match=re.fullmatch(r'refs/pull/([1-9][0-9]*)/(?:head|merge)',value['ref'])
+  require(match and any(str(p.get('number'))==match[1]for p in run.get('pull_requests',[])),'candidate pull-request ref differs from authenticated producer')
+ else:require(value['ref']=='refs/heads/'+run['head_branch'],'candidate branch ref differs from authenticated producer')
  selected=[a for a in artifacts if str(a['id'])==value['artifact_id']];require(len(selected)==1,'exact package artifact')
  actual=selected[0];require(actual['expired']is False and actual['name']==value['artifact_name']and actual['digest']=='sha256:'+value['artifact_archive_sha256']and actual['workflow_run']['id']==int(run_id)and actual['workflow_run']['head_sha']==source and actual['workflow_run']['repository_id']==run['repository']['id']and actual['workflow_run']['head_repository_id']==run['repository']['id'],'artifact/source/archive identity')
  start=datetime.fromisoformat(run['run_started_at'].replace('Z','+00:00'));native_end=datetime.fromisoformat(job['completed_at'].replace('Z','+00:00'))
@@ -109,8 +148,9 @@ def producer_ready(source,platform,run_id,attempt,read,download):
  return value
 def target(value):return{k:value[k]for k in('platform','producer_run_id','producer_attempt','artifact_id')}|{'descriptor_sha256':digest(value)}
 def verify_acceptance(value,expected,consumer):
- require(type(value)is dict and value['status']=='passed'and value['executable']==expected and value['source_commit']==expected['source_commit']and value['run_id']==consumer['run_id']and value['attempt']==consumer['attempt']and value['actual_receipt_verified']is True and value['active']is False,'exact current actual Root artifact transaction')
- require(pointer_proof_valid(value['pointer_acceptance'],expected,value,expected['source_commit'],consumer['run_id'],consumer['attempt']),'all five actual chooser/Build/USB pointer transitions required')
+ controller=consumer.get('source_commit',expected['source_commit'])
+ require(type(value)is dict and value['status']=='passed'and value['executable']==expected and value['source_commit']==controller and value['run_id']==consumer['run_id']and value['attempt']==consumer['attempt']and value['actual_receipt_verified']is True and value['active']is False,'exact controller transaction and candidate executable identity')
+ require(pointer_proof_valid(value['pointer_acceptance'],expected,value,controller,consumer['run_id'],consumer['attempt']),'all five actual chooser/Build/USB pointer transitions required')
  for field in('build_receipt_sha256','heal_receipt_sha256','install_receipt_sha256','image_sha256','image_manifest_sha256','usb_readback_sha256'):
   require(re.fullmatch('[0-9a-f]{64}',value.get(field,'')or''),'missing exact '+field)
  require(value['image_sha256']==value['usb_readback_sha256'],'full USB readback differs from actual GUI output')
@@ -118,7 +158,7 @@ def verify_acceptance(value,expected,consumer):
   require(bool(value.get(field)),'actual SteamOS/image generation field missing: '+field)
  return value
 
-def broker_execute_produced(engine,req,read,download):
+def broker_execute_produced(engine,req,read,download,candidate_download=None):
  """Root route only after unchanged peer, prior-job, Main, one-use checks.
 
  Root supplies its authenticated API/download adapters. Client supplies only
@@ -133,17 +173,22 @@ def broker_execute_produced(engine,req,read,download):
  platform=selected['platform'];require(platform in NATIVE,'exact supported producer')
  engine.current=None;phase='current protected Main metadata'
  try:
-  branch=read('branches/main');require(branch['protected']is True and branch['commit']['sha']==req['source_commit'],'actual current protected Main before normal operation')
+  # req.source_commit is the installed, independently reviewed controller.
+  # The Root attestation/lease and pinned Engine authenticate it. A candidate
+  # commit or a later Main merge must not become privileged controller code.
+  branch=read('branches/main');require(branch['protected']is True,'protected controller workflow branch')
   phase='exact current producer package/job/artifact'
-  expected=producer_ready(req['source_commit'],platform,selected['producer_run_id'],selected['producer_attempt'],read,download);require(target(expected)==selected,'producer target changed')
+  expected=producer_ready(None,platform,selected['producer_run_id'],selected['producer_attempt'],read,download);require(target(expected)==selected,'candidate producer target changed')
+  require(candidate_download is not None,'installed candidate archive transport required')
+  archive=engine.stage_candidate(expected,candidate_download)
   phase='normal admitted prepare/stage/queue transaction'
-  result=engine.transaction('artifact',{'platform':platform,'artifact_id':expected['artifact_id']},expected_producer=expected)
+  result=engine.transaction('artifact',{'platform':platform,'artifact_id':expected['artifact_id']},expected_producer=expected,candidate_archive=archive)
   require(result['expected']==expected and result['status']=='passed'and result['active']is False and result['closure_verified']is True,'normal canonical transaction not closed')
   phase='actual image/USB/SteamOS and pointer proof'
   verified=verify_acceptance(result['steam_os_transaction'],expected,req)
   phase='post-transaction producer and Main recheck'
-  require(producer_ready(req['source_commit'],platform,selected['producer_run_id'],selected['producer_attempt'],read,download)==expected,'producer changed during runtime')
-  branch_after=read('branches/main');require(branch_after==branch,'current Main changed during operation')
+  require(producer_ready(expected['source_commit'],platform,selected['producer_run_id'],selected['producer_attempt'],read,download)==expected,'candidate producer changed during runtime')
+  branch_after=read('branches/main');require(branch_after['protected']is True,'controller workflow branch protection changed')
   engine.artifacts[platform]={'status':'passed','artifacts':{expected['artifact_id']:result}}
   value={'status':'passed','required_acceptance':verified,'exports':result['exports']}
  except Exception as first:
@@ -210,13 +255,22 @@ def emit_diagnostics(directory,reason,context=None):
  if os.environ.get('GITHUB_STEP_SUMMARY'):
   with open(os.environ['GITHUB_STEP_SUMMARY'],'a')as out:out.write('\nRequired actual OMEN GUI/SteamOS gate: **FAILED**\n\n'+reason.replace('|','/')+'\n\n| Required VM | Outcome |\n|---|---|\n'+''.join('| '+r['name']+' | failed / unavailable |\n'for r in rows))
 
+def candidate_context(value, expected, nonce, workflow_source):
+ require(type(value)is dict and set(value)=={'repository','source_commit','workflow_source_commit','candidate_source_commit','target','nonce'},'exact controller/candidate result context')
+ require(value['repository']==REPO and value['candidate_source_commit']==expected['source_commit']and value['target']==target(expected)and value['nonce']==nonce,'exact candidate producer/correlation context')
+ require(value['workflow_source_commit']==workflow_source and re.fullmatch('[0-9a-f]{40}',value['source_commit']or''),'exact authenticated controller workflow and installed source')
+ return value
+
 def main_dispatch(platform):
  directory=Path('required-omen-results');context=None;selected=None
  try:
-  require(os.environ['GITHUB_REPOSITORY']==REPO and os.environ['GITHUB_EVENT_NAME']in('push','workflow_dispatch')and os.environ['GITHUB_REF']=='refs/heads/main'and os.environ['GITHUB_REF_PROTECTED']=='true','PR/fork/unprotected event unavailable: no OMEN dispatch')
-  source=os.environ['GITHUB_SHA'];read=api_reader(os.environ['GITHUB_TOKEN']);branch=read('branches/main');require(branch['protected']is True and branch['commit']['sha']==source,'exact live protected Main required')
+  require(os.environ['GITHUB_REPOSITORY']==REPO and os.environ['GITHUB_EVENT_NAME']in('push','workflow_dispatch','pull_request'),'canonical candidate event required')
+  source=os.environ.get('OPEMOS_CANDIDATE_SHA',os.environ['GITHUB_SHA']);read=api_reader(os.environ['GITHUB_TOKEN']);branch=read('branches/main');require(branch['protected']is True,'protected controller workflow required')
   expected=producer_ready(source,platform,os.environ['GITHUB_RUN_ID'],os.environ['GITHUB_RUN_ATTEMPT'],read,metadata_download)
-  nonce=secrets.token_hex(16);context={'repository':REPO,'source_commit':source,'target':target(expected),'nonce':nonce};save(directory/'request.json',context)
+  require(expected['ref']==os.environ['GITHUB_REF'],'producer ref differs from actual candidate job')
+  nonce=secrets.token_hex(16);context={'repository':REPO,'candidate_source_commit':source,'target':target(expected),'nonce':nonce}
+  try:save(directory/'request.json',context)
+  except Exception as secondary:print('Optional request diagnostic unavailable: '+type(secondary).__name__,file=sys.stderr)
   inputs={'required_platform':platform,'producer_run':expected['producer_run_id'],'producer_attempt':expected['producer_attempt'],'artifact_id':expected['artifact_id'],'source_sha':source,'correlation_nonce':nonce}
   body=json.dumps({'ref':'main','inputs':inputs}).encode();opener=request.build_opener(NoRedirect)
   try:
@@ -227,10 +281,10 @@ def main_dispatch(platform):
   deadline=time.monotonic()+14400;selected=None
   title=f'04 SteamOS required {platform} {expected["producer_run_id"]}/{expected["producer_attempt"]} {nonce}'
   while time.monotonic()<deadline:
-   runs=items(read,'actions/workflows/omen-robot.yml/runs?event=workflow_dispatch&head_sha='+source,'workflow_runs');matches=[r for r in runs if r.get('display_title')==title]
+   runs=items(read,'actions/workflows/omen-robot.yml/runs?event=workflow_dispatch','workflow_runs');matches=[r for r in runs if r.get('display_title')==title]
    require(len(matches)<=1,'ambiguous dispatch correlation; no second dispatch')
    if matches:
-    selected=matches[0];require(selected['head_sha']==source and selected['head_branch']=='main'and selected['event']=='workflow_dispatch'and selected['repository']['full_name']==REPO,'consumer run identity')
+    selected=matches[0];require(re.fullmatch('[0-9a-f]{40}',selected['head_sha']or'')and selected['head_branch']=='main'and selected['event']=='workflow_dispatch'and selected['repository']['full_name']==REPO,'reviewed controller workflow run identity')
     if selected['status']=='completed':break
    time.sleep(10)
   require(selected is not None and selected['status']=='completed','OMEN result unavailable/timed out; no retry or old receipt')
@@ -244,7 +298,8 @@ def main_dispatch(platform):
    try:
     artifacts=items(read,f'actions/runs/{rid}/artifacts','artifacts');rows=[a for a in artifacts if a['name']==f'omen-required-result-{rid}-{attempt}'and a['expired']is False];require(len(rows)==1,'exact failed-result artifact missing')
     failed=archive_json(metadata_download(f"actions/artifacts/{rows[0]['id']}/zip"),rows[0],'required-result.json')
-    require(failed['kind']=='OMEN_REQUIRED_PRODUCER_RESULT_V1'and failed['status']=='failed'and failed['diagnostic_only']is True and failed['actualGUIAccepted']is False and failed['context']==context and failed['producer']==expected and failed['consumer']=={'run_id':rid,'attempt':attempt},'failed diagnostic exact current identities')
+    require(failed['kind']=='OMEN_REQUIRED_PRODUCER_RESULT_V1'and failed['status']=='failed'and failed['diagnostic_only']is True and failed['actualGUIAccepted']is False and failed['producer']==expected and failed['consumer']=={'run_id':rid,'attempt':attempt},'failed diagnostic exact current identities')
+    candidate_context(failed['context'],expected,nonce,selected['head_sha'])
     value=failed['broker_failure'];require(type(value)is dict,'typed failed broker cause missing')
     public_failure_value(value)
     broker_reason='Root broker '+value['code']+': '+value['reason']
@@ -256,8 +311,9 @@ def main_dispatch(platform):
    raise Refusal(broker_reason or 'required actual job missing/failed/skipped: '+bad_jobs[0])
   artifacts=items(read,f'actions/runs/{rid}/artifacts','artifacts');rows=[a for a in artifacts if a['name']==f'omen-required-result-{rid}-{attempt}'and a['expired']is False];require(len(rows)==1,'exact current result artifact missing')
   raw=metadata_download(f"actions/artifacts/{rows[0]['id']}/zip");result=archive_json(raw,rows[0],'required-result.json')
-  require(result['kind']=='OMEN_REQUIRED_PRODUCER_RESULT_V1'and result['context']==context and result['producer']==expected and result['consumer']=={'run_id':rid,'attempt':attempt}and result['status']=='passed'and result['diagnostic_only']is False,'strict current required result identity/status')
-  verify_acceptance(result['required_acceptance'],expected,result['consumer'])
+  require(result['kind']=='OMEN_REQUIRED_PRODUCER_RESULT_V1'and result['producer']==expected and result['consumer']=={'run_id':rid,'attempt':attempt}and result['status']=='passed'and result['diagnostic_only']is False,'strict current required result identity/status')
+  actual_context=candidate_context(result['context'],expected,nonce,selected['head_sha'])
+  verify_acceptance(result['required_acceptance'],expected,dict(result['consumer'],source_commit=actual_context['source_commit']))
   # Re-read immutable identities/current attempt; stale/re-run receipts fail.
   current=read(f'actions/runs/{rid}');require(current['run_attempt']==int(attempt)and current['status']=='completed'and current['conclusion']=='success','consumer attempt changed')
   require(producer_ready(source,platform,expected['producer_run_id'],expected['producer_attempt'],read,metadata_download)==expected,'producer changed after result')
@@ -271,14 +327,20 @@ def main_dispatch(platform):
   except Exception as secondary:print('Secondary failure-receipt persistence failed: '+type(secondary).__name__,file=sys.stderr)
   return 1
 
-def scope_guard():
+def scope_data():
  event=strict(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes());inputs=event.get('inputs',{});platform=inputs.get('required_platform','')
  require(platform in NATIVE and os.environ['GITHUB_EVENT_NAME']=='workflow_dispatch'and os.environ['GITHUB_REF']=='refs/heads/main'and os.environ['GITHUB_REF_PROTECTED']=='true','trusted finite required dispatch')
- source=inputs['source_sha'];require(source==os.environ['GITHUB_SHA']and re.fullmatch('[0-9a-f]{32}',inputs['correlation_nonce']or''),'exact current source/correlation')
- read=api_reader(os.environ['GITHUB_TOKEN']);branch=read('branches/main');require(branch['protected']is True and branch['commit']['sha']==source,'current protected Main')
+ source=inputs['source_sha'];require(re.fullmatch('[0-9a-f]{40}',source or'')and re.fullmatch('[0-9a-f]{32}',inputs['correlation_nonce']or''),'exact candidate source/correlation')
+ controller=os.environ['OPEMOS_SOURCE_SHA'];require(re.fullmatch('[0-9a-f]{40}',controller or''),'exact installed controller source')
+ read=api_reader(os.environ['GITHUB_TOKEN']);branch=read('branches/main');require(branch['protected']is True,'protected controller workflow')
  value=producer_ready(source,platform,inputs['producer_run'],inputs['producer_attempt'],read,metadata_download);require(value['artifact_id']==inputs['artifact_id'],'exact dispatch artifact')
- context={'repository':REPO,'source_commit':source,'target':target(value),'nonce':inputs['correlation_nonce']}
- save('robot-preflight/required-context.json',{'context':context,'producer':value})
+ context={'repository':REPO,'source_commit':controller,'workflow_source_commit':os.environ['GITHUB_SHA'],'candidate_source_commit':source,'target':target(value),'nonce':inputs['correlation_nonce']}
+ return {'context':context,'producer':value}
+
+def scope_guard():
+ data=scope_data();value=data['producer']
+ try:save('robot-preflight/required-context.json',data)
+ except Exception as secondary:print('Optional preflight context cache unavailable: '+type(secondary).__name__,file=sys.stderr)
  with open(os.environ['GITHUB_OUTPUT'],'a')as out:out.write('producer='+canonical(target(value)).decode()+'\n')
 
 def read_report(path,cap):
@@ -328,12 +390,28 @@ def broker_failure(reply):
 
 
 def finalize_scope():
- context=strict(Path('robot-preflight/required-context.json').read_bytes());reply=strict(Path('robot-results/broker-required.json').read_bytes());identity=reply['identity'];expected=context['producer']
- require(identity['repository']==REPO and identity['source_commit']==expected['source_commit']and identity['run_id']==os.environ['GITHUB_RUN_ID']and identity['attempt']==os.environ['GITHUB_RUN_ATTEMPT']and re.fullmatch('[0-9a-f]{32}',identity['nonce']),'actual current broker identity')
- require(reply['action']=='execute-produced-platform'and reply['subject']==context['context']['target'],'actual exact broker target')
+ reply=strict(Path('robot-results/broker-required.json').read_bytes());identity=reply['identity']
  failure=broker_failure(reply)
  if failure is not None:
+  # A failed broker envelope is never admission or acceptance. Preserve its
+  # first cause even if GitHub is unavailable or optional context was lost.
+  require(identity['repository']==REPO and identity['run_id']==os.environ['GITHUB_RUN_ID']and
+          identity['attempt']==os.environ['GITHUB_RUN_ATTEMPT']and
+          re.fullmatch('[0-9a-f]{40}',identity['source_commit']or'')and
+          re.fullmatch('[0-9a-f]{32}',identity['nonce']or''),'failed broker current run identity')
+  context={}
+  try:context=scope_data()
+  except Exception as secondary:
+   print('Secondary failed context reauthentication unavailable: '+type(secondary).__name__,file=sys.stderr)
+   try:context=strict(Path('robot-preflight/required-context.json').read_bytes())
+   except Exception:pass  # Historical cache is diagnostic DATA only on failure.
   refusal=Refusal('Root broker '+failure['code']+': '+failure['reason']);refusal.broker_failure=failure;refusal.failed_context=context;raise refusal
+ # Reauthenticate event/API/package data rather than requiring a diagnostic
+ # artifact from the earlier hosted job. A missing/unwritable cache is harmless.
+ context=scope_data();expected=context['producer']
+ require(identity['repository']==REPO and identity['source_commit']==context['context']['source_commit']and identity['run_id']==os.environ['GITHUB_RUN_ID']and identity['attempt']==os.environ['GITHUB_RUN_ATTEMPT']and re.fullmatch('[0-9a-f]{32}',identity['nonce']),'actual installed-controller broker identity')
+ candidate_context(context['context'],expected,context['context']['nonce'],os.environ['GITHUB_SHA'])
+ require(reply['action']=='execute-produced-platform'and reply['subject']==context['context']['target'],'actual exact broker target')
  require(reply['status']=='passed','actual exact broker target status')
  verified=verify_acceptance(reply['required_acceptance'],expected,identity)
  public=public_reports(reply);kinds={x['kind']for x in public};require({'robot-output','robot-report','robot-log','robot-xunit','screenshot','argv','pointer-action','nvidia-loaded','nvidia-render','gpu-restoration'}<=kinds,'all actual public reports/frames/native/SteamOS/NVIDIA evidence required')

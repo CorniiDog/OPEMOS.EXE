@@ -2,14 +2,14 @@ name: 03 macOS Executable
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: macos-arm64-${{ github.ref }}
+  group: macos-arm64-${{ github.run_id }}
   cancel-in-progress: false
 
 jobs:

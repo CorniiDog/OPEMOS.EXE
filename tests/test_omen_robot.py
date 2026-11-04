@@ -101,10 +101,10 @@ class HostedRunnerGuard(unittest.TestCase):
         del self.state['reason']
         self.state['telemetry']={'generation':2,'notes':['listener recovered']}
         self.assertEqual(self.run_gate(),0)
-    def test_recovery_metadata_does_not_authorize_stale_or_wrong_source(self):
+    def test_recovery_metadata_does_not_authorize_stale_or_malformed_source(self):
         self.state.update(queue_source_sha256='c'*64,recovery_nonce='d'*32)
         self.assertEqual(self.run_gate(now=1180),1)
-        self.state['source_commit']='b'*40
+        self.state['source_commit']='not-an-installed-commit'
         self.assertEqual(self.run_gate(),1)
     def test_missing_authoritative_runner_identity_still_refuses(self):
         del self.state['runner_id']
@@ -118,8 +118,15 @@ class HostedRunnerGuard(unittest.TestCase):
     def test_stale_heartbeat_fails_before_self_hosted_queue(self):
         self.assertEqual(self.run_gate(now=1180),1)
         self.assertIn('ready=false',(self.root/'output').read_text())
-    def test_other_source_fails(self):
-        self.state['source_commit']='b'*40;self.assertEqual(self.run_gate(),1)
+    def test_installed_controller_is_distinct_from_workflow_and_candidate(self):
+        self.state['source_commit']='b'*40;self.assertEqual(self.run_gate(),0)
+        self.assertIn('source='+'b'*40,(self.root/'output').read_text())
+    def test_missing_catalog_and_unwritable_optional_report_and_summary_do_not_veto(self):
+        (self.root/'ci/required-vms.json').unlink()
+        (self.root/'robot-preflight').write_bytes(b'optional report path occupied')
+        self.environ['GITHUB_STEP_SUMMARY']=str(self.root/'absent'/'summary')
+        self.assertEqual(self.run_gate(),0)
+        self.assertIn('ready=true',(self.root/'output').read_text())
     def test_other_labels_fail(self):
         self.state['labels']=['self-hosted'];self.assertEqual(self.run_gate(),1)
     def test_other_repository_fails(self):

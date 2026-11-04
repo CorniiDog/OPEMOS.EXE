@@ -5031,3 +5031,19 @@ current and their repository ownership is unambiguous.
   inputs, credentials, unrelated commits or governance changes. PR176 final
   squash `8301bdf9` and all ten checks/unchanged-head Core approval remain in
   authenticated `exe-pr176-8301bdf9-merge-handoff.json`; no evidence-only PR.
+
+- [ ] Automatic branch-push native package -> existing OMEN queue -> actual
+  SteamOS candidate test. Continue the same PR218 Actions stream, preserving
+  PR213 and the aggregate TWO cap. Controller, workflow and candidate identities
+  are separate; candidate archives are guest data, never controller source.
+  Root normal planner now constructs per-run JSON from installed pinned operation
+  data instead of requiring a new nonce-specific response/LLM review. Current
+  pool/worker/source/GPU/original-data/closure guards stay authoritative. Optional
+  report catalogs/summary paths no longer veto routing. Necessary lead-only
+  fast-forward push is for exact remote CI/Core review of this GitHub deliverable;
+  canonical remote `https://github.com/CorniiDog/OPEMOS.EXE.git`, bounded Actions
+  stream only, no private inputs/credentials/unrelated commits. AST/diff checks
+  pass; project tests must run in admitted CI/VM. No merge/deployment under the
+  unresolved R118 owner. Actual installed operation data reconciliation and fresh
+  heartbeat require its safe machine checkpoint. Automatic non-Main job/domain,
+  CPU/console/installer/GPU and normal-closure acceptance remain unverified.
