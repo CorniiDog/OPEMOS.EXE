@@ -367,7 +367,9 @@ class NativeTransactionOps:
  def create_paused(self,xml):
   import libvirt
   for path in('/usr/bin/virt-xml-validate','/usr/bin/xmllint'):held(self.g['nativeTools'][path],33554432)
-  schema=native_child(['/usr/bin/virt-xml-validate','-','domain'],self.effect_clock('create'),self.g['nativeTools']['/usr/bin/virt-xml-validate'],xml.encode());self.report('exact-installed-XML-before-create',schema);peer.need(schema['numeric']==0,'current exact XML installed schema before domain create')
+  schema=native_child(['/usr/bin/virt-xml-validate','-','domain'],self.effect_clock('create'),self.g['nativeTools']['/usr/bin/virt-xml-validate'],xml.encode());self.report('exact-installed-XML-before-create',schema)
+  if schema['numeric']!=0:
+   error=peer.Refused('current exact XML installed schema before domain create');error.nativeChildEvidence=schema;error.evidence={'nativeChildEvidence':schema,'XML':xml,'XMLBytes':len(xml.encode()),'XMLSHA256':hashlib.sha256(xml.encode()).hexdigest()};raise error
   peer.need(self.observer is not None,'independent observer must be subscribed before first domain')
   if self.conn is None:self.conn=libvirt.open('qemu:///system')
   peer.need(self.conn is not None and self.conn.getURI()=='qemu:///system','exact controlling connection')

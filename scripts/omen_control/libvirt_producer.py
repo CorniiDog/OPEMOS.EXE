@@ -79,7 +79,18 @@ def require_grant(grant,request,c,boot):
  return grant['wholeDeadlineUnix']
 
 def make_xml(c,request):
- peer.validate_request(request);E.register_namespace('opemos',peer.NS)
+ peer.validate_request(request)
+ adopted=__import__('retained_media').is_adopted(c)
+ if c.get('installer')is not None:
+  __import__('guest_firmware_probe').installer_contract(c)
+  if adopted:__import__('retained_media').observe(c)
+ xml=render_domain_xml(c,request,adopted)
+ if c.get('installer')is not None:__import__('guest_firmware_probe').validate_installer_xml(c,E.fromstring(xml))
+ return xml
+
+def render_domain_xml(c,request,adopted=False):
+ """Pure domain XML, no grant, machine admission or native effects."""
+ E.register_namespace('opemos',peer.NS)
  d=E.Element('domain',type='kvm')
  def x(parent,tag,text=None,**attrs):
   n=E.SubElement(parent,tag,attrs)
@@ -95,15 +106,13 @@ def make_xml(c,request):
  x(x(d,'resource'),'partition',request['partition']);o=x(d,'os');x(o,'type','hvm',arch='x86_64',machine='q35')
  x(o,'loader',c['firmwareCode']['path'],readonly='yes',type='pflash');x(o,'nvram',c['run']+'/OVMF_VARS_4M.fd');
  if c.get('installer')is None:x(o,'boot',None,dev='hd')
- else:__import__('guest_firmware_probe').installer_contract(c)
  x(o,'bootmenu',None,enable='yes')
  x(x(d,'features'),'acpi');x(d,'cpu',None,mode='host-passthrough',check='none');x(d,'clock',None,offset='utc')
  for n in('on_poweroff','on_reboot','on_crash'):x(d,n,'destroy')
- dev=x(d,'devices');x(dev,'emulator',c['qemu']['path']);disk=x(dev,'disk',None,type='file',device='disk');x(disk,'driver',None,name='qemu',type='raw',cache='none');x(disk,'source',None,file=c['working']['path']);
+ dev=x(d,'devices');x(dev,'emulator',c['qemu']['path']);disk=x(dev,'disk',None,type='file',device='disk');x(disk,'driver',None,name='qemu',type='raw',cache='none');source=x(disk,'source',None,file=c['working']['path']);
  if c.get('installer')is None:x(disk,'target',None,dev='sda',bus='sata');x(disk,'serial','OPEMOS3828ABR4')
  else:
-  if __import__('retained_media').is_adopted(c):
-   __import__('retained_media').observe(c);x(disk,'seclabel',None,model='dac',relabel='no')
+  if adopted:x(source,'seclabel',None,model='dac',relabel='no')
   x(disk,'target',None,dev='sda',bus='usb');x(disk,'serial','OPEMOS_STEAMOS_RETAINED_ISO');x(disk,'readonly');x(disk,'boot',None,order='1')
  x(dev,'controller',None,type='sata',index='0');x(dev,'controller',None,type='pci',index='0',model='pcie-root');rp=x(dev,'controller',None,type='pci',index='1',model='pcie-root-port');x(rp,'target',None,chassis='1',port='0x10');x(rp,'address',None,type='pci',domain='0x0000',bus='0x00',slot='0x02',function='0x0')
  for i in range(4):
@@ -112,7 +121,6 @@ def make_xml(c,request):
   x(h,'address',None,**a)
  s=x(dev,'serial',None,type='file');x(s,'source',None,path=c['output']+'/serial.raw',append='on');x(s,'target',None,type='isa-serial',port='0')
  g=x(dev,'graphics',None,type='vnc',autoport='no');x(g,'listen',None,type='socket',socket=c['run']+'/vnc.sock');x(x(x(dev,'video'),'model',None,type='virtio',heads='1',primary='yes'),'resolution',None,x='1600',y='900');x(dev,'controller',None,type='usb',model='qemu-xhci',index='0');x(dev,'input',None,type='tablet',bus='usb');x(dev,'input',None,type='keyboard',bus='usb');x(dev,'memballoon',None,model='none')
- if c.get('installer')is not None:__import__('guest_firmware_probe').validate_installer_xml(c,d)
  return E.tostring(d,encoding='unicode')+'\n'
 
 

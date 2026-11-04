@@ -177,6 +177,26 @@ class RetainedMediaContract(unittest.TestCase):
                 subprocess.run([tools['losetup'], '--detach', device], check=True)
             self.assertFalse(media.owned_mount(mount, device))
 
+    @unittest.skipUnless(os.geteuid()==0 and sys.platform=='linux','admitted Linux Root only')
+    def test_schema_failure_preserves_real_native_helper_evidence_before_any_domain(self):
+        import libvirt_native as native
+        import install_media_controller as installer
+        import time
+        self.assertIsNotNone(shutil.which('virt-xml-validate'))
+        now=time.time();ops=native.NativeTransactionOps({},lambda *a:None)
+        ops.g={'nativeTools':{p:installer.pin(p)for p in ('/usr/bin/virt-xml-validate','/usr/bin/xmllint')},
+               'issuedUnix':now-1,'startBeforeUnix':now+20,'preflightObservedUnix':now}
+        ops.deadline=now+20
+        before=set(os.listdir('/proc/self/fd'))
+        with self.assertRaises(Exception)as caught:ops.create_paused('<domain/>')
+        evidence=caught.exception.nativeChildEvidence
+        self.assertNotEqual(evidence['numeric'],0)
+        self.assertTrue(evidence['EOF']and evidence['reaped']and evidence['pipesClosed'])
+        self.assertEqual(caught.exception.evidence['XML'],'<domain/>')
+        self.assertTrue(evidence['stderr'])
+        self.assertEqual(before,set(os.listdir('/proc/self/fd')))
+        self.assertIsNone(ops.conn)
+
     def test_retained_terminal_history_does_not_consume_pending_capacity(self):
         import test_queue as queue
         import held_history_reader as reader
@@ -627,6 +647,7 @@ class RetainedMediaContract(unittest.TestCase):
                     'candidate':c,'issuedUnix':now,'startBeforeUnix':now+299,'wholeDeadlineUnix':now+900,
                     'sourceRoles':roles,'jobId':spec['id'],'normalizedSpecTemplate':spec,
                     'installedSourceContractPin':installed['sourceContractPin'],'queuePrograms':installed['queuePrograms'],
+                    'actualInstalledQueueFull9':installed['queuePrograms'][0],
                     'preparedAccessPin':stagepin,'preparedDiskPins':disks,'splitDiskCapturePins':captures,
                     'sourcePlacementPin':storagepin,'placementQualificationPin':qualifiedpin,'prequeuePreflightPin':prepin,
                     'postqueueDelegation':'ROOT_EXACT_CANONICAL_BINDING_ONLY_R5',
@@ -666,6 +687,44 @@ except peer.Refused as error:
                            cpus=[0,1,2,3],controllerMemory=2147483648,domainMemory=8589934592,
                            reservationMemory=10737418240,vmSlice='opemos-vm-pool-libvirt'+jobtoken+'.slice',
                            partition='/opemos/vm/pool/libvirt'+jobtoken,gpuGroup='omen-iommu-group-1')
+            # SAME current entry capture producer -> actual FD consumer. All
+            # installed roles are required; no QEMU/native facts are modeled as pass.
+            import runtime_entry
+            capture_context={'candidate':c,'sourceRoles':roles,'parentPin':parent_ref}
+            capture_grant={'queuePrograms':installed['queuePrograms'],
+                           'normalizedSpecSHA256':request['specSHA256']}
+            capture=runtime_entry.capture_binding(capture_context,parent,capture_grant,request)
+            fd=os.open(c['working']['path'],os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+            initial_fds=set(os.listdir('/proc/self/fd'))
+            try:
+                observation=peer.dac_fd_lifetime(c,request,{fd:{'key':'working'}},capture,'fixture-before-create')
+                self.assertEqual(observation['errors'],[])
+                self.assertEqual(observation['controllerFDs'][0]['actualHeld'],disks['working']['identity'])
+                for field in ('role','nonce','job','source-hash'):
+                    bad=copy.deepcopy(capture)
+                    if field=='role':bad['sourceRoles'].pop('retained_media')
+                    elif field=='nonce':bad['nonce']='0'*32
+                    elif field=='job':bad['jobId']='foreign-job'
+                    else:bad['sourceGraphSHA256']='0'*64
+                    with self.assertRaises(Exception):peer.dac_fd_lifetime(c,request,{fd:{'key':'working'}},bad,'fixture-close')
+                self.assertEqual(initial_fds,set(os.listdir('/proc/self/fd')))
+            finally:os.close(fd)
+            # Complete actual renderer -> installed libvirt schema. The paths
+            # and media content are explicitly MODELED; no domain is created.
+            tool=shutil.which('virt-xml-validate')
+            self.assertIsNotNone(tool,'admitted Root CI must include the installed libvirt validator')
+            xml_candidate=dict(c,firmwareCode={'path':'/usr/share/OVMF/OVMF_CODE_4M.fd'},
+                               qemu={'path':'/usr/bin/qemu-system-x86_64'})
+            xml=producer.render_domain_xml(xml_candidate,request,adopted=True)
+            schema=subprocess.run([tool,'-','domain'],input=xml.encode(),capture_output=True,timeout=10)
+            self.assertEqual(schema.returncode,0,schema.stderr.decode())
+            import xml.etree.ElementTree as ET
+            tree=ET.fromstring(xml);disk=tree.find('devices/disk')
+            label=disk.find('source/seclabel');self.assertIsNotNone(label)
+            self.assertEqual(label.attrib,{'model':'dac','relabel':'no'})
+            disk.find('source').remove(label);disk.append(label)
+            rejected=subprocess.run([tool,'-','domain'],input=ET.tostring(tree),capture_output=True,timeout=10)
+            self.assertNotEqual(rejected.returncode,0,'the old disk-level DAC label must be schema-invalid')
             with adapter.RootInputs(request.get('currentControl'))as inputs:
                 accepted=adapter.verify_inputs(request,inputs,boot,include_context=False)
                 self.assertEqual(accepted['implementationAccessPin'],roles['libvirt_access'])
