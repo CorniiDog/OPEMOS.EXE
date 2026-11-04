@@ -1025,8 +1025,10 @@ def normalize_job(row, base):
 
 def enqueue(db, jobs):
     cfg = config(db)
-    existing = {r["id"]: json.loads(r["spec"]) for r in db.execute("SELECT id,spec FROM jobs")}
-    require(len(existing) + len(jobs) <= MAX_JOBS, "Finite queue limit: 256 jobs")
+    retained = list(db.execute("SELECT id,spec,state,finished FROM jobs"))
+    existing = {r["id"]: json.loads(r["spec"]) for r in retained}
+    outstanding = sum(r["state"] not in TERMINAL or r["state"] == "unknown" or r["finished"] is None for r in retained)
+    require(outstanding + len(jobs) <= MAX_JOBS, "Finite outstanding queue limit: 256 jobs")
     ids = [x["id"] for x in jobs]
     require(len(ids) == len(set(ids)) and not set(ids) & existing.keys(), "Duplicate job ID; no implicit retries")
     all_jobs = {**existing, **{x["id"]: x for x in jobs}}
@@ -1716,7 +1718,7 @@ def history_publish(parent,raw,suffix,uid,archive_view=None):
 def terminal_history_store(db,epoch,row,invocation):
     require(db.in_transaction,'History preparation retains original SQLite writer lock')
     root,uid=history_root(db)
-    raw=(canonical(epoch)+'\n').encode();require(len(epoch['rows'])<=MAX_JOBS,'Finite full history rows')
+    raw=(canonical(epoch)+'\n').encode();require(len(raw)<=HISTORY_FILE_MAX,'Complete history within unchanged byte ceiling')
     identity={'jobId':row['id'],'unit':row['unit'],'InvocationID':invocation}
     with history_directory(root,uid,True) as parent:
         allocated,count=history_inventory(parent,uid)
@@ -1739,7 +1741,7 @@ def terminal_history_resolve(root,uid,value,job,unit,invocation):
     if value.get('kind')!=HISTORY_KIND:
         require(set(value)=={'rows','pool','bindings','config'} and type(value['rows'])is list,'Exact legacy embedded epoch, never unknown reference')
         return value
-    require(set(value)=={'kind','identity','manifest','epochBytes','epochSHA256','rowCount'} and value['identity']=={'jobId':job,'unit':unit,'InvocationID':invocation} and type(value['rowCount'])is int and 0<value['rowCount']<=MAX_JOBS,'Exact original terminal reference context')
+    require(set(value)=={'kind','identity','manifest','epochBytes','epochSHA256','rowCount'} and value['identity']=={'jobId':job,'unit':unit,'InvocationID':invocation} and type(value['rowCount'])is int and 0<value['rowCount'],'Exact original terminal reference context')
     with history_directory(root,uid) as parent:
         history_inventory(parent,uid)
         mraw=history_read_leaf(parent,value['manifest'],uid,HISTORY_METADATA_MAX);m=json.loads(mraw)
@@ -3106,13 +3108,13 @@ def libvirt_export_directory(root,uid,create=False):
             else:raise ValueError('Export descriptor closure UNKNOWN:'+repr(errors))
 
 def libvirt_export_inventory(parent,uid):
-    names=os.listdir(parent);require(len(names)<=MAX_JOBS and len(names)==len(set(names)),'Finite assignment export namespace')
-    allocated=os.fstat(parent).st_blocks*512
+    names=os.listdir(parent);require(len(names)==len(set(names)),'Unique assignment export namespace')
+    allocated=max(os.fstat(parent).st_size,os.fstat(parent).st_blocks*512);require(allocated<=HISTORY_METADATA_MAX*4//5,'Existing assignment metadata20percent headroom')
     for name in names:
         require(name.endswith('.json')and NAME.fullmatch(name[:-5]),'Unknown assignment export retained/refused')
         fd=os.open(name,os.O_RDONLY|os.O_NOFOLLOW,dir_fd=parent)
         try:
-            i=history_equal(fd,parent,name);require(stat.S_ISREG(i['st_mode'])and i['st_uid']==uid and i['st_nlink']==1 and stat.S_IMODE(i['st_mode'])==0o400 and 0<i['st_size']<=65536,'Immutable assignment header custody/cap');allocated+=os.fstat(fd).st_blocks*512
+            i=history_equal(fd,parent,name);require(stat.S_ISREG(i['st_mode'])and i['st_uid']==uid and i['st_nlink']==1 and stat.S_IMODE(i['st_mode'])==0o400 and 0<i['st_size']<=65536,'Immutable assignment header custody/cap');allocated+=max(i['st_size'],os.fstat(fd).st_blocks*512);require(allocated<=HISTORY_METADATA_MAX*4//5,'Existing assignment metadata20percent headroom')
         finally:history_close_owned(fd)
     require(allocated<=HISTORY_METADATA_MAX*4//5,'Existing assignment metadata20percent headroom');return allocated,names
 
@@ -3136,7 +3138,7 @@ def publish_libvirt_assignment(db,row,bound,metrics=None):
         value=diagnostic_ledger(db);archive_rows=pool_rows(db,value['rows']);own=next(r for r in value['rows']if r['id']==row['id']);bindings=dict(value['bindings'])
         require(own=={k:v for k,v in row.items()if k!='_poolBinding'}and own['state']=='running'and own['finished']is None and own['result']is None and bindings[own['id']]==canonical(bound),'Exact committed running row/binding in same SQL snapshot')
         require(libvirt_request(own,json.loads(bindings[own['id']]))==request,'Snapshot exact immutable spec/unit/invocation/CPU derivation')
-        require(len(value['rows'])<=MAX_JOBS and len({r['id']for r in value['rows']})==len(value['rows'])and len(bindings)==len(value['bindings']),'Complete unique current history')
+        require(len({r['id']for r in value['rows']})==len(value['rows'])and len(bindings)==len(value['bindings']),'Complete unique current history')
         raw=(canonical(value)+'\n').encode();require(len(raw)<=HISTORY_FILE_MAX,'Existing complete64MiB history product bound')
         change_count=db.total_changes;require(change_count==before_changes,'Read snapshot cannot mutate queue SQL')
     finally:db.rollback()
@@ -3189,7 +3191,7 @@ def read_libvirt_assignment_export(root,job,expectedWorker,expectedSource,expect
             rows=[{k:v for k,v in r.items()if k!='_poolBinding'}for r in enriched]
             value={'rows':rows,'bindings':manifest['bindings'],'config':manifest['config']};raw=(canonical(value)+'\n').encode()
             require(len(raw)==header['canonicalBytes']==manifest['canonicalBytes']<=HISTORY_FILE_MAX and hashlib.sha256(raw).hexdigest()==header['canonicalSHA256']==manifest['canonicalSHA256'],'Complete exact current rows/bindings/config SHA')
-            require(len(rows)==header['rowCount']<=MAX_JOBS and len({r['id']for r in rows})==len(rows)and len(dict(value['bindings']))==len(value['bindings'])==header['bindingCount']and len(value['config'])==header['configCount'],'Unique complete snapshot counts')
+            require(len(rows)==header['rowCount'] and len({r['id']for r in rows})==len(rows)and len(dict(value['bindings']))==len(value['bindings'])==header['bindingCount']and len(value['config'])==header['configCount'],'Unique complete snapshot counts')
             own=next(r for r in rows if r['id']==job);bound=json.loads(dict(value['bindings'])[job]);require(own['state']=='running'and own['finished']is None and own['result']is None and libvirt_request(own,bound)==header['request'],'Actual snapshot running invocation/spec/request')
             require(history_read_leaf(history,header['manifest'],uid,HISTORY_METADATA_MAX,archive_view)==mr,'Manifest reread unchanged')
             for pin in manifest['rows']:history_read_leaf(history,pin,uid,HISTORY_FILE_MAX,archive_view)

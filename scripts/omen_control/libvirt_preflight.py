@@ -165,7 +165,7 @@ def late_control_selection(e,persist):
  selected.update(probePin=ref,transportPin=tr,producerPin=producer);persist('late-existing-normal-control-selection',selected);return selected
 
 def control_pre_predicate_evidence(values,job):
- p.need(set(values)=={'rows','bindings','config'}and len(values['rows'])<=256,'complete finite canonical rows/bindings/config diagnostic input')
+ p.need(set(values)=={'rows','bindings','config'},'complete finite canonical rows/bindings/config diagnostic input')
  raw=p.canon(values);p.need(len(raw)<=67108864,'unchanged full canonical64MiB')
  def row(r):
   result=r['result'];return {**{k:r[k]for k in('id','state','unit','started','finished')},'resultIsNone':result is None,'resultBytes':None if result is None else len(result.encode()),'resultSHA256':None if result is None else hashlib.sha256(result.encode()).hexdigest()}
@@ -296,7 +296,12 @@ def produce(c,e,persist):
  def load(ref,name,digest):
   p.need(ref['sha256']==digest and ref['identity']['st_uid']==ref['identity']['st_gid']==0,'exact accepted readonly source bytes/Root pin');raw=held(ref,65536);m=types.ModuleType(name);exec(compile(raw,ref['path'],'exec'),m.__dict__);return m
  native=load(e['nativeReadOnlyPin'],'held_existing_readonly_native','fd1cc2b458394580a82d08cd5673f67ff6e5f026dbe94129b2950e867f1eebc4')
- reader=load(e['historyReaderPin'],'held_exact_history_reader','ac3d2bccb29bd4ba47b03d86d62d917cfacb2e0220416e503d786189cd379bab').read_private_history
+ reader_sha='ac3d2bccb29bd4ba47b03d86d62d917cfacb2e0220416e503d786189cd379bab'
+ if 'operationContext'in c:
+  definition=__import__('source_contract').validate(e['sourceRoles'],e['queuePrograms'],e['installedSourceContractPin'])
+  p.need(e['historyReaderPin']==definition['sourceRoles']['held_history_reader'],'same authenticated current history reader')
+  reader_sha=e['historyReaderPin']['sha256']
+ reader=load(e['historyReaderPin'],'held_exact_history_reader',reader_sha).read_private_history
  captures={key:json.loads(held(e['splitDiskCapturePins'][key],1048576))for key in('original','working')}
  for ref in e['splitDiskCapturePins'].values():p.need(ref['identity']['st_uid']==ref['identity']['st_gid']==0 and stat.S_IMODE(ref['identity']['st_mode'])==0o400,'Root protected adopted complete captures')
  original=disk_capture(e.get('preparedDiskPins',c)['original'],captures['original'],boot);working=disk_capture(e.get('preparedDiskPins',c)['working'],captures['working'],boot,candidate=c)

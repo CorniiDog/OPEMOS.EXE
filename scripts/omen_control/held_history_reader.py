@@ -18,7 +18,7 @@ def read_private_history(c,*,maximum_bytes=64*1024**2):
     """
     if c.getlimit(sqlite3.SQLITE_LIMIT_LENGTH)!=8*1024**2:raise ValueError('unchanged SQL8MiB cap')
     if type(maximum_bytes)is not int or not 0<maximum_bytes<=64*1024**2:raise ValueError('finite unchanged per-product64MiB ceiling')
-    total=0;rows=[];stats=[]
+    total=0;encoded_rows=2;rows=[];stats=[]
     query='SELECT rowid,id,spec,state,cpus,unit,started,finished,typeof(result) FROM jobs ORDER BY rowid'
     for record in c.execute(query):
         rowid,*values,typ=record
@@ -37,9 +37,11 @@ def read_private_history(c,*,maximum_bytes=64*1024**2):
                 if b.read(1)!=b'':raise ValueError('private blob trailing data')
                 parts.append(decoder.decode(b'',final=True))
             r['result']=''.join(parts);total+=n;stats.append({'id':r['id'],'bytes':n,'sha256':h.hexdigest()})
-        if len(rows)>=256:raise ValueError('finite private row count')
+        encoded_rows+=len(json.dumps(r,sort_keys=True,separators=(',',':'),allow_nan=False).encode())+1
+        if encoded_rows>maximum_bytes:raise ValueError('finite complete private history product')
         rows.append(r)
     value={'rows':rows,'bindings':[list(x) for x in c.execute('SELECT job_id,value FROM pool_unit_bindings ORDER BY rowid')],'config':[list(x) for x in c.execute('SELECT id,value FROM config ORDER BY rowid')]}
     metadata={k:v for k,v in value.items() if k!='rows'}
     if len(json.dumps(metadata,sort_keys=True,separators=(',',':')).encode())>1024**2:raise ValueError('unchanged1MiB bindings/config metadata cap')
+    if len(json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False).encode())>maximum_bytes:raise ValueError('finite complete private history product')
     return value,stats

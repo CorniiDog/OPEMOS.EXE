@@ -177,6 +177,40 @@ class RetainedMediaContract(unittest.TestCase):
                 subprocess.run([tools['losetup'], '--detach', device], check=True)
             self.assertFalse(media.owned_mount(mount, device))
 
+    def test_retained_terminal_history_does_not_consume_pending_capacity(self):
+        import test_queue as queue
+        import held_history_reader as reader
+        import sqlite3
+        # Real private SQL and ordinary enqueue; synthetic metadata ONLY.
+        # No worker/command/grant/domain is run or claimed successful.
+        with tempfile.TemporaryDirectory(prefix='opemos-capacity-') as tmp:
+            state=Path(tmp)/'state'
+            with contextlib.redirect_stdout(io.StringIO()):queue.main(['--queue',str(state),'init'])
+            root,db=queue.connect(state)
+            try:
+                spec=lambda name:{'id':name,'cores':1,'memory':1024,'depends_on':[]}
+                old=[]
+                for i in range(256):
+                    name='retained-'+str(i);old.append(name)
+                    db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',(name,queue.canonical(spec(name)),'failed','[]',None,1.0,2.0,None))
+                db.commit()
+                queue.enqueue(db,[spec('fresh-one')])
+                self.assertEqual(db.execute('SELECT count(*) FROM jobs').fetchone()[0],257)
+                self.assertEqual([x[0]for x in db.execute('SELECT id FROM jobs ORDER BY rowid')][:256],old)
+                db.setlimit(sqlite3.SQLITE_LIMIT_LENGTH,8*1024**2)
+                values,stats=reader.read_private_history(db)
+                self.assertEqual(len(values['rows']),257)
+                self.assertEqual(values['rows'][-1]['id'],'fresh-one')
+                with self.assertRaisesRegex(ValueError,'finite complete private history product'):
+                    reader.read_private_history(db,maximum_bytes=128)
+                queue.enqueue(db,[spec('pending-'+str(i))for i in range(255)])
+                with self.assertRaisesRegex(ValueError,'outstanding queue limit'):
+                    queue.enqueue(db,[spec('must-wait')])
+                db.execute("UPDATE jobs SET state='failed',finished=2.0 WHERE id='fresh-one'");db.commit()
+                with self.assertRaisesRegex(ValueError,'Duplicate job ID'):
+                    queue.enqueue(db,[spec('retained-0')])
+            finally:db.close()
+
     @unittest.skipUnless(os.geteuid() == 0 and sys.platform == 'linux', 'admitted Linux Root only')
     def test_normal_io_namespace_to_real_uid_stage_and_consumer(self):
         import run_current_media as entry

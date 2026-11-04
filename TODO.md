@@ -5308,3 +5308,27 @@ R121 publication: normal receive-pack returned server500 three times with ref ab
   remains actual next run (tiny fixture media/native facts explicitly modeled,
   never fabricated content or grant). All current Root/fullconsumer tests and
   exact Core source/caller/effects review before changed deployment/freshrun.
+
+- Actual5e828 intake full snapshot now256 rows. Existing lifetime MAX_JOBS256
+  would deterministically veto the next submission despite all retained rows
+  terminal. Under explicit user removal of bookkeeping launch gates, preserve
+  MAX_JOBS256 as outstanding pending/running/unknown/unclosed capacity only.
+  Terminal history remains exact data, not consumed capacity. No row deletion,
+  quota/hardware/CPU/RAM/60GB/64MiB history or1536 archive-inode budget increase.
+- Complete private reader, assignment/terminal snapshot producer+consumer stop
+  treating256 historical rows/header names as launch authority; retain existing
+  full canonical64MiB, per-row SQL8MiB/metadata1MiB, exact IDs/rawhash/full9/FD,
+  archive64MiB+20percentheadroom and source/unique/count equality. Export metadata
+  is bounded by actual logical/allocated bytes continuously, no arbitrary name
+  count. Current history-reader code authenticated from existing V2 definition;
+  original contextless oldreader SHA stays historical, never relabeled.
+- Existing regression adds real SQLite257 retained+new row preservation through
+  actual enqueue->complete private reader; pending256 still refuses257, duplicate
+  IDs and exact byte-cap refusals retained. Synthetic metadata only, no task run
+  or fake native/VM approval. Normal Root/fullconsumer suite and exact review
+  required before changed effects. Old Root control16177/controller graph remains
+  untouched; any old-control source-transition follow-on stays explicit, not a
+  silently rewritten policy. Actual full availability probe currently refuses
+  bounded active-workflow frontier; retained as API frontier failure, NOT busy
+  Runner21 or a VM/GPU failure. Existing offline-queue patch remains for adoption
+  at safe checkpoint; not substituted for direct actual VM test.

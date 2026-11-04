@@ -58,7 +58,7 @@ def capture_execution_job(c,binding):
 
 def from_values(value,prior,c,g,queue,parent=None):
  counts={k:len(v)for k,v in prior.items()};raw=p.canon(prior)
- p.need(set(prior)=={'rows','bindings','config'}and 0<len(prior['rows'])<256 and len(prior['bindings'])<=256 and counts==g['priorHistoryCounts']and len(raw)==g['priorHistoryBytes']and hashlib.sha256(raw).hexdigest()==g['priorHistorySHA256'],'exact full independently pinned current prior history')
+ p.need(set(prior)=={'rows','bindings','config'}and 0<len(prior['rows']) and len(raw)<=67108864 and counts==g['priorHistoryCounts']and len(raw)==g['priorHistoryBytes']and hashlib.sha256(raw).hexdigest()==g['priorHistorySHA256'],'exact full independently pinned current prior history')
  p.need(len({r['id']for r in prior['rows']})==len(prior['rows'])and len(dict(prior['bindings']))==len(prior['bindings']),'unique prior row and keyed binding inventory')
  p.need(set(value)=={'rows','bindings','config'}and len(value['rows'])==len(prior['rows'])+1 and len(value['bindings'])==len(prior['bindings'])+1 and value['rows'][:-1]==prior['rows']and value['config']==prior['config'],'complete prior ordered rows/config unchanged plus one exact append')
  bindings=dict(value['bindings']);p.need(len(bindings)==len(value['bindings'])and all(bindings.get(k)==v for k,v in prior['bindings']),'all unique keyed prior binding bytes exact')
