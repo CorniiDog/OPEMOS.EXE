@@ -887,6 +887,10 @@ class RetainedMediaContract(unittest.TestCase):
                              hashlib.sha256((SOURCE / 'libvirt_access.py').read_bytes()).hexdigest())
             self.assertEqual(queue.R109_CURRENT_ADAPTER,
                              (SOURCE / 'standalone_peer_access_adapter.py').read_text())
+            import libvirt_preflight as preflight
+            import queue_assignment as assignment
+            self.assertEqual(preflight.QUEUE_SHA,hashlib.sha256((SOURCE/'test_queue.py').read_bytes()).hexdigest())
+            self.assertEqual(assignment.QUEUE_SHA,preflight.QUEUE_SHA)
         finally: sys.modules.pop(spec.name, None)
 
     @unittest.skipIf(os.geteuid() == 0, 'normal queue CLI runs as the unprivileged queue owner')

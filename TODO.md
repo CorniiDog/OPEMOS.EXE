@@ -5226,3 +5226,13 @@ R121 publication: normal receive-pack returned server500 three times with ref ab
   existing fixture to invoke actual create_io_namespace and real sixrole DAC
   probe, then carry actual io_ancestor into its modeled-media stage, same as
   normal producer. Runtime bodies unchanged from5c, current tests rerun in CI.
+
+- Actualb1 Linux126866229582 progressed both installed fixtures through real UID
+  probe/prepared/issuer binding, then submission_manifest correctly refused the
+  stale paired queue digest in preflight. Retain raw first. Coherent current
+  queue body is exact5c; shared preflight QUEUE_SHA now authenticates that body,
+  assignment imports that SAME existing definition instead of maintaining a
+  second copy. Original CONTROL_QUEUE_SHA16177 remains exact historical/current
+  control lineage. Existing normal-queue test now asserts complete queue ->
+  shared preflight -> assignment join before the larger installed fixture.
+  No security/hash predicate removed, no new manifest or authority bypass.
