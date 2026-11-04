@@ -37,6 +37,24 @@ import retained_media as media
 import source_contract
 
 
+
+def create_io_namespace(c):
+    """Owned grouping directory permits traversal, never listing or writes.
+
+    The six generated leaf/directory ACLs still grant the libvirt UID its
+    exact rights. A private0700 grouping ancestor would defeat every one.
+    """
+    path = source_contract.candidate_paths(c)['ioRoot']
+    producer.create_root(path)
+    with access.Held(path) as obj:
+        before = obj.check()
+        p.need(stat.S_IMODE(before['st_mode']) == 0o700, 'fresh private IO namespace')
+        os.fchmod(obj.fd, 0o711)
+        after = obj.check(True)
+        p.need(all(after[k] == before[k] for k in access.OBJECT), 'same owned IO ancestor')
+    return access.io_ancestor(c)
+
+
 def pin(path, cap=67108864):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
@@ -298,7 +316,8 @@ class Run:
         leases = [p.historical_lease_provenance(str(x), values['rows'], values['bindings'], queue, self.boot)
                   for x in sorted(Path('/run').glob('opemos-vfio-*'))]
         p.verify_historical_lease_set(leases, values['rows'], values['bindings'], queue, self.boot)
-        for path in (self.mount, self.io, self.placement_root): producer.create_root(str(path))
+        for path in (self.mount, self.placement_root): producer.create_root(str(path))
+        create_io_namespace(self.c)
         backing = self.c['installer']['backing']
         p.need(pin(backing['path'], backing['bytes']) == backing, 'current authenticated retained backing')
         for path in Path('/sys/class/block').glob('loop*/loop/backing_file'):

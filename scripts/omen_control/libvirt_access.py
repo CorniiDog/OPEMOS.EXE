@@ -155,7 +155,9 @@ def probe(paths,original,persist):
    if not b:break
    raw+=b;p.need(len(raw)<=65536,'bounded DAC child result')
   got,status=os.waitpid(pid,0);known=True;p.need(got==pid and os.waitstatus_to_exitcode(status)==0,'DAC child numeric/EOF/reap')
-  v=json.loads(raw);p.need(v['uid']==UID and all(x['allowed']for x in v['rows'])and not v['originalAllowed'],'effective UID working IO access; immutable original inaccessible')
+  v=json.loads(raw)
+  if not(v['uid']==UID and all(x['allowed']for x in v['rows'])and not v['originalAllowed']):
+   error=p.Refused('effective UID working IO access; immutable original inaccessible');error.evidence={'kind':'EFFECTIVE_UID_ACCESS_REFUSAL','actor':actor,'numeric':0,'EOF':True,'reaped':True,'FDsClosed':True,'value':v};raise error
   persist('dac-probe-terminal',{'actor':actor,'numeric':0,'EOF':True,'reaped':True,'FDsClosed':True,'value':v});return v
  finally:
   os.close(rd)
@@ -165,6 +167,17 @@ def probe(paths,original,persist):
 
 def metadata_pin(path):
  with Held(path)as h:return {'path':str(path),'identity':h.check()}
+
+
+def io_ancestor(c,recorded=None):
+ """Current shared IO grouping path is traverse-only; leaf ACLs grant access."""
+ if 'operationContext'not in c:return None
+ path=__import__('source_contract').candidate_paths(c)['ioRoot']
+ with Held(path)as h:
+  now=h.check();p.need(stat.S_ISDIR(now['st_mode'])and stat.S_IMODE(now['st_mode'])==0o711 and ACL().get(h.fd)=='user::rwx\ngroup::--x\nother::--x\n','exact owned traverse-only IO ancestor')
+  if recorded is not None:p.need(recorded['path']==path and all(now[k]==recorded['identity'][k]for k in CORE),'same declared IO ancestor inode/owner/mode')
+  return {'path':path,'identity':now}
+
 
 def stage_io(c,grant_pin,persist):
  """Finite generated-only access preparation, BEFORE runtime clocks begin.
@@ -208,8 +221,9 @@ def stage_io(c,grant_pin,persist):
   elif not role.endswith('parent'):
    with Held(path)as h:n,d=hashfd(h.fd);ref.update(bytes=n,sha256=d)
   row=(__import__('retained_media').access_row(c,path,ref,role)if __import__('retained_media').is_adopted(c)and role in('working','working-parent')else plan(path,ref,role,verified_content=(c['working']if role=='working'else None),readonly_media=(c.get('installer')is not None and role=='working')));rows.append(row);after.append(apply(row,persist,defer_working_hash=True))
+ ancestor=io_ancestor(c)
  probe(rows,c['original']['path'],persist)
- result={'kind':'LIBVIRT_R7_ACCESS_STAGE_PENDING_FULL_HASH','nonce':c['nonce'],'bootID':g['bootID'],'candidate':c,'grantPin':grant_pin,'rows':rows,'after':after,'original':c['original'],'workingBefore':c['working'],'pendingFullContentProof':True,'runtimeAuthorized':False}
+ result={'kind':'LIBVIRT_R7_ACCESS_STAGE_PENDING_FULL_HASH','nonce':c['nonce'],'bootID':g['bootID'],'candidate':c,'grantPin':grant_pin,'rows':rows,'after':after,'original':c['original'],'workingBefore':c['working'],'pendingFullContentProof':True,'runtimeAuthorized':False,'ioAncestor':ancestor}
  persist('access-stage-pending',result);return result
 
 def prepared_lineage(c,ref,disk_pins):
@@ -219,6 +233,7 @@ def prepared_lineage(c,ref,disk_pins):
  p.need(ref['identity']['st_uid']==ref['identity']['st_gid']==0 and stat.S_IMODE(ref['identity']['st_mode'])==0o400,'Root0400 access stage')
  p.need(v['kind']=='LIBVIRT_R7_ACCESS_STAGE_PENDING_FULL_HASH'and v['nonce']==c['nonce']and v['candidate']==c and v['runtimeAuthorized']is False,'exact stage candidate/full lineage')
  p.need(v['bootID']==Path('/proc/sys/kernel/random/boot_id').read_text().strip(),'same current stage boot')
+ if 'operationContext'in c:p.need(type(v.get('ioAncestor'))is dict,'current stage records actual IO ancestor');io_ancestor(c,v['ioAncestor'])
  p.need(set(disk_pins)=={'original','working'}and disk_pins['original']==c['original'],'complete independent post-ACL original proof')
  work=disk_pins['working'];p.need(work['path']==c['working']['path']and work['bytes']==c['working']['bytes']and work['sha256']==c['working']['sha256'],'post-ACL same complete working bytes')
  p.need(all(work['identity'][k]==c['working']['identity'][k]for k in('st_dev','st_ino','st_uid','st_gid','st_nlink','st_size','st_mtime_ns')),'only declared ACL metadata can change, no content epoch')

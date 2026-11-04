@@ -178,6 +178,70 @@ class RetainedMediaContract(unittest.TestCase):
             self.assertFalse(media.owned_mount(mount, device))
 
     @unittest.skipUnless(os.geteuid() == 0 and sys.platform == 'linux', 'admitted Linux Root only')
+    def test_normal_io_namespace_to_real_uid_stage_and_consumer(self):
+        import run_current_media as entry
+        import libvirt_access as access
+        import libvirt_producer as producer
+        import libvirt_peer as peer
+        import stat
+        before = set(os.listdir('/proc/self/fd'))
+        # TWO arbitrary future deployments/attempts, through the same production
+        # namespace producer, six ACL producer, actual UID child and stage reader.
+        for _ in range(2):
+            deployment, attempt = uuid.uuid4().hex, uuid.uuid4().hex
+            paths = source_contract.operation_paths(deployment, attempt)
+            root, mount, io_root = map(Path,(paths['operationRoot'],paths['mountRoot'],paths['ioRoot']))
+            c = {'operationContext':{'deploymentId':deployment,'attempt':attempt,'paths':paths},
+                 'nonce':attempt,'jobId':'fixture-e'+attempt[:16],
+                 'run':str(io_root/'run'),'output':str(io_root/'output')}
+            made = []
+            try:
+                for path in (root,mount):producer.create_root(str(path));made.append(path)
+                original = root/'original.raw'; original.write_bytes(b'original'); original.chmod(0o400)
+                working = mount/'working.raw'; working.write_bytes(b'derivative'); working.chmod(0o600)
+                c.update(original=entry.pin(original),working=entry.pin(working))
+                ancestor = entry.create_io_namespace(c);made.append(io_root)
+                self.assertEqual(stat.S_IMODE(ancestor['identity']['st_mode']),0o711)
+                with self.assertRaises(FileExistsError):entry.create_io_namespace(c)
+                for path in (Path(c['run']),Path(c['output'])):path.mkdir(mode=0o700)
+                for path,data in ((Path(c['run'])/'OVMF_VARS_4M.fd',b'vars'),(Path(c['output'])/'serial.raw',b'')):
+                    path.write_bytes(data);path.chmod(0o600)
+                run=object.__new__(entry.Run);run.root=root;run.placement_root=root;run.sequence=0
+                leaves=[(mount,'working-parent'),(working,'working'),(Path(c['run']),'runtime-parent'),
+                        (Path(c['run'])/'OVMF_VARS_4M.fd','vars'),(Path(c['output']),'output-parent'),(Path(c['output'])/'serial.raw','serial')]
+                rows=[];after=[]
+                for path,role in leaves:
+                    ref=access.metadata_pin(path)if role.endswith('parent')else entry.pin(path)
+                    row=access.plan(str(path),ref,role,readonly_media=role=='working')
+                    rows.append(row);after.append(access.apply(row,run.record))
+                result=access.probe(rows,str(original),run.record)
+                self.assertTrue(all(x['allowed']for x in result['rows']))
+                self.assertFalse(result['originalAllowed'])
+                pending={'kind':'LIBVIRT_R7_ACCESS_STAGE_PENDING_FULL_HASH','nonce':attempt,
+                         'bootID':Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+                         'candidate':c,'runtimeAuthorized':False,'rows':rows,'after':after,
+                         'ioAncestor':access.io_ancestor(c)}
+                ref=run.record('access-stage-pending',pending)
+                disks={'original':c['original'],'working':entry.pin(working)}
+                access.verify_prepared(c,ref,disks)
+                io_root.chmod(0o700)
+                with self.assertRaisesRegex(RuntimeError,'traverse-only IO ancestor'):
+                    access.verify_prepared(c,ref,disks)
+                with self.assertRaisesRegex(RuntimeError,'effective UID working IO access')as caught:
+                    access.probe(rows,str(original),run.record)
+                self.assertEqual(caught.exception.evidence['kind'],'EFFECTIVE_UID_ACCESS_REFUSAL')
+                failed=caught.exception.evidence['value']
+                self.assertFalse(failed['originalAllowed'])
+                self.assertTrue(any(not x['allowed']for x in failed['rows']if x['role']=='vars'))
+                io_root.chmod(0o711)
+                escaped=copy.deepcopy(c);escaped['run']='/tmp/foreign/run'
+                with self.assertRaisesRegex(ValueError,'confined operation paths'):
+                    access.io_ancestor(escaped)
+            finally:
+                for path in reversed(made):shutil.rmtree(path)
+        self.assertEqual(before,set(os.listdir('/proc/self/fd')))
+
+    @unittest.skipUnless(os.geteuid() == 0 and sys.platform == 'linux', 'admitted Linux Root only')
     def test_external_allocation_padding_consumes_existing_metadata_reserve(self):
         import libvirt_storage as storage
         import install_media_controller as installer

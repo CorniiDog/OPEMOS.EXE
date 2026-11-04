@@ -5180,3 +5180,34 @@ R121 publication: normal receive-pack returned server500 three times with ref ab
   closure. AST/diff checks pass; automatic CI/exact Core source+caller+effects
   review required before another fresh normal entry. No old2085/7bd9/c50/66
   replay, source overwrite, package-check relabel, extra PR or budget raise.
+
+
+### R122 actual fresh988e DAC refusal and owned IO-ancestor correction — 2026-11-04
+
+- Consumed Core exact b420 operational approval f9d4610c once. Fresh deployment
+  099d89/attempt988e passed real allocation accounting, then ordinary stage_io
+  refused effective libvirt UID access before queue submission/domain/GPU. Normal
+  unmount/detach and retainedMediaUnchanged; native exit1/192.56s, both EOF/reaped,
+  FD/childset restored, timer restored. All old attempts remain closed/unreplayed.
+- Root cause in normal caller: create_root made the new grouping ioRoot0700;
+  six generated descendant ACLs cannot traverse it. Actual post-closure readonly
+  UID64055 probe confirms retained IO ancestor0700 blocks vars/serial; working
+  paths were already unmounted then, so their false results are NOT a measured
+  statement about the earlier mounted probe. Original remained inaccessible.
+- Minimal normal producer creates only the typed shared-definition IO grouping
+  directory as Root0711 (traverse-only, no list/write). Existing six leaf/parent
+  ACLs retain all actual file access authority. Stage records that ancestor;
+  normal prepared/phase consumers require the same inode/owner/exact mode/baseACL.
+  Historical contextless stages remain data under their existing contract.
+  Failed DAC child now attaches actual per-role values/numeric/EOF/reap evidence
+  to FIRST, without optional diagnostic publication becoming an authority.
+- Existing Root regression now runs TWO generated future deployment/attempts
+  through actual namespace producer -> six ACL producers -> real UID child ->
+  normal prepared consumer, including original denial, ancestor0700 refusal,
+  typed failure detail, confined-path refusal, create-only and FD closure.
+  Native external GPU/queue/VM facts are not modeled as a pass; current CI pending.
+- Necessary own normal fast-forward GitHub push to existing
+  work/exe-r122-shared-deployment-context-20261104 for automatic admitted CI and
+  exact Core source/caller/effects review. Cap2 prevents another PR; no force/
+  branchprotection/merge waiver. Current Main e8b0 preserved, no installed source
+  overwritten. No host/GPU/trust/governance/Core source or media mutation.
