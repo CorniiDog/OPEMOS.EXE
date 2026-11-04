@@ -47,7 +47,12 @@ def execute(profile_pin, root, attempt):
     if os.path.lexists(root): raise RuntimeError('unused evidence directory')
     root.mkdir(mode=0o700)
     data = {'executionAttempt': attempt, 'jobId': profile['jobPrefix'] + '-e' + attempt[:16]}
-    remote = ['sudo', '-n', '/usr/bin/python3', '-I', '-B', profile['remoteEntry'],
+    # One unchanged normal heavy wrapper owns preparation AND the worker. The
+    # worker uses its existing in-wrapper CLI entry rather than reacquiring the
+    # same lock. Root entry revalidates the real Bash ancestor/FD/OFD throughout.
+    remote = ['/usr/bin/env','XDG_RUNTIME_DIR=/run/user/1000',
+              'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus',
+              profile['remoteHeavyPin']['path'],'/usr/bin/sudo', '-n', '/usr/bin/python3', '-I', '-B', profile['remoteEntry'],
               '--profile-pin-json', json.dumps(profile['remoteProfilePin'], sort_keys=True, separators=(',', ':')),
               '--request-stdin']
     argv = ['/usr/sbin/runuser', '-u', 'connor', '--', '/usr/bin/ssh', '-T', '-F', cfg['path'],

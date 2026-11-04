@@ -65,6 +65,15 @@ The controller uses an immutable copy of its existing SSH configuration, with
 strict host checking and the existing credentials. No generated Python carrier
 or developer checkout is needed for each request.
 
+One unchanged normal `heavy.sh` wrapper admits the entire remote operation,
+including the large read-only preparation hashes. Root verifies the real Bash
+ancestor's PID/start/UID/argv/executable, held lock inode and inherited kernel
+FLOCK descriptor before native operations. The normal worker uses its existing
+in-wrapper CLI admission under that same lock and acquires its own canonical
+worker lock; it does not recursively reacquire the heavy lock. Ordinary native
+command logs and submit/result summaries are optional diagnostics. Their write
+failure cannot veto startup or replace a command's actual nonzero first cause.
+
 The historical installed-schema report also has no launch authority. The real
 installed schema validator still checks the actual XML immediately before
 `createXML`, using its bound executable/source identity. A missing old report

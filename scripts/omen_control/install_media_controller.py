@@ -157,7 +157,8 @@ def install_window(payload):
     remote = payload['remoteInstallation']
     client = {'kind':'OPEMOS_INSTALLED_MEDIA_CLIENT_V1','sshConfigPin':ssh,
               'ownedCommandPin':sources['owned_command'],'remoteEntry':remote['operationProfilePin']['path'].rsplit('/',1)[0]+'/run_current_media.py',
-              'remoteProfilePin':remote['operationProfilePin'],'jobPrefix':payload['jobPrefix']}
+              'remoteProfilePin':remote['operationProfilePin'],'remoteHeavyPin':remote['queuePrograms'][2],
+              'jobPrefix':payload['jobPrefix']}
     client_pin=put(root/'client-profile.json',canon(client),0o444)
     window = {'kind':'OPEMOS_INSTALLED_MEDIA_WINDOW_V1','maximumWindowSeconds':2700,
               'localSources':dict(sources,sshConfig=ssh),'evidenceRoot':str(evidence),

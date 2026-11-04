@@ -59,6 +59,32 @@ def operand():
 
 
 class RetainedMediaContract(unittest.TestCase):
+    @unittest.skipUnless(os.geteuid()==0 and sys.platform=='linux','disposable Linux CI Root only')
+    def test_actual_bash_ancestor_ofd_fence_without_forwarding_fd(self):
+        """Real kernel ancestry/OFD; fixture UID0/path are not normal UID1000 admission."""
+        import install_media_controller as installer
+        with tempfile.TemporaryDirectory()as directory:
+            root=Path(directory);wrapper=root/'heavy.sh';lock=root/'heavy.lock'
+            wrapper.write_text('#!/bin/bash\nset -euo pipefail\nexec 9>"$1"\nflock -n 9\nshift\n"$@"\n')
+            wrapper.chmod(0o555);ref=installer.pin(wrapper)
+            code=('import sys,json,os;sys.path.insert(0,sys.argv[1]);'
+                  'from run_current_media import heavy_custody;'
+                  'p=json.loads(sys.argv[2]);v=heavy_custody(p,sys.argv[3],0);'
+                  'print(json.dumps(v));'
+                  'p["sha256"]="0"*64;'
+                  '\ntry:heavy_custody(p,sys.argv[3],0)'
+                  '\nexcept Exception:pass'
+                  '\nelse:raise AssertionError("wrong source hash passed")')
+            command=['/usr/bin/bash',str(wrapper),str(lock),sys.executable,'-B','-c',code,
+                     str(SOURCE),json.dumps(ref),str(lock)]
+            result=subprocess.run(command,capture_output=True,timeout=15)
+            self.assertEqual(result.returncode,0,result.stderr.decode())
+            value=json.loads(result.stdout)
+            self.assertEqual(value['owner']['exe'],'/usr/bin/bash')
+            self.assertEqual(value['owner']['argv'][1],str(wrapper))
+            self.assertEqual(value['sourcePin'],ref)
+            self.assertEqual(value['OFD']['fd'],9)
+
     def test_real_runner_assignment_survives_missing_optional_telemetry(self):
         """Production routing reader with explicit API data, not a method override."""
         busy = False

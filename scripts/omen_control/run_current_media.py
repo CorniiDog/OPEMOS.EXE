@@ -70,6 +70,60 @@ def native_module(ref):
     return module
 
 
+def heavy_custody(wrapper, lock_path='/run/user/1000/opemos-heavy.lock', owner_uid=1000):
+    """Borrow the actual wrapper ancestor's OFD, never another job's lock.
+
+    The normal Bash wrapper retains its FD across systemd scope execution;
+    sudo need not forward it. As in the existing normal recovery lock fence,
+    fdinfo identifies the held OFD even after the short-lived flock tool exits.
+    Alternate path/UID are only explicit disposable-kernel test inputs. The
+    installed entry always calls the fixed normal path and UID1000 defaults.
+    """
+    source = held(wrapper, 65536)
+    i = wrapper['identity']
+    p.need(i['st_uid'] == i['st_gid'] == 0 and stat.S_IMODE(i['st_mode']) == 0o555,
+           'exact installed normal heavy wrapper')
+    fd = os.open(lock_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        st = os.fstat(fd); core = p.ident(st)
+        p.need(stat.S_ISREG(st.st_mode) and st.st_uid == st.st_gid == owner_uid
+               and st.st_nlink == 1 and st.st_size == 0, 'normal empty heavy lock owner/inode')
+        chain = []; pid = os.getpid()
+        for _ in range(32):
+            actor = p.process_snapshot(pid); actor['exe'] = os.readlink('/proc/'+str(pid)+'/exe')
+            chain.append(actor)
+            p.need(actor['uids'] in ([0]*4, [owner_uid]*4, [owner_uid,0,0,0]),
+                   'only actual normal caller/sudo UID ancestry')
+            if actor['exe'] == '/usr/bin/bash' and len(actor['argv']) > 1 and actor['argv'][1] == wrapper['path']:
+                p.need(actor['uids'] == [owner_uid]*4, 'actual admitted Bash heavy owner'); break
+            p.need(actor['ppid'] > 1 and actor['ppid'] != pid, 'heavy wrapper must be a current ancestor')
+            pid = actor['ppid']
+        else: p.need(False, 'bounded actual heavy wrapper ancestry')
+        owner = chain[-1]; matches = []
+        for item in Path('/proc/'+str(owner['pid'])+'/fd').iterdir():
+            try:
+                s = item.stat()
+                if (s.st_dev,s.st_ino) != (st.st_dev,st.st_ino): continue
+                for line in Path('/proc/'+str(owner['pid'])+'/fdinfo/'+item.name).read_text().splitlines():
+                    if not line.startswith('lock:'): continue
+                    row = line.split('lock:',1)[1].split()
+                    if len(row)<8 or row[1]!='FLOCK' or row[3]!='WRITE': continue
+                    major,minor,inode = row[5].split(':')
+                    if (int(major,16),int(minor,16),int(inode)) == (os.major(st.st_dev),os.minor(st.st_dev),st.st_ino):
+                        matches.append({'fd':int(item.name),'kernelOFDRecord':row})
+            except FileNotFoundError: continue
+        p.need(len(matches)==1, 'one real heavy-owner inherited FLOCK FD')
+        p.need(all(p.ident(os.fstat(fd))[k] == p.ident(os.lstat(lock_path))[k] == core[k]
+                   for k in p.CORE+('st_size',)), 'same held/named normal heavy inode')
+        for actor in chain:
+            now=p.process_snapshot(actor['pid']); now['exe']=os.readlink('/proc/'+str(actor['pid'])+'/exe')
+            p.need(now==actor, 'heavy ancestor PID/start/UID/argv/exe/FD lifetime')
+        p.need(held(wrapper,65536)==source, 'same installed heavy source after kernel proof')
+        return {'sourcePin':wrapper,'lockCore':{k:core[k]for k in p.CORE+('st_size',)},
+                'owner':owner,'OFD':matches[0],'ancestry':chain}
+    finally: os.close(fd)
+
+
 class Run:
     def __init__(self, profile_pin, request_pin):
         p.need(os.getuid() == os.geteuid() == 0, 'normal authenticated Root operation')
@@ -101,7 +155,8 @@ class Run:
         self.io = Path('/run/opemos-libvirt-io-' + self.c['nonce'] + '-' + req['executionAttempt'])
         self.c.update(run=str(self.io / 'run'), output=str(self.io / 'output'))
         self.loop = None; self.loop_fd = None; self.mounted = False; self.submitted = False
-        self.sequence = 0; self.effects = []; self.last_job = None
+        self.sequence = 0; self.effects = []; self.last_job = None; self.diagnostic_errors = []
+        self.heavy = heavy_custody(cfg['queuePrograms'][2])
         self.placement_root = Path('/run/opemos-steamos-placement-' + self.c['nonce'])
         self.native = native_module(cfg['nativeReadOnlyPin'])
         # Read/admit before the first operation namespace or mount effect.
@@ -119,13 +174,29 @@ class Run:
         with p.RootFiles(root) as files, files.lock(True):
             return producer.put(files, name, value)
 
+    def diagnostic(self, label, value):
+        try: return self.record(label,value)
+        except Exception as error:
+            self.diagnostic_errors.append({'label':label,'type':type(error).__name__,'reason':str(error)})
+            return None
+
+    def heavy_guard(self):
+        current=heavy_custody(self.profile['queuePrograms'][2])
+        p.need(current['owner']==self.heavy['owner'] and current['OFD']==self.heavy['OFD']
+               and current['lockCore']==self.heavy['lockCore'], 'same admitted heavy owner for this entire operation')
+
     def tool(self, argv, seconds=30, stage=True):
         # No command or executable body comes from the request/candidate.
         ref = self.profile['nativeTools'][argv[0]]
         deadline = self.request['startBeforeUnix'] if stage else self.request['wholeDeadlineUnix']
+        self.heavy_guard()
         result = native_child(argv, min(deadline, time.time() + seconds), ref)
-        self.record('native-' + Path(argv[0]).name, result)
-        p.need(result['numeric'] == 0, 'normal native operation failed: ' + argv[0])
+        self.diagnostic('native-' + Path(argv[0]).name, result)
+        if result['numeric'] != 0:
+            error=p.Refused('normal native operation failed: '+argv[0]+' exit='+str(result['numeric'])
+                            +' stderr='+result.get('stderr','')[:65536])
+            error.nativeEvidence=result
+            raise error
         return result['stdout']
 
     def guard_native(self):
@@ -217,7 +288,7 @@ class Run:
         p.need(pin(backing['path'], backing['bytes']) == backing, 'current authenticated retained backing')
         for path in Path('/sys/class/block').glob('loop*/loop/backing_file'):
             p.need(path.read_text().strip() != backing['path'], 'no existing loop adoption or duplicate backing consumer')
-        self.record('readonly-loop-intent', {'backing': backing, 'mount': str(self.mount), 'effects': []})
+        self.diagnostic('readonly-loop-intent', {'backing': backing, 'mount': str(self.mount), 'effects': []})
         self.loop = self.tool(['/usr/sbin/losetup', '--find', '--show', '--read-only', '--nooverlap', backing['path']]).strip()
         p.need(re.fullmatch('/dev/loop[0-9]+', self.loop), 'one actual owned loop')
         self.loop_fd = os.open(self.loop, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -279,12 +350,14 @@ class Run:
         self.tool(['/usr/bin/sudo', '-n', '-u', 'connor', '/usr/bin/env',
                    'XDG_RUNTIME_DIR=/run/user/1000', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus',
                    wrapper, '--queue', self.profile['queueStateRoot'], 'submit', result['manifestPin']['path']], 15)
-        self.submitted = True; self.record('canonical-submitted', result)
+        self.submitted = True; self.diagnostic('canonical-submitted', result)
         result['submitted'] = True
         # Normal CLI's worker owns start/admission and every terminal transition.
         self.tool(['/usr/bin/sudo', '-n', '-u', 'connor', '/usr/bin/env',
                    'XDG_RUNTIME_DIR=/run/user/1000', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus',
-                   wrapper, '--queue', self.profile['queueStateRoot'], 'run'], 1000, stage=False)
+                   'OPEMOS_QUEUE_HEAVY_ENTRY=1','OPEMOS_QUEUE_HEAVY_FD=9',
+                   '/usr/bin/python3', self.profile['queuePrograms'][0]['path'],
+                   '--queue', self.profile['queueStateRoot'], 'run'], 1000, stage=False)
         status = self.tool(['/usr/bin/sudo', '-n', '-u', 'connor', '/usr/bin/env',
                             'XDG_RUNTIME_DIR=/run/user/1000', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus',
                             wrapper, '--queue', self.profile['queueStateRoot'], 'status', '--job-id', self.c['jobId']],
@@ -292,7 +365,7 @@ class Run:
         status = json.loads(status); self.last_job = status['job']
         p.need(status['kind'] == 'NORMAL_QUEUE_EXACT_JOB_STATUS_V1' and self.last_job['id'] == self.c['jobId'],
                'actual normal exact-job result')
-        self.record('actual-job-result', status)
+        self.diagnostic('actual-job-result', status)
         result['actualJob'] = status
         p.need(self.last_job['finished'] is not None and self.last_job['state'] == 'passed',
                'actual VM job did not pass; retain full job/FIRST instead of a success flag')
@@ -324,7 +397,7 @@ class Run:
         p.need(not (root / 'loop/backing_file').exists(), 'own loop detached')
         p.need(pin(self.c['installer']['backing']['path'], self.c['installer']['backing']['bytes'])
                == self.c['installer']['backing'], 'entire retained backing unchanged after operation')
-        self.record('current-media-closed', {'loop': self.loop, 'mount': str(self.mount),
+        self.diagnostic('current-media-closed', {'loop': self.loop, 'mount': str(self.mount),
                     'retainedMediaUnchanged': True, 'oldLeaseOrACLRestorationClaimed': False})
         self.loop = None
 
@@ -366,7 +439,9 @@ def main():
     try: result = run.execute()
     except BaseException as error:
         first = error
-        try: run.record('FIRST', {'type': type(error).__name__, 'reason': str(error), 'effects': run.effects})
+        try: run.record('FIRST', {'type': type(error).__name__, 'reason': str(error), 'effects': run.effects,
+                                 'native':getattr(error,'nativeEvidence',None),
+                                 'actualJob':run.last_job,'diagnosticErrors':run.diagnostic_errors})
         except BaseException as diagnostic: error.optionalDiagnosticError = repr(diagnostic)
         raise
     finally:
