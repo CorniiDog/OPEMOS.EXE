@@ -96,6 +96,32 @@ class RetainedMediaContract(unittest.TestCase):
                 result = native.native_child(command, time.time() + 10, installer.pin(command[0]), loop=role)
                 self.assertEqual((result['numeric'], result['closure']), (0, 'KNOWN'))
                 self.assertTrue(media.owned_mount(mount, device))
+                result = native.native_child([tools['umount'], str(mount)], time.time() + 10,
+                                             installer.pin(tools['umount']), loop=role)
+                self.assertEqual(result['numeric'], 0)
+                # A real parent-FD leak after a successful mount is still a refusal.
+                # Cleanup must discover that mount from the kernel, not a success flag.
+                import threading
+                leaked = []; stop = threading.Event()
+                def hold_after_mount():
+                    while not stop.wait(.005):
+                        if media.owned_mount(mount, device):
+                            leaked.extend(os.pipe()); return
+                watcher = threading.Thread(target=hold_after_mount); watcher.start()
+                executable = str(Path(sys.executable).resolve())
+                child = [executable, '-B', '-c',
+                         'import subprocess,time,sys;subprocess.run(sys.argv[1:],check=True);time.sleep(.3)', *command]
+                try:
+                    with self.assertRaises(Exception) as raised:
+                        native.native_child(child, time.time() + 10, installer.pin(executable), loop=role)
+                    evidence = raised.exception.nativeChildEvidence
+                    self.assertEqual(evidence['numeric'], 0)
+                    self.assertEqual(evidence['closure'], 'UNKNOWN')
+                    self.assertTrue(any(x.get('changes', {}).get('added') for x in evidence['secondary']))
+                    self.assertTrue(media.owned_mount(mount, device))
+                finally:
+                    stop.set(); watcher.join()
+                    for held_fd in leaked: os.close(held_fd)
                 # An unrelated/incorrect backing role is refused by the actual kernel reader.
                 with self.assertRaises(ValueError): media.loop_guard(dict(role, backing=str(root / 'foreign')))
                 bad = dict(role, fd=os.open(str(backing), os.O_RDONLY))
