@@ -5218,3 +5218,11 @@ R121 publication: normal receive-pack returned server500 three times with ref ab
   Preserved full raw first. Coherent successor updates exact current adapter
   access bytes/SHA and final queue embedded adapter + access pin together; original
   ee32/7e source identities remain unchanged historical data. No validator bypass.
+
+- Actual5c Linux126863925791 passed normal275-test suite and NEW real UID IO
+  stage/consumer regression. Existing larger installed-entry fixture then refused
+  its hand-built old stage because ioAncestor was absent (TWO future identities).
+  Preserve failure; do not weaken current production consumer. Correct that
+  existing fixture to invoke actual create_io_namespace and real sixrole DAC
+  probe, then carry actual io_ancestor into its modeled-media stage, same as
+  normal producer. Runtime bodies unchanged from5c, current tests rerun in CI.

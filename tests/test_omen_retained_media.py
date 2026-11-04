@@ -438,6 +438,7 @@ class RetainedMediaContract(unittest.TestCase):
     def _installed_normal_entry_without_connect_syscall(self, deployment_id, attempt):
         """Actual installer/isolated entry; external queue helpers and media are MODELED, never executed."""
         import install_media_controller as installer
+        import run_current_media as normal_entry
         import ctypes
         layout = source_contract.deployment_paths(deployment_id)
         paths = source_contract.operation_paths(deployment_id, attempt)
@@ -521,7 +522,11 @@ class RetainedMediaContract(unittest.TestCase):
             import libvirt_access as acl
             import libvirt_peer as peer
             import time
-            for path in (fixture,placement,runtime):producer.create_root(str(path));created.append(path)
+            for path in (placement,runtime):producer.create_root(str(path));created.append(path)
+            normal_entry.create_io_namespace({'nonce':nonce,'jobId':spec['id'],
+                'operationContext':{'deploymentId':deployment_id,'attempt':attempt,'paths':paths},
+                'run':str(fixture/'run'),'output':str(fixture/'output')})
+            created.append(fixture)
             for name in ('media','run','output'):(fixture/name).mkdir(mode=0o700)
             original=installer.put(fixture/'original.raw',b'fixture original',0o400)
             working=installer.put(fixture/'media/working.raw',b'fixture media',0o600)
@@ -542,10 +547,12 @@ class RetainedMediaContract(unittest.TestCase):
                 row=acl.plan(str(path),ref,role,verified_content=working if role=='working'else None,
                              readonly_media=role=='working')
                 rows.append(row);after.append(acl.apply(row,save,defer_working_hash=True))
+            acl.probe(rows,original['path'],save)
             disks={'original':original,'working':installer.pin(fixture/'media/working.raw')}
             stage={'kind':'LIBVIRT_R7_ACCESS_STAGE_PENDING_FULL_HASH','nonce':nonce,'bootID':boot,'candidate':c,
                    'grantPin':save('fixture-stage-data',{'fixtureOnly':True}),'rows':rows,'after':after,
-                   'original':original,'workingBefore':working,'pendingFullContentProof':True,'runtimeAuthorized':False}
+                   'original':original,'workingBefore':working,'pendingFullContentProof':True,'runtimeAuthorized':False,
+                   'ioAncestor':acl.io_ancestor(c)}
             stagepin=save('access-stage',stage)
             captures={n:save('capture-'+n,{'explicitNativeMediaModel':True})for n in('original','working')}
             binding={'sourceRoles':roles,'queuePrograms':installed['queuePrograms'],
