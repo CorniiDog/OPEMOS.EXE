@@ -248,7 +248,10 @@ def reconcile(db,job,capture,history):
         need(prior['job_id']==job and prior['binding']==binding and prior['oldBoot']==first['oldBoot']and prior['currentBoot']==first['currentBoot'],
              'original prepared native custody remains bound')
     # Any later failure leaves the durable retained reservation, not a pass.
-    current=ledger(db);second=capture(job);validate_observation(second,current,job)
+    current=ledger(db)
+    expected=dict(before,rows=[dict(r,state='terminal_cleanup',result=canonical(pending))if r['id']==job else r for r in before['rows']])
+    need(current==expected,'whole epoch drift after retained disposition')
+    second=capture(job);validate_observation(second,current,job)
     need(second['oldBoot']==first['oldBoot']and second['currentBoot']==first['currentBoot']and second['binding']==binding,'same old/current boot and original binding')
     afterpin=preserve(history/'after-native.json',second)
     need(0<=time.monotonic()-second['observedMonotonic']<=5,'fresh final native boundary')
