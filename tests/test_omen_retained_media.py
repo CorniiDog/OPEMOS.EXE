@@ -98,6 +98,9 @@ class RetainedMediaContract(unittest.TestCase):
         token = uuid.uuid4().hex
         queue_root = Path('/var/lib/opemos-queue-r120-' + token)
         drain_root = Path('/var/lib/opemos-media-drain-r120-' + token)
+        public_parent=Path('/run/opemos-libvirt-parent-cd9ef0826364409da287f6f3e3830c95.json')
+        if os.path.lexists(public_parent): self.skipTest('existing public owner preserved')
+        parent_identity=None
         def member(raw):
             return {'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),
                     'base64':__import__('base64').b64encode(raw).decode()}
@@ -139,7 +142,42 @@ class RetainedMediaContract(unittest.TestCase):
             self.assertEqual(value['kind'],'CURRENT_MEDIA_NATIVE_BOOT_OBSERVATION')
             self.assertEqual(value['bootID'],Path('/proc/sys/kernel/random/boot_id').read_text().strip())
             self.assertEqual(value['effects'],[])
+            # Real protected-input adapter reader consumes actual installed
+            # sources, including exact byte counts. Native facts are not used
+            # by verify_inputs, and are not claimed by this test.
+            import standalone_peer_access_adapter as adapter
+            roles={n:installed['sourceRoles'][n]for n in installer.RUNTIME}
+            nonce=adapter.NONCE;boot=value['bootID']
+            observer={k:roles['libvirt_peer'][k]for k in ('path','bytes','sha256')}
+            domain={'leaseNonce':nonce,'name':'opemos-libvirt-'+nonce,
+                    'uuid':'64f43b0c-9a98-494d-adc1-0782aea1d32e','observer':observer}
+            spec={'id':'fixture-fresh-job','cores':4,'memory':10737418240,'timeout_seconds':900,
+                  'resources':['omen-iommu-group-1'],'libvirt_domain':domain,
+                  'approval':'EXACT_PARENT_MINIMAL_PIN',
+                  'command':['sudo','-n','/usr/bin/python3','-B',roles['runtime_entry']['path'],
+                             '--parent-pin-json','EXACT_PARENT_FULL_PIN_JSON']}
+            parent={'kind':'ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT','RootIssued':True,
+                    'runtimeAuthorized':True,'MODEL_ONLY':False,'bootID':boot,'nonce':nonce,
+                    'contextPath':'/run/opemos-libvirt-runtime-'+nonce+'/context.json',
+                    'candidate':{'installer':{'kind':media.KIND,'noInstallTarget':True}},
+                    'issuedUnix':1,'startBeforeUnix':2,'wholeDeadlineUnix':3,
+                    'sourceRoles':roles,'jobId':spec['id'],'normalizedSpecTemplate':spec}
+            parent_ref=installer.put(public_parent,installer.canon(parent),0o444)
+            parent_identity=parent_ref['identity']
+            actual_spec=adapter.parent_spec(parent,parent_ref)
+            request={'leaseNonce':nonce,'domainName':domain['name'],'domainUUID':domain['uuid'],
+                     'observer':observer,'jobId':spec['id'],
+                     'specSHA256':hashlib.sha256(installer.canon(actual_spec)).hexdigest()}
+            with adapter.RootInputs()as inputs:
+                accepted=adapter.verify_inputs(request,inputs,boot,include_context=False)
+                self.assertEqual(accepted['implementationAccessPin'],roles['libvirt_access'])
+                self.assertFalse(accepted['originalInputOnly'])
+                for wrong in (dict(request,specSHA256='0'*64),dict(request,jobId='foreign-job')):
+                    with self.assertRaises(RuntimeError):adapter.verify_inputs(wrong,inputs,boot,include_context=False)
         finally:
+            if parent_identity is not None:
+                self.assertEqual(media.identity(os.lstat(public_parent)),parent_identity)
+                public_parent.unlink()
             for path in (installer.SOURCE_ROOT,queue_root,drain_root):
                 if path.exists(): shutil.rmtree(path)
 
