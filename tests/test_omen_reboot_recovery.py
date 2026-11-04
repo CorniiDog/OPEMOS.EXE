@@ -9,6 +9,8 @@ import importlib.util
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -118,6 +120,13 @@ class RebootReconciliationTests(unittest.TestCase):
         self.assertEqual(json.loads(R.read_pin(pin,4096)),{'original':True})
         path.rename(self.root/'retained.json');path.write_text('{"original":true}\n')
         with self.assertRaises(ValueError):R.read_pin(pin,4096)
+    def test_candidate_checkout_entry_cannot_supply_a_privileged_profile(self):
+        profile=self.root/'candidate-profile.json';profile.write_text('{}')
+        result=subprocess.run([sys.executable,R.__file__,'observe',str(profile),JOB],
+                              stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=5)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn(b'installed Root profile only',result.stderr)
+        self.assertEqual(result.stdout,b'')
         path.unlink();path.symlink_to(self.root/'retained.json')
         with self.assertRaises(ValueError):R.read_pin(pin,4096)
 
