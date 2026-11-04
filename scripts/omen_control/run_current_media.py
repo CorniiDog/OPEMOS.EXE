@@ -558,7 +558,8 @@ def complete_failed_media(profile_pin,transaction_ref):
 def complete_failed_context(profile_pin,context_ref,recovery_nonce):
     """Machine-captured per-recovery DATA; executable code is installed once."""
     p.need(os.getuid()==os.geteuid()==0 and re.fullmatch('[0-9a-f]{32}',recovery_nonce),'Root typed recovery identity')
-    cfg=protected(profile_pin,0o444);source_contract.validate(cfg['sourceRoles'],cfg['queuePrograms'],cfg['installedSourceContractPin'])
+    cfg=protected(profile_pin,0o444);current=source_contract.validate(cfg['sourceRoles'],cfg['queuePrograms'],cfg['installedSourceContractPin'])
+    p.need(cfg['kind']=='OPEMOS_INSTALLED_CURRENT_MEDIA_OPERATION_V1'and current['preparationRoles']['run_current_media']['path']==str(Path(__file__).absolute()),'actual reviewed installed completion entry before data writes')
     old_context=protected(context_ref,0o400);parent=protected(old_context['parentPin'],0o444)
     definition=source_contract.validate(parent['sourceRoles'],parent['queuePrograms'],parent['installedSourceContractPin'])
     c=old_context['candidate'];paths=source_contract.candidate_paths(c)

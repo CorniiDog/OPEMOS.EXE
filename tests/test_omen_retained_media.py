@@ -654,6 +654,14 @@ class RetainedMediaContract(unittest.TestCase):
                     'noNIC':True,'noInstall':True,'maxBoots':1,
                     'failureControl':'LIBVIRT_AUTODESTROY_CONTROLLER_CONNECTION',
                     'TEST_SCOPE':'Structural/source/ACL/readonly observer only; no real media qualification or grant'}
+            # Actual installed recovery entry must reject non-context DATA
+            # before any phase/lease or recovery namespace can be created.
+            invalid_recovery=save('not-a-runtime-context',{'kind':'NOT_A_RUNTIME_CONTEXT'})
+            refused_recovery=subprocess.run(['/usr/bin/python3','-I','-B',str(source_root/'run_current_media.py'),
+                '--profile-pin-json',json.dumps(ref),'--complete-failed-context-pin-json',json.dumps(invalid_recovery),
+                '--recovery-nonce',uuid.uuid4().hex],capture_output=True,timeout=15,preexec_fn=deny_connect)
+            self.assertNotEqual(refused_recovery.returncode,0)
+            self.assertFalse(os.path.lexists('/run/opemos-vfio-'+nonce))
             parent_ref=installer.put(public_parent,installer.canon(parent),0o444)
             parent_identity=parent_ref['identity']
             # Fresh actual installed Root issuer process, with no network and no
