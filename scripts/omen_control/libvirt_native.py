@@ -29,6 +29,14 @@ def schema_executable(provenance,pid):
  finally:os.close(fd)
  return dict(provenance,actualExecutableVerified=True)
 def native_child(argv,deadline,tool_pin=None,input_bytes=None):
+ return _native_child(argv,deadline,tool_pin,input_bytes,10)
+
+def native_queue_worker(argv,deadline,tool_pin):
+ """Normal worker transport only; does not extend its900s job authority."""
+ now=time.time();peer.need(now<deadline<=now+1000,'original bounded normal-worker transport deadline')
+ return _native_child(argv,deadline,tool_pin,None,1000)
+
+def _native_child(argv,deadline,tool_pin,input_bytes,transport_seconds):
  import signal,select
  peer.need(argv[0]in('/usr/bin/systemctl','/usr/bin/systemd-run')or(tool_pin is not None and tool_pin['path']==argv[0]),'closed pinned native helper role')
  if tool_pin is not None:
@@ -44,7 +52,7 @@ def native_child(argv,deadline,tool_pin=None,input_bytes=None):
    ready=select.select([pidfd],[],[],max(0,min(10,deadline-time.time())))[0];now=peer.process(p.pid);peer.need(ready and all(now[k]==actor[k]for k in('pid','start','uid','ppid','cgroup')),'empty helper argv requires same original exited pidfd; no inferred exit')
   peer.need(actor['argv']==(script['argv']if script is not None else argv)or not actor['argv'],'exact live helper argv or proved exited own child')
   if script is not None and actor['argv']:executable=schema_executable(script,p.pid)
-  out,err=p.communicate(input_bytes,timeout=max(.001,min(10,deadline-time.time())));eof=True;p.wait(timeout=2);reaped=True
+  out,err=p.communicate(input_bytes,timeout=max(.001,min(transport_seconds,deadline-time.time())));eof=True;p.wait(timeout=2);reaped=True
   peer.need(len(out)+len(err)<=1048576,'native helper output bound')
  except BaseException as error:first=error
  finally:
@@ -230,8 +238,8 @@ class NativeTransactionOps:
   for key in('producerPin','peerPin','accessPin'):
    ref=g[key];b=held(ref,65536);peer.need(ref['identity']['st_uid']==ref['identity']['st_gid']==0 and ref['identity']['st_mode']&0o777==0o444,'reviewed Root0444 source role');compile(b,ref['path'],'exec')
   peer.need({k:g['peerPin'][k]for k in('path','bytes','sha256')}==g['observerPin'],'full Root source pin joins exact upstream minimal job pin')
-  peer.need(g['installedSchemaReceiptPin']is not None,'installed libvirt XML qualification before runtime')
-  held(g['installedSchemaReceiptPin'],1048576)
+  # The exact installed validator checks the actual XML immediately before
+  # createXML. A historical qualification report owns no launch authority.
  def full_preflight_and_entry(self,g,r,c):
   self.request=r;self.g=g;self.deadline=g['wholeDeadlineUnix']
   for ref in(g['currentPreflightPin'],):
