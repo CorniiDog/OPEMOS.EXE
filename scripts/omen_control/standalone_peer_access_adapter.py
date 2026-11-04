@@ -5,7 +5,7 @@ Queue owner must independently adopt exact bytes and consumer contract.
 import contextlib,copy,hashlib,json,os,re,stat,sys,time,traceback,types
 from pathlib import Path
 ORIGINAL_SOURCE_ROOT='/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r107b'
-PEER_SHA='e1c3d5d4fd71bfad24dce4b52f5b87ab8c1307a090e27c292c6ebf4e15748c62'
+PEER_SHA='224aa4a8b06999e318350267195cc681a095aaf2a2b5e407552f8811673a8614'
 F=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns');CORE=F[:6]
 NONCE='cd9ef0826364409da287f6f3e3830c95';CONTRACT='R109_CURRENT_NORMAL_QUEUE_FULL_PHASE_READONLY'
 PEER_BYTES=61400
