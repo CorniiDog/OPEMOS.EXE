@@ -67,6 +67,23 @@ def admitted_media(value):
          'normal control/worker/heavy closure and real runner offline before VM')
 
 
+
+def observe_after_drain(probe, inputs, deadline, cuts):
+    """Only expected idle API status convergence can request a new full cut."""
+    while True:
+        need(time.monotonic() < deadline, 'bounded runner status convergence before fresh cut')
+        try:
+            value = probe.observe(inputs)
+        except probe.RunnerStatusTransition as error:
+            cuts.append({'runnerStatusTransition': {'before': error.before, 'after': error.after}})
+            remaining = deadline - time.monotonic()
+            need(remaining > 0, 'bounded runner status convergence after normal drain')
+            time.sleep(min(.5, remaining))
+            continue
+        need(time.monotonic() < deadline, 'bounded runner status convergence after fresh cut')
+        return value
+
+
 def execute(profile_pin, attempt):
     need(os.getuid() == os.geteuid() == 0 and re.fullmatch('[0-9a-f]{32}', attempt), 'Root typed request')
     profile = json.loads(read(profile_pin))
@@ -140,7 +157,8 @@ def execute(profile_pin, attempt):
                  and closed['FDSetRestored'] is True, 'single normal current-owner drain/closure')
         end = time.monotonic() + 20; cuts = []
         while True:
-            after = probe.observe(profile['probeInputs']); idle_builds(after); cuts.append(after)
+            after = observe_after_drain(probe, profile['probeInputs'], end, cuts)
+            idle_builds(after); cuts.append(after)
             control = after['control']
             closed = control['state'] == 'absent' or (control['terminalLifecycle'] == 'CLOSED'
                                                        and control['reservationRetained'] is False)
