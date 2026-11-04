@@ -59,6 +59,28 @@ def operand():
 
 
 class RetainedMediaContract(unittest.TestCase):
+    def test_normal_worker_transport_outlives_short_helper_without_resetting_deadline(self):
+        """Real owned child transport; child models the normal worker boundary only."""
+        import libvirt_native as native
+        import install_media_controller as installer
+        import time
+        executable=str(Path(sys.executable).resolve());ref=installer.pin(executable)
+        command=[executable,'-B','-c','import time;time.sleep(11);print("worker-complete")']
+        result=native.native_queue_worker(command,time.time()+15,ref)
+        self.assertEqual(result['numeric'],0)
+        self.assertTrue(result['EOF']and result['reaped']and result['pipesClosed'])
+        self.assertEqual(result['groupRemaining'],[])
+        self.assertEqual(result['closure'],'KNOWN')
+        with self.assertRaises(subprocess.TimeoutExpired)as short:
+            native.native_child(command,time.time()+15,ref)
+        self.assertTrue(short.exception.nativeChildEvidence['reaped'])
+        self.assertTrue(short.exception.nativeChildEvidence['EOF'])
+        with self.assertRaises(Exception)as expired:
+            native.native_queue_worker(command,time.time()-1,ref)
+        self.assertIn('deadline',str(expired.exception))
+        bad=copy.deepcopy(ref);bad['sha256']='0'*64
+        with self.assertRaises(Exception):native.native_queue_worker(command,time.time()+15,bad)
+
     @unittest.skipUnless(os.geteuid()==0 and sys.platform=='linux','disposable Linux CI Root only')
     def test_real_geometry_not_optional_sink_is_authority(self):
         """Sparse geometry fixture only, not F9AA content/native-media acceptance."""

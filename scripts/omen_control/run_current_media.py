@@ -34,7 +34,7 @@ import libvirt_peer as p
 import libvirt_producer as producer
 import libvirt_preflight as pre
 import libvirt_access as access
-from libvirt_native import held, native_child
+from libvirt_native import held, native_child, native_queue_worker
 import retained_media as media
 import source_contract
 
@@ -185,12 +185,18 @@ class Run:
         p.need(current['owner']==self.heavy['owner'] and current['OFD']==self.heavy['OFD']
                and current['lockCore']==self.heavy['lockCore'], 'same admitted heavy owner for this entire operation')
 
-    def tool(self, argv, seconds=30, stage=True):
+    def tool(self, argv, seconds=30, stage=True, worker=False):
         # No command or executable body comes from the request/candidate.
         ref = self.profile['nativeTools'][argv[0]]
         deadline = self.request['startBeforeUnix'] if stage else self.request['wholeDeadlineUnix']
         self.heavy_guard()
-        result = native_child(argv, min(deadline, time.time() + seconds), ref)
+        try:
+            end=min(deadline,time.time()+seconds)
+            result = native_queue_worker(argv,end,ref) if worker else native_child(argv,end,ref)
+        except BaseException as error:
+            value=getattr(error,'nativeChildEvidence',getattr(error,'evidence',None))
+            if value is not None:self.diagnostic('native-'+Path(argv[0]).name+'-FIRST',value)
+            raise
         self.diagnostic('native-' + Path(argv[0]).name, result)
         if result['numeric'] != 0:
             error=p.Refused('normal native operation failed: '+argv[0]+' exit='+str(result['numeric'])
@@ -357,7 +363,7 @@ class Run:
                    'XDG_RUNTIME_DIR=/run/user/1000', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus',
                    'OPEMOS_QUEUE_HEAVY_ENTRY=1','OPEMOS_QUEUE_HEAVY_FD=9',
                    '/usr/bin/python3', self.profile['queuePrograms'][0]['path'],
-                   '--queue', self.profile['queueStateRoot'], 'run'], 1000, stage=False)
+                   '--queue', self.profile['queueStateRoot'], 'run'], 1000, stage=False, worker=True)
         status = self.tool(['/usr/bin/sudo', '-n', '-u', 'connor', '/usr/bin/env',
                             'XDG_RUNTIME_DIR=/run/user/1000', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus',
                             wrapper, '--queue', self.profile['queueStateRoot'], 'status', '--job-id', self.c['jobId']],
@@ -441,6 +447,7 @@ def main():
         first = error
         try: run.record('FIRST', {'type': type(error).__name__, 'reason': str(error), 'effects': run.effects,
                                  'native':getattr(error,'nativeEvidence',None),
+                                 'nativeChildEvidence':getattr(error,'nativeChildEvidence',getattr(error,'evidence',None)),
                                  'actualJob':run.last_job,'diagnosticErrors':run.diagnostic_errors})
         except BaseException as diagnostic: error.optionalDiagnosticError = repr(diagnostic)
         raise
