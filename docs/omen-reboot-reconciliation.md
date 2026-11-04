@@ -59,3 +59,29 @@ The actual kernel heavy-lock holder must be the caller or its stable ancestor,
 with the pinned existing wrapper body and Bash interpreter; an unrelated busy
 lock and environment marker never grant admission. Log operands are confined
 before any mkdir and canonical selection precedes owned history creation.
+
+The same affected launcher now carries the previously reviewed normal native
+adapter, parent and issuer bodies in repository source. Their narrow changed
+join pins a stable Root-owned `managed_vfio.py` and actual `modprobe` tool as
+separate protected native-tool operands. `create_paused` initializes the existing
+VFIO driver with `disable_idle_d3=1` only while both driver and core are unloaded,
+after normal grant/source/worker/resource/data/host admission. No IDs, overrides,
+bind, reset, PM sysfs or persistent host configuration are written by this fix.
+Libvirt remains the only all-four-function binder and performs the initial wake.
+
+Exact Ubuntu 7.0.0-42 source copies the driver option into core at module init
+and into each device at core initialization. A late visible sysfs `Y` alone is
+insufficient; the recorded first initialization supplies the option. The inherited
+bridge/all-four D3cold state can still fail at initial D0. Actual stable-host and
+console evidence is required; the new setting is not a boot claim. After genuine
+normal libvirt/FD/driver restoration, only the newly owned unused VFIO module
+graph may be removed to restore its original unloaded setting. Foreign users or
+unknown closure retain normal ownership and FIRST evidence. Optional cached-power
+diagnostics cannot veto startup. No host reboot or global graphics/ASPM change
+is introduced. Tests of the option decision are not module/hardware acceptance.
+
+The imported launcher bodies retain their original internal dependencies. Safe
+installation must bind all unchanged counterparts and the actual merged changed
+bodies in one coherent current source graph; merely importing this helper is not
+an installed or executed launcher. Deployment and real first-init/cleanup remain
+unverified until exact Core source/caller/effects approval and native receipts.
