@@ -455,9 +455,10 @@ def observe(route_only=False):
         key in x for x in a['argv'] for key in
         ('Runner.Listener','Runner.Worker','/queue_job.py','/control.py'))
         for a in relevant)
-    writers=source_writers([QUEUE/'test_queue.py',QUEUE/'queue.sh',
+    protected_sources=[QUEUE/'test_queue.py',QUEUE/'queue.sh',
               QUEUE/'queue_job.py',QUEUE/'heavy.sh',
-              CONTROL/'guard/job-started.sh',CONTROL/'guard/job_guard.py'])
+              CONTROL/'guard/job-started.sh',CONTROL/'guard/job_guard.py']
+    writers=source_writers(protected_sources) if route_only or not foreign_runtime else False
     source_busy=foreign_runtime or writers
     frame={'kind':'ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1','atUnix':time.time(),
            'boot':Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
