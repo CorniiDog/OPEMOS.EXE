@@ -55,6 +55,7 @@ def prepare(expectation_pin, seed, origin_pin, persist):
            and 'preparationBinding' not in seed, 'new placement seed/current measured media')
     seed['installer'] = c['installer']
     seed['ioScope'] = {'run': c['run'], 'output': c['output']}
+    seed['currentQueueRoot'] = str(Path(e['queuePrograms'][0]['path']).parent)
     seed['mount'] = c['installer']['currentCustody']['parent']
     seed['loop'] = c['installer']['currentCustody']['loop']['path']
     seed_pin = persist('placement-seed', seed)

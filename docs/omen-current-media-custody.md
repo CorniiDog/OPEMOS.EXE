@@ -55,6 +55,16 @@ canonical binding, PID/start/UID/argv/cgroup and pidfd checks. Repository-wide
 queued Actions and an unrelated old control row/tick-report format no longer
 authorize or veto retirement. Actual assigned work still refuses it.
 
+The media probe uses a fixed installed remote entry and a JSON observation
+frame. It copies the existing reviewed normal probe without changing that
+probe's machine/source/queue checks. Registered Runner21 identity, real assigned
+jobs and busy state are mandatory; default-branch reporting, repository-wide
+queued counts and heartbeat telemetry are optional. An unavailable optional
+endpoint remains unknown, rather than becoming a fake zero or a launch veto.
+The controller uses an immutable copy of its existing SSH configuration, with
+strict host checking and the existing credentials. No generated Python carrier
+or developer checkout is needed for each request.
+
 The historical installed-schema report also has no launch authority. The real
 installed schema validator still checks the actual XML immediately before
 `createXML`, using its bound executable/source identity. A missing old report

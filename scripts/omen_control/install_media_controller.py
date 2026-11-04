@@ -109,7 +109,7 @@ def install(payload):
     operation_pin = put(SOURCE_ROOT/'operation-profile.json',canon(operation),0o444)
     drain_root = Path(payload['drainRoot'])
     need(re.fullmatch('/var/lib/opemos-media-drain-r120-[0-9a-f]{32}', str(drain_root)), 'fixed drain source family')
-    need(set(payload['drainSources']) == {'media_drain','idle_signal_owner','normal_probe','normal_cycle'}, 'exact normal control/drain sources')
+    need(set(payload['drainSources']) == {'media_drain','idle_signal_owner','normal_probe','normal_cycle','media_probe_remote'}, 'exact normal control/drain/probe sources')
     root_directory(drain_root)
     drain_sources = {}
     for name,value in payload['drainSources'].items():
@@ -123,6 +123,9 @@ def install(payload):
     drain_profile = {'kind':'OPEMOS_INSTALLED_MEDIA_DRAIN_V1','installedSources':normal_sources,
                      'policy':policy,'entryPin':drain_sources['media_drain']}
     drain_profile_pin = put(drain_root/'drain-profile.json',canon(drain_profile),0o444)
+    probe_profile = {'kind':'OPEMOS_INSTALLED_MEDIA_PROBE_V1',
+                     'normalProbePin':drain_sources['normal_probe'],'policy':policy}
+    probe_profile_pin = put(drain_root/'probe-profile.json',canon(probe_profile),0o444)
     for path in (SOURCE_ROOT,queue_root,drain_root):
         os.chmod(path,0o555)
         fd=os.open(path,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
@@ -132,6 +135,7 @@ def install(payload):
             'sourceContractPin':contract_pin,'operationProfilePin':operation_pin,
             'sourceRoles':role_pins,'queuePrograms':queue,
             'drainEntryPin':drain_sources['media_drain'],'drainProfilePin':drain_profile_pin,
+            'probeEntryPin':drain_sources['media_probe_remote'],'probeProfilePin':probe_profile_pin,
             'normalControlSources':normal_sources,
             'serviceStarted':False,'mounts':[],'queueSubmitted':False,'hardwareEffects':[]}
 
@@ -140,7 +144,7 @@ def install_window(payload):
     need(os.getuid() == os.geteuid() == 0 and payload['kind'] == 'ROOT_REVIEWED_MEDIA_WINDOW_INSTALL_V1', 'Root controller installation')
     root = Path(payload['root'])
     need(re.fullmatch('/var/lib/opemos-media-window-r120-[0-9a-f]{32}', str(root)), 'fixed installed window family')
-    need(set(payload['sources']) == {'media_window','media_client','window_common','owned_command'}, 'whole fixed window implementation')
+    need(set(payload['sources']) == {'media_window','media_client','window_common','owned_command','media_probe'}, 'whole fixed window implementation')
     root_directory(root)
     sources = {}
     for name,value in payload['sources'].items():
@@ -157,12 +161,17 @@ def install_window(payload):
     client_pin=put(root/'client-profile.json',canon(client),0o444)
     window = {'kind':'OPEMOS_INSTALLED_MEDIA_WINDOW_V1','maximumWindowSeconds':2700,
               'localSources':dict(sources,sshConfig=ssh),'evidenceRoot':str(evidence),
-              'currentProbePin':payload['currentProbePin'],'controlPolicyPin':payload['controlPolicyPin'],
+              'currentProbePin':sources['media_probe'],'controlPolicyPin':payload['controlPolicyPin'],
               'clientProfilePin':client_pin,'remoteDrainEntry':remote['drainEntryPin']['path'],
               'remoteDrainProfilePin':remote['drainProfilePin'],
               'remoteDrainSources':remote['normalControlSources'],
               'sshArgv':['/usr/sbin/runuser','-u','connor','--','/usr/bin/ssh','-T','-F',ssh['path'],
                          '-o','BatchMode=yes','-o','ConnectTimeout=8','-o','StrictHostKeyChecking=yes','opemos-ubuntu-host']}
+    window['probeInputs'] = {'policyPin':payload['controlPolicyPin'],
+                             'normalProbePin':payload['normalProbePin'],
+                             'remoteEntryPin':remote['probeEntryPin'],
+                             'remoteProfilePin':remote['probeProfilePin'],
+                             'sshArgv':window['sshArgv']}
     result=put(root/'window-profile.json',canon(window),0o444)
     os.chmod(root,0o555)
     return {'kind':'CURRENT_MEDIA_WINDOW_INSTALLED','windowProfilePin':result,'windowEntryPin':sources['media_window'],

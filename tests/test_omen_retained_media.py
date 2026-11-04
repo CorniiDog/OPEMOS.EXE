@@ -20,6 +20,9 @@ import retained_media as media
 import source_contract
 import media_window
 import idle_signal_owner
+import media_probe
+import normal_probe
+import types
 
 
 def pin(path, mode, uid, gid, size, ino, sha='a' * 64):
@@ -56,6 +59,36 @@ def operand():
 
 
 class RetainedMediaContract(unittest.TestCase):
+    def test_real_runner_assignment_survives_missing_optional_telemetry(self):
+        """Production routing reader with explicit API data, not a method override."""
+        busy = False
+        assigned = 0
+        def api(endpoint):
+            if '/actions/runners?' in endpoint:
+                return {'runners':[{'id':21,'name':'opemos-omen-robot',
+                                    'labels':[{'name':'opemos-omen-robot'}],
+                                    'busy':busy,'status':'online'}]}
+            if '/actions/runs?status=in_progress' in endpoint:
+                return {'total_count':1,'workflow_runs':[{'id':7,'status':'in_progress',
+                         'path':'.github/workflows/omen-robot.yml'}]}
+            if '/actions/runs/7/jobs?' in endpoint:
+                return {'total_count':assigned,'jobs':[
+                    {'id':9,'run_id':7,'status':'in_progress','labels':['opemos-omen-robot'],
+                     'runner_id':21}] if assigned else []}
+            raise RuntimeError('optional endpoint unavailable')
+        client=types.SimpleNamespace(gh_json=api,runner21_assigned_jobs=normal_probe.runner21_assigned_jobs)
+        policy={'mainCommit':'a'*40,'queueSourceSHA256':'b'*64}
+        value=media_probe.github(policy,client)
+        self.assertIsNone(value['protectedMain'])
+        self.assertIsNone(value['actionsQueued'])
+        self.assertFalse(value['heartbeatCurrent'])
+        self.assertEqual(value['actionsInProgress'],0)
+        self.assertFalse(value['runnerBusy'])
+        assigned=1; busy=True
+        value=media_probe.github(policy,client)
+        self.assertEqual(value['actionsInProgress'],1)
+        self.assertTrue(value['runnerBusy'])
+
     @unittest.skipUnless(os.geteuid() == 0 and sys.platform == 'linux', 'disposable Linux CI Root only')
     def test_installed_normal_entry_without_connect_syscall(self):
         """Actual installer/isolated entry; external queue helpers and media are MODELED, never executed."""
@@ -76,6 +109,7 @@ class RetainedMediaContract(unittest.TestCase):
         model = member(b'# MODELED existing normal helper; not executed by this test\n')
         drains = {'media_drain':member((SOURCE/'media_drain.py').read_bytes()),
                   'idle_signal_owner':member((SOURCE/'idle_signal_owner.py').read_bytes()),
+                  'media_probe_remote':member((SOURCE/'media_probe_remote.py').read_bytes()),
                   'normal_probe':model,'normal_cycle':model}
         payload = {'kind':'ROOT_REVIEWED_CURRENT_MEDIA_INSTALL_V1','repository':'CorniiDog/OPEMOS.EXE',
                    'protectedMain':'a'*40,'reviewedHead':'b'*40,  # modeled identity DATA, no review fabricated

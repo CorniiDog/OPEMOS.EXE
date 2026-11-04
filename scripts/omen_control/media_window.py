@@ -100,7 +100,7 @@ def execute(profile_pin, attempt):
     paused = backstop = False; first = None; closure_errors = []
     try:
         service_idle()
-        before = probe.observe(); idle_builds(before); record('actual-before.json', before)
+        before = probe.observe(profile['probeInputs']); idle_builds(before); record('actual-before.json', before)
         original = W.manager(TIMER)
         need(original['ActiveState'] == 'active' and original['UnitFileState'] == 'enabled'
              and original['Job'] == '', 'existing enabled automatic recovery owner')
@@ -114,7 +114,7 @@ def execute(profile_pin, attempt):
         paused = True; command('pause-renewal', ['/usr/bin/systemctl', 'stop', TIMER])
         need(W.manager(TIMER)['ActiveState'] == 'inactive', 'normal renewal pause verified')
         service_idle()
-        current = probe.observe(); idle_builds(current)
+        current = probe.observe(profile['probeInputs']); idle_builds(current)
         c = current['control']
         if c['state'] != 'absent' and not (c['terminalLifecycle'] == 'CLOSED' and c['reservationRetained'] is False):
             # Fresh journal/source/policy data are authenticated by the installed
@@ -140,7 +140,7 @@ def execute(profile_pin, attempt):
                  and closed['FDSetRestored'] is True, 'single normal current-owner drain/closure')
         end = time.monotonic() + 20; cuts = []
         while True:
-            after = probe.observe(); idle_builds(after); cuts.append(after)
+            after = probe.observe(profile['probeInputs']); idle_builds(after); cuts.append(after)
             control = after['control']
             closed = control['state'] == 'absent' or (control['terminalLifecycle'] == 'CLOSED'
                                                        and control['reservationRetained'] is False)

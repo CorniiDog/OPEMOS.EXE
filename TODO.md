@@ -5084,3 +5084,10 @@ current and their repository ownership is unambiguous.
   squash, then a fresh normal queue-admitted virtualUSB NVIDIA launch. Retained
   media stays readonly; new IO is separate. Reuse no consumed session/grant or
   old prepared-continuation constructor. Preserve cap TWO and #213's hold.
+- The same PR now includes the stable create-only remote/controller installer,
+  JSON-only machine probe, bounded normal idle-runner drain, actual queue entry
+  and cleanup connection. Admitted CI has passed the protected-parent current
+  custody consumer and the installed isolated entry with Linux connect denied.
+  The latest optional-telemetry/installed-probe wiring needs its exact head CI
+  and Core source/PR/effects review. No new installation or VM run yet; current
+  normal Runner21 work remains owned and is not inferred absent from old cuts.

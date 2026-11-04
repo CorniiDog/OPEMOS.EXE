@@ -68,7 +68,7 @@ def execute(data):
  p=data['policy'];rule=data['rule'];gh=data['github'];need(os.getuid()==os.geteuid()==0,'Root normal controller peer')
  need(rule==dict(kind='ROOT_AUTOMATIC_RUNNER21_ONLY_CURRENT_GENERATION',runnerId=21,mainCommit=p['mainCommit'],queueSHA256=p['queueSourceSHA256'],boot=Path('/proc/sys/kernel/random/boot_id').read_text().strip()),'exact actual current automatic generation/source rule')
  need(Path('/proc/sys/kernel/random/boot_id').read_text().strip()==rule['boot']and p['mainCommit']==rule['mainCommit']and p['queueSourceSHA256']==rule['queueSHA256']and p['runnerId']==21,'same host/source/registered runner')
- need(gh['networkReachable']and gh['protectedMain']and gh['mainCommit']==rule['mainCommit']and gh['runnerBusy']is False and gh['actionsInProgress']==0 and 0<=time.time()-data['probeAt']<=15,'authenticated fresh idle/noqueued GitHub facts')
+ need(gh['networkReachable']and gh['mainCommit']==rule['mainCommit']and gh['runnerBusy']is False and type(gh['actionsInProgress'])is int and gh['actionsInProgress']==0 and 0<=time.time()-data['probeAt']<=15,'authenticated fresh installed-controller identity and Runner21 idle facts')
  mods={}
  for n,k in(('normal_probe','normalProbeSHA256'),('normal_cycle','normalCycleSHA256')):
   ref=data['installedSources'][n];raw=source_bytes(ref);need(hashlib.sha256(raw).hexdigest()==p[k],'exact installed normal helper source');mods[n]=module(raw,ref['path'])
