@@ -98,6 +98,6 @@ def execute(data):
 
 if __name__=='__main__':
  import sys,argparse
- ap=argparse.ArgumentParser();ap.add_argument('--profile-pin-json',required=True);args=ap.parse_args();profile=json.loads(source_bytes(json.loads(args.profile_pin_json)));need(profile['kind']=='OPEMOS_INSTALLED_MEDIA_DRAIN_V1','installed drain profile')
+ ap=argparse.ArgumentParser();ap.add_argument('--profile-pin-json',required=True);args=ap.parse_args();profile=json.loads(source_bytes(json.loads(args.profile_pin_json)));need(profile['kind']=='OPEMOS_INSTALLED_MEDIA_DRAIN_V1'and profile['entryPin']['path']==str(Path(__file__).absolute()),'installed drain profile/actual entry');source_bytes(profile['entryPin'])
  raw=sys.stdin.buffer.read(1048577);need(len(raw)<=1048576,'bounded typed drain request');DATA=json.loads(raw);need(DATA['installedSources']==profile['installedSources']and DATA['policy']==profile['policy'],'installed controller policy/source contract, no executable body in per-run data');result=execute(DATA);print(json.dumps(result,sort_keys=True),flush=True)
  if result['first']is not None:raise RuntimeError('normal transition incomplete; full first/retirement retained above')

@@ -10,6 +10,8 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
+import subprocess
+import uuid
 import unittest
 
 SOURCE = Path(__file__).resolve().parents[1] / 'scripts' / 'omen_control'
@@ -54,6 +56,59 @@ def operand():
 
 
 class RetainedMediaContract(unittest.TestCase):
+    @unittest.skipUnless(os.geteuid() == 0 and sys.platform == 'linux', 'disposable Linux CI Root only')
+    def test_installed_normal_entry_without_connect_syscall(self):
+        """Actual installer/isolated entry; external queue helpers and media are MODELED, never executed."""
+        import install_media_controller as installer
+        import ctypes
+        if os.path.lexists(installer.SOURCE_ROOT): self.skipTest('existing source owner preserved')
+        token = uuid.uuid4().hex
+        queue_root = Path('/var/lib/opemos-queue-r120-' + token)
+        drain_root = Path('/var/lib/opemos-media-drain-r120-' + token)
+        def member(raw):
+            return {'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),
+                    'base64':__import__('base64').b64encode(raw).decode()}
+        names = installer.RUNTIME | installer.PREPARE | {'standalone_peer_access_adapter'}
+        sources = {n:member((SOURCE/(n+'.py')).read_bytes()) for n in names}
+        queue_sources = {n:member((SOURCE/n).read_bytes() if (SOURCE/n).exists()
+                                  else b'# MODELED existing external queue helper; not executed by this test\n')
+                         for n in installer.QUEUE_NAMES}
+        model = member(b'# MODELED existing normal helper; not executed by this test\n')
+        drains = {'media_drain':member((SOURCE/'media_drain.py').read_bytes()),
+                  'idle_signal_owner':member((SOURCE/'idle_signal_owner.py').read_bytes()),
+                  'normal_probe':model,'normal_cycle':model}
+        payload = {'kind':'ROOT_REVIEWED_CURRENT_MEDIA_INSTALL_V1','repository':'CorniiDog/OPEMOS.EXE',
+                   'protectedMain':'a'*40,'reviewedHead':'b'*40,  # modeled identity DATA, no review fabricated
+                   'sources':sources,'queueSources':queue_sources,'queueRoot':str(queue_root),
+                   'originCopyData':member(b'{}'), 'drainRoot':str(drain_root),'drainSources':drains,
+                   'normalControlPolicy':{'normalProbeSHA256':model['sha256'],'normalCycleSHA256':model['sha256']},
+                   'parentTemplate':{'noNIC':True,'noInstall':True,'maxBoots':1},
+                   'operationProfile':{'kind':'OPEMOS_INSTALLED_CURRENT_MEDIA_OPERATION_V1'}}
+        def deny_connect():
+            class Filter(ctypes.Structure):
+                _fields_=[('code',ctypes.c_ushort),('jt',ctypes.c_ubyte),('jf',ctypes.c_ubyte),('k',ctypes.c_uint)]
+            class Program(ctypes.Structure):
+                _fields_=[('len',ctypes.c_ushort),('filter',ctypes.POINTER(Filter))]
+            filters=(Filter*4)(Filter(0x20,0,0,0),Filter(0x15,0,1,42),
+                               Filter(0x06,0,0,0x00050001),Filter(0x06,0,0,0x7fff0000))
+            libc=ctypes.CDLL(None,use_errno=True);program=Program(4,filters)
+            if libc.prctl(38,1,0,0,0)!=0 or libc.prctl(22,2,ctypes.byref(program),0,0)!=0:os._exit(125)
+        try:
+            installed = installer.install(payload)
+            self.assertEqual(installed['hardwareEffects'], [])
+            ref = installed['operationProfilePin']
+            result = subprocess.run(['/usr/bin/python3','-I','-B',str(installer.SOURCE_ROOT/'run_current_media.py'),
+                                     '--profile-pin-json',json.dumps(ref),'--observe-boot'],
+                                    capture_output=True,timeout=15,preexec_fn=deny_connect)
+            self.assertEqual(result.returncode,0,result.stderr.decode())
+            value=json.loads(result.stdout)
+            self.assertEqual(value['kind'],'CURRENT_MEDIA_NATIVE_BOOT_OBSERVATION')
+            self.assertEqual(value['bootID'],Path('/proc/sys/kernel/random/boot_id').read_text().strip())
+            self.assertEqual(value['effects'],[])
+        finally:
+            for path in (installer.SOURCE_ROOT,queue_root,drain_root):
+                if path.exists(): shutil.rmtree(path)
+
     def test_repository_queue_and_heartbeat_are_not_media_permission(self):
         for queued in (None, 0, 100):
             value = {'networkReachable':True,'runnerBusy':False,'actionsInProgress':0,
