@@ -12,7 +12,7 @@ import libvirt_peer as p
 from libvirt_native import held
 from libvirt_access import Held,hashfd
 
-QUEUE_SHA='6f31cbbcba85ee70c176a354dad0ba2d00cd104f313d443d7200ea599681f040'
+QUEUE_SHA='2ce23519e71a591358036de036dc42ed5ad152b13ebd25ba065a0310a4a44e72'
 CONTROL_QUEUE_SHA='16177e18b25de4b5b4a45849f5eddb7f7b58527f7d3425d48849927d5843103e'
 HISTORY_SHA='03f36772612aabffdbe6be6b76f4353402797fd9e17d4896ced3739de7b6f1c3'
 

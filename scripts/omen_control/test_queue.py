@@ -576,9 +576,9 @@ def validate_installer_access_custody(custody, proof, request, implementation=No
     fields9={'st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns'};core=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink');roles6=['working-parent','working','runtime-parent','vars','output-parent','serial']
     def meta(i,kind):
         require(type(i)is dict and set(i)==fields9 and all(type(i[k])is int for k in fields9)and stat.S_IFMT(i['st_mode'])==kind and i['st_nlink']>0,'exact phase full9/type')
-    def fullpin(ref,mode=None,cap=None):
+    def fullpin(ref,mode=None,cap=None,immutable_media=False):
         require(type(ref)is dict and set(ref)=={'path','bytes','sha256','identity'}and type(ref['path'])is str and ref['path'].startswith('/')and '..'not in Path(ref['path']).parts and type(ref['bytes'])is int and ref['bytes']>=0 and re.fullmatch('[0-9a-f]{64}',ref['sha256'])is not None,'complete bounded phase pin')
-        meta(ref['identity'],stat.S_IFREG);i=ref['identity'];require(i['st_uid']==i['st_gid']==0 and i['st_nlink']==1 and i['st_size']==ref['bytes']and(mode is None or stat.S_IMODE(i['st_mode'])==mode)and(cap is None or 0<ref['bytes']<=cap),'phase pin owner/link/mode/cap')
+        meta(ref['identity'],stat.S_IFREG);i=ref['identity'];require(((i['st_uid'],i['st_gid'])==(64055,993)if immutable_media else i['st_uid']==i['st_gid']==0) and i['st_nlink']==1 and i['st_size']==ref['bytes']and(mode is None or stat.S_IMODE(i['st_mode'])==mode)and(cap is None or 0<ref['bytes']<=cap),'phase pin owner/link/mode/cap')
     keys={'kind','phase','nonce','bootID','requestSHA256','parentPin','preparedAccessPin','preparedDiskPins','sourceGraphSHA256','placementPin','qualificationPin','stage','stageRawBase64','data'}
     require(type(custody)is dict and set(custody)==keys and custody['kind']=='ROOT_PHASE_PREPARED_ACCESS_CUSTODY_R1'and custody['phase']==proof['phase']and custody['nonce']==request['leaseNonce']and custody['bootID']==proof['bootID']and custody['requestSHA256']==hashlib.sha256(canonical(request).encode()).hexdigest(),'closed purpose/phase/request/boot access custody')
     parentref=custody['parentPin'];require(parentref['path']=='/run/opemos-libvirt-parent-'+request['leaseNonce']+'.json','same exact custody parent');parent=installer_root_value(parentref,0o444,1048576)
@@ -591,7 +591,10 @@ def validate_installer_access_custody(custody, proof, request, implementation=No
     fullpin(custody['preparedAccessPin'],0o400,1048576)
     for key in('placementPin','qualificationPin'):fullpin(custody[key],0o400,1048576)
     disks=custody['preparedDiskPins'];require(type(disks)is dict and set(disks)=={'original','working'},'complete prepared disk graph')
-    for ref in disks.values():fullpin(ref)
+    for key,ref in disks.items():
+        immutable=key=='working'and parent['candidate'].get('installer',{}).get('kind')=='AUTHENTICATED_RETAINED_F9AA_READONLY_USB'
+        if immutable:require(ref==parent['candidate']['working']and ref['bytes']==8120172544 and ref['sha256']=='f9aa0fa2dd618febf28a5e2a583d1e2b5a8ca3f1205be965da584602ac962f40','same current immutable media pin')
+        fullpin(ref,immutable_media=immutable)
     stage=custody['stage'];encoded=custody['stageRawBase64'];require(type(encoded)is str and len(encoded)<=1398104,'bounded lossless stage raw carrier');stage_raw=__import__('base64').b64decode(encoded,validate=True);require(__import__('base64').b64encode(stage_raw).decode('ascii')==encoded and len(stage_raw)==custody['preparedAccessPin']['bytes']<=1048576 and hashlib.sha256(stage_raw).hexdigest()==custody['preparedAccessPin']['sha256']and json.loads(stage_raw)==stage,'entire held stage raw length/SHA/JSON relation');stagekeys={'kind','nonce','bootID','candidate','grantPin','rows','after','original','workingBefore','pendingFullContentProof','runtimeAuthorized'}
     require(type(stage)is dict and set(stage)==stagekeys and stage['kind']=='LIBVIRT_R7_ACCESS_STAGE_PENDING_FULL_HASH'and stage['nonce']==request['leaseNonce']and stage['bootID']==proof['bootID']and stage['candidate']==parent['candidate']and stage['runtimeAuthorized']is False and stage['pendingFullContentProof']is True,'complete unchanged prepared stage provenance')
     fullpin(stage['grantPin'],0o400,1048576)

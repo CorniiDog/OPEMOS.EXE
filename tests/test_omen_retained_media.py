@@ -3,8 +3,11 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
+import shutil
 import sys
+import tempfile
 import unittest
 
 SOURCE = Path(__file__).resolve().parents[1] / 'scripts' / 'omen_control'
@@ -123,6 +126,110 @@ class RetainedMediaContract(unittest.TestCase):
             self.assertEqual(queue.R109_CURRENT_ADAPTER,
                              (SOURCE / 'standalone_peer_access_adapter.py').read_text())
         finally: sys.modules.pop(spec.name, None)
+
+    @unittest.skipUnless(os.geteuid() == 0, 'real protected-parent transport requires disposable CI Root')
+    def test_complete_actual_queue_phase_consumer_with_protected_parent(self):
+        """Real Root metadata transport and entire stage consumer; native/media facts are MODELED.
+
+        No VM, mount or disk bytes are simulated as successful hardware. The
+        separate Root observer must supply those actual facts before execution.
+        """
+        spec = importlib.util.spec_from_file_location('retained_phase_actual_queue', SOURCE / 'test_queue.py')
+        queue = importlib.util.module_from_spec(spec); sys.modules[spec.name] = queue
+        spec.loader.exec_module(queue)
+        root = Path(tempfile.mkdtemp(prefix='opemos-retained-ci-', dir='/run'))
+        parent_path = Path('/run/opemos-libvirt-parent-' + 'c' * 32 + '.json')
+        if os.path.lexists(parent_path):
+            root.rmdir(); sys.modules.pop(spec.name, None)
+            self.skipTest('existing owner of exact fixture parent is preserved')
+        parent_identity = None
+        before_fd = set(os.listdir('/proc/self/fd'))
+        def canonical(v): return json.dumps(v, sort_keys=True, separators=(',', ':')).encode()
+        def put(path, v, mode):
+            raw = canonical(v)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+            try:
+                os.fchmod(fd, mode); os.write(fd, raw); os.fsync(fd)
+                ident = media.identity(os.fstat(fd))
+            finally: os.close(fd)
+            return {'path': str(path), 'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(), 'identity': ident}
+        try:
+            c, value = operand()
+            c.update(jobId='retained-fixture-job', guestUUID='64f43b0c-9a98-494d-adc1-0782aea1d32e',
+                     name='opemos-libvirt-' + c['nonce'], run=str(root / 'run'), output=str(root / 'output'),
+                     original=pin('/MODELED/golden.raw', 0o100400, 0, 0, 21474836480, 66))
+            c['installer']['noInstallTarget'] = True
+            c['installer']['currentCustodyPin'] = put(root / 'custody.json', value, 0o400)
+            roles = {name: pin('/MODELED/source/' + name + '.py', 0o100444, 0, 0, 1, 100 + n)
+                     for n, name in enumerate(sorted(source_contract.RUNTIME_ROLES))}
+            observer = {k: roles['libvirt_peer'][k] for k in ('path', 'bytes', 'sha256')}
+            domain = {'uuid': c['guestUUID'], 'name': c['name'], 'leaseNonce': c['nonce'], 'observer': observer}
+            template = {'id': c['jobId'], 'approval': 'EXACT_PARENT_MINIMAL_PIN',
+                        'command': ['entry', 'EXACT_PARENT_FULL_PIN_JSON'], 'libvirt_domain': domain}
+            rows, after = [], []
+            for role in ('working-parent', 'working', 'runtime-parent', 'vars', 'output-parent', 'serial'):
+                directory = role.endswith('parent')
+                if role in ('working', 'working-parent'):
+                    ref = value['working'] if role == 'working' else value['parent']
+                    acl = value['workingACL'] if role == 'working' else value['parentACL']
+                    row = {'path': ref['path'], 'role': role, 'before': ref, 'priorACL': acl, 'targetACL': acl,
+                           'uid': 64055, 'rights': 'r--' if role == 'working' else '--x',
+                           'immutableMediaCustodyPin': c['installer']['currentCustodyPin']}
+                    a = {'path': ref['path'], 'identity': ref['identity'], 'ACL': acl}
+                else:
+                    path = c['run'] if role == 'runtime-parent' else c['output'] if role == 'output-parent' else c['run'] + '/OVMF_VARS_4M.fd' if role == 'vars' else c['output'] + '/serial.raw'
+                    rights = 'rwx' if directory else 'rw-'; base = 'rwx' if directory else 'rw-'
+                    prior = 'user::' + base + '\ngroup::---\nother::---\n'
+                    target = 'user::' + base + '\nuser:64055:' + rights + '\ngroup::---\nmask::' + rights + '\nother::---\n'
+                    ref = pin(path, 0o40700 if directory else 0o100600, 0, 0, 4096 if directory else 1, 200 + len(rows))
+                    if directory: ref = {k: ref[k] for k in ('path', 'identity')}
+                    row = {'path': path, 'role': role, 'before': ref, 'priorACL': prior, 'targetACL': target, 'uid': 64055, 'rights': rights}
+                    i = dict(ref['identity'], st_mode=0o40770 if directory else 0o100660)
+                    a = {'path': path, 'identity': i, 'ACL': target}
+                    if not directory: a.update(bytes=ref['bytes'], sha256=ref['sha256'])
+                rows.append(row); after.append(a)
+            disks = {'original': c['original'], 'working': c['working']}
+            stage = {'kind': 'LIBVIRT_R7_ACCESS_STAGE_PENDING_FULL_HASH', 'nonce': c['nonce'],
+                     'bootID': c['hostBoot'], 'candidate': c, 'grantPin': put(root / 'grant.json', {}, 0o400),
+                     'rows': rows, 'after': after, 'original': c['original'], 'workingBefore': c['working'],
+                     'pendingFullContentProof': True, 'runtimeAuthorized': False}
+            stage_pin = put(root / 'stage.json', stage, 0o400)
+            placement = put(root / 'placement.json', {}, 0o400); qualification = put(root / 'qualification.json', {}, 0o400)
+            parent = {'kind': 'ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT', 'RootIssued': True, 'runtimeAuthorized': True,
+                      'MODEL_ONLY': False, 'jobId': c['jobId'], 'nonce': c['nonce'], 'bootID': c['hostBoot'],
+                      'candidate': c, 'sourceRoles': roles, 'normalizedSpecTemplate': template,
+                      'preparedAccessPin': stage_pin, 'preparedDiskPins': disks,
+                      'sourcePlacementPin': placement, 'placementQualificationPin': qualification}
+            parent_pin = put(parent_path, parent, 0o444); parent_identity = parent_pin['identity']
+            normalized = copy.deepcopy(template); normalized['approval'] = {k: parent_pin[k] for k in ('path', 'bytes', 'sha256')}
+            normalized['command'][-1] = canonical(parent_pin).decode()
+            request = {'jobId': c['jobId'], 'jobToken': 'd' * 32, 'leaseNonce': c['nonce'],
+                       'domainUUID': c['guestUUID'], 'domainName': c['name'], 'observer': observer,
+                       'specSHA256': hashlib.sha256(canonical(normalized)).hexdigest()}
+            proof = {'phase': 'NOT_PREPARED', 'bootID': c['hostBoot'], 'intentPin': None, 'scope': None,
+                     'leader': None, 'lease': None}
+            custody = {'kind': 'ROOT_PHASE_PREPARED_ACCESS_CUSTODY_R1', 'phase': proof['phase'],
+                       'nonce': c['nonce'], 'bootID': c['hostBoot'], 'requestSHA256': hashlib.sha256(canonical(request)).hexdigest(),
+                       'parentPin': parent_pin, 'preparedAccessPin': stage_pin, 'preparedDiskPins': disks,
+                       'sourceGraphSHA256': hashlib.sha256(canonical(roles)).hexdigest(),
+                       'placementPin': placement, 'qualificationPin': qualification, 'stage': stage,
+                       'stageRawBase64': __import__('base64').b64encode(canonical(stage)).decode(),
+                       'data': {'phase': proof['phase'], 'stage': stage, 'mutable': [], 'phasePins': None}}
+            queue.validate_installer_access_custody(custody, proof, request)
+            for mutation in ('stage-raw', 'current-hash', 'media-owner'):
+                bad = copy.deepcopy(custody)
+                if mutation == 'stage-raw': bad['stageRawBase64'] = 'e30='
+                if mutation == 'current-hash': bad['stage']['candidate']['installer']['currentCustodyPin']['sha256'] = '0' * 64
+                if mutation == 'media-owner': bad['stage']['rows'][1]['before']['identity']['st_uid'] = 0
+                with self.subTest(mutation=mutation), self.assertRaises((ValueError, RuntimeError)):
+                    queue.validate_installer_access_custody(bad, proof, request)
+        finally:
+            if parent_identity is not None:
+                self.assertEqual(media.identity(os.lstat(parent_path)), parent_identity)
+                parent_path.unlink()
+            shutil.rmtree(root)
+            sys.modules.pop(spec.name, None)
+            self.assertEqual(set(os.listdir('/proc/self/fd')), before_fd)
 
 
 if __name__ == '__main__': unittest.main()
