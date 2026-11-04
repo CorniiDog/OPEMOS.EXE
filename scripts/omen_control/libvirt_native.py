@@ -12,10 +12,10 @@ SCHEMA_SCRIPT_SHA='d7eda32d2b6d3b7a612221bfc3c19dcbb660c9ddf0a360b5156652dbaac5c
 SCHEMA_INTERPRETER_SHA='86d31f6fb799e91fa21bad341484564510ca287703a16e9e46c53338776f4f42'
 def schema_interpreter(argv,tool):
  if argv[0]!='/usr/bin/virt-xml-validate':return None
- peer.need(tool is not None and tool['path']==argv[0]and tool['sha256']==SCHEMA_SCRIPT_SHA and held(tool,33554432).splitlines()[0]==b'#!/bin/sh','exact installed pinned schema script/shebang')
+ peer.need(tool is not None and tool['path']==argv[0]and tool['sha256']==SCHEMA_SCRIPT_SHA and held(tool,33554432).splitlines()[0]==b'#!/bin/sh','pinned schema script/shebang')
  aliases=[]
  for path,target,resolved in(('/bin','usr/bin','/usr/bin'),('/bin/sh','dash','/usr/bin/dash')):
-  a=peer.ident(os.lstat(path));peer.need(stat.S_ISLNK(a['st_mode'])and a['st_uid']==a['st_gid']==0 and a['st_nlink']==1 and os.readlink(path)==target and os.path.realpath(path)==resolved,'finite exact Root schema interpreter alias');aliases.append({'path':path,'identity':a,'target':target,'resolved':resolved})
+  a=peer.ident(os.lstat(path));peer.need(stat.S_ISLNK(a['st_mode'])and a['st_uid']==a['st_gid']==0 and a['st_nlink']==1 and os.readlink(path)==target and os.path.realpath(path)==resolved,'Root schema interpreter alias');aliases.append({'path':path,'identity':a,'target':target,'resolved':resolved})
  path='/usr/bin/dash';a=peer.ident(os.lstat(path));peer.need(stat.S_ISREG(a['st_mode'])and stat.S_IMODE(a['st_mode'])==0o755 and a['st_uid']==a['st_gid']==0 and a['st_nlink']==1 and a['st_size']==129784,'Root installed interpreter role')
  ref={'path':path,'identity':a,'bytes':a['st_size'],'sha256':SCHEMA_INTERPRETER_SHA};held(ref,33554432)
  return {'kind':'EXACT_PINNED_SCHEMA_SCRIPT_INTERPRETER_R257','scriptPin':tool,'interpreterPin':ref,'aliases':aliases,'argv':['/bin/sh',*argv],'mountNamespace':os.readlink('/proc/self/ns/mnt')}
@@ -25,32 +25,33 @@ def schema_executable(provenance,pid):
  try:
   a=peer.ident(os.fstat(fd));raw=b''
   while b:=os.read(fd,65536):raw+=b;peer.need(len(raw)<=33554432,'native executable32MiB')
-  r=provenance['interpreterPin'];peer.need(a==peer.ident(os.fstat(fd))==peer.ident(os.lstat(r['path']))==r['identity']and len(raw)==r['bytes']and hashlib.sha256(raw).hexdigest()==r['sha256'],'actual kernel executable full9/bytes/SHA/EOF')
+  r=provenance['interpreterPin'];peer.need(a==peer.ident(os.fstat(fd))==peer.ident(os.lstat(r['path']))==r['identity']and len(raw)==r['bytes']and hashlib.sha256(raw).hexdigest()==r['sha256'],'executable full9/bytes/SHA/EOF')
  finally:os.close(fd)
  return dict(provenance,actualExecutableVerified=True)
-def native_child(argv,deadline,tool_pin=None,input_bytes=None):
- return _native_child(argv,deadline,tool_pin,input_bytes,10)
+def native_child(argv,deadline,tool_pin=None,input_bytes=None,loop=None):
+ return _native_child(argv,deadline,tool_pin,input_bytes,10,loop)
 
 def native_queue_worker(argv,deadline,tool_pin):
- """Normal worker transport only; does not extend its900s job authority."""
- now=time.time();peer.need(now<deadline<=now+1000,'original bounded normal-worker transport deadline')
+ now=time.time();peer.need(now<deadline<=now+1000,'bounded normal-worker deadline')
  return _native_child(argv,deadline,tool_pin,None,1000)
 
-def _native_child(argv,deadline,tool_pin,input_bytes,transport_seconds):
+def _native_child(argv,deadline,tool_pin,input_bytes,transport_seconds,loop=None):
+ from retained_media import loop_guard,loop_fd_changes
+ proof=loop_guard(loop) if loop is not None else None
  import signal,select
- peer.need(argv[0]in('/usr/bin/systemctl','/usr/bin/systemd-run')or(tool_pin is not None and tool_pin['path']==argv[0]),'closed pinned native helper role')
+ peer.need(argv[0]in('/usr/bin/systemctl','/usr/bin/systemd-run')or(tool_pin is not None and tool_pin['path']==argv[0]),'pinned native helper role')
  if tool_pin is not None:
   toolraw=held(tool_pin,33554432);peer.need(not toolraw.startswith(b'#!')or argv[0]=='/usr/bin/virt-xml-validate','only exact pinned schema script helper')
  peer.need(input_bytes is None or len(input_bytes)<=1048576,'finite exact native input')
  p=None;pidfd=None;actor=None;first=None;secondary=[];out=b'';err=b'';eof=False;reaped=False;group=[];script=None;executable=None;before=peer.fd_snapshot('helper-before')
  try:
   script=schema_interpreter(argv,tool_pin)
-  peer.need(time.time()<deadline,'native helper original deadline before spawn')
+  peer.need(time.time()<deadline,'original helper deadline')
   p=subprocess.Popen(argv,stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,close_fds=True,start_new_session=True)
-  pidfd=os.pidfd_open(p.pid,0);actor=peer.process(p.pid);peer.need(actor['ppid']==os.getpid()and actor['uid']==os.getuid()and actor['tgid']==p.pid and os.getpgid(p.pid)==p.pid,'exact own helper PID/start/UID/private group')
+  pidfd=os.pidfd_open(p.pid,0);actor=peer.process(p.pid);peer.need(actor['ppid']==os.getpid()and actor['uid']==os.getuid()and actor['tgid']==p.pid and os.getpgid(p.pid)==p.pid,'own helper PID/start/UID/group')
   if not actor['argv']:
-   ready=select.select([pidfd],[],[],max(0,min(10,deadline-time.time())))[0];now=peer.process(p.pid);peer.need(ready and all(now[k]==actor[k]for k in('pid','start','uid','ppid','cgroup')),'empty helper argv requires same original exited pidfd; no inferred exit')
-  peer.need(actor['argv']==(script['argv']if script is not None else argv)or not actor['argv'],'exact live helper argv or proved exited own child')
+   ready=select.select([pidfd],[],[],max(0,min(10,deadline-time.time())))[0];now=peer.process(p.pid);peer.need(ready and all(now[k]==actor[k]for k in('pid','start','uid','ppid','cgroup')),'empty argv needs original exited pidfd')
+  peer.need(actor['argv']==(script['argv']if script is not None else argv)or not actor['argv'],'live argv or proved exited own child')
   if script is not None and actor['argv']:executable=schema_executable(script,p.pid)
   out,err=p.communicate(input_bytes,timeout=max(.001,min(transport_seconds,deadline-time.time())));eof=True;p.wait(timeout=2);reaped=True
   peer.need(len(out)+len(err)<=1048576,'native helper output bound')
@@ -60,7 +61,7 @@ def _native_child(argv,deadline,tool_pin,input_bytes,transport_seconds):
    if p.poll()is None:
     try:
      peer.need(actor is not None and pidfd is not None,'unknown helper ownership refuses signal')
-     now=peer.process(p.pid);peer.need(all(now[k]==actor[k]for k in('pid','start','uid','ppid','cgroup'))and os.getpgid(p.pid)==p.pid,'same original owned helper before pidfd signal')
+     now=peer.process(p.pid);peer.need(all(now[k]==actor[k]for k in('pid','start','uid','ppid','cgroup'))and os.getpgid(p.pid)==p.pid,'same owned helper before pidfd signal')
      signal.pidfd_send_signal(pidfd,signal.SIGKILL);out,err=p.communicate(timeout=2);eof=True;p.wait(timeout=2);reaped=True
     except BaseException as error:secondary.append(peer.error_value(error))
    else:
@@ -79,15 +80,18 @@ def _native_child(argv,deadline,tool_pin,input_bytes,transport_seconds):
       raw=Path('/proc/'+name+'/stat').read_text().rsplit(')',1)[1].split()
       if int(raw[2])==p.pid:group.append({'pid':int(name),'start':int(raw[19])})
      except FileNotFoundError:continue
-    peer.need(not group and reaped and eof and p.poll()is not None,'helper numeric/EOF/reap/private-group closure')
+    peer.need(not group and reaped and eof and p.poll()is not None,'helper exit/EOF/reap/group closure')
    except BaseException as error:secondary.append(peer.error_value(error))
   if pidfd is not None:
    try:os.close(pidfd)
    except BaseException as error:secondary.append(peer.error_value(error))
   if script is not None:
-   try:peer.need(schema_interpreter(argv,tool_pin)==script,'same exact schema script/interpreter/aliases after helper')
+   try:peer.need(schema_interpreter(argv,tool_pin)==script,'schema script/interpreter/aliases unchanged')
    except BaseException as error:secondary.append(peer.error_value(error))
   after=peer.fd_snapshot('helper-after');changes=peer.fd_changes(before,after)
+  if loop is not None:
+   try:changes=loop_fd_changes(before,after,loop,proof)
+   except BaseException as error:secondary.append(peer.error_value(error))
   if any(changes.values()):secondary.append({'type':'FDClosureRefusal','reason':'helper owned FD closure','changes':changes})
  value={'actor':actor,'argv':argv,'numeric':None if p is None else p.returncode,'stdout':out.decode(errors='backslashreplace'),'stderr':err.decode(errors='backslashreplace'),'EOF':eof,'reaped':reaped,'pipesClosed':p is not None and all(x is None or x.closed for x in(p.stdin,p.stdout,p.stderr)),'groupRemaining':group,'scriptProvenance':script,'actualExecutable':executable,'before':before,'after':after,'primary':peer.error_value(first),'secondary':secondary,'closure':'KNOWN'if p is not None and reaped and eof and not secondary else'UNKNOWN'}
  if first is not None:first.evidence=value;first.nativeChildEvidence=value;raise first

@@ -59,6 +59,59 @@ def operand():
 
 
 class RetainedMediaContract(unittest.TestCase):
+    def test_attempt_bound_placement_preserves_failed_namespace(self):
+        c = {'nonce': 'a' * 32, 'run': '/run/opemos-libvirt-io-' + 'a' * 32 + '-' + 'b' * 32 + '/run',
+             'output': '/run/opemos-libvirt-io-' + 'a' * 32 + '-' + 'b' * 32 + '/output'}
+        self.assertEqual(str(media.placement_root(c)), '/run/opemos-steamos-placement-' + 'a' * 32 + '-' + 'b' * 32)
+        for bad in ('/run/foreign/run', c['run'] + '/../run'):
+            with self.assertRaises(ValueError): media.placement_root(dict(c, run=bad))
+
+    @unittest.skipUnless(os.geteuid() == 0 and sys.platform == 'linux', 'admitted Linux Root only')
+    def test_real_readonly_loop_mount_metadata_and_normal_cleanup(self):
+        """Real loop/mount/helper path. No native operation or validator is replaced."""
+        import time
+        import libvirt_native as native
+        import install_media_controller as installer
+        caps = int(next(x.split()[1] for x in Path('/proc/self/status').read_text().splitlines()
+                        if x.startswith('CapEff:')), 16)
+        if not caps & (1 << 21):
+            self.skipTest('kernel CAP_SYS_ADMIN unavailable; real mount coverage NOT established')
+        tools = {name: shutil.which(name) for name in ('losetup', 'mkfs.ext4', 'mount', 'umount')}
+        if not all(tools.values()): self.skipTest('real loop/ext4 tools unavailable')
+        with tempfile.TemporaryDirectory(prefix='opemos-loop-ci-') as directory:
+            root = Path(directory); backing = root / 'filesystem.raw'; mount = root / 'mount'
+            with backing.open('wb') as out: out.truncate(16777216)
+            mount.mkdir()
+            subprocess.run([tools['mkfs.ext4'], '-q', '-F', str(backing)], check=True)
+            device = subprocess.check_output([tools['losetup'], '--find', '--show', '--read-only',
+                                               '--nooverlap', str(backing)], text=True).strip()
+            fd = os.open(device, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            role = {'fd': fd, 'path': device, 'backing': str(backing)}
+            try:
+                media.loop_guard(role)
+                before = os.fstat(fd)
+                # Exercise actual device metadata plus the real helper/mount consumer.
+                os.utime(device, ns=(before.st_atime_ns, before.st_mtime_ns + 1000000000))
+                command = [tools['mount'], '-t', 'ext4', '-o', 'ro,noload,nodev,nosuid,noexec', device, str(mount)]
+                result = native.native_child(command, time.time() + 10, installer.pin(command[0]), loop=role)
+                self.assertEqual((result['numeric'], result['closure']), (0, 'KNOWN'))
+                self.assertTrue(media.owned_mount(mount, device))
+                # An unrelated/incorrect backing role is refused by the actual kernel reader.
+                with self.assertRaises(ValueError): media.loop_guard(dict(role, backing=str(root / 'foreign')))
+                bad = dict(role, fd=os.open(str(backing), os.O_RDONLY))
+                try:
+                    with self.assertRaises(ValueError): media.loop_guard(bad)
+                finally: os.close(bad['fd'])
+            finally:
+                # Kernel state, not the caller's post-command flag, determines unmount necessity.
+                if media.owned_mount(mount, device):
+                    result = native.native_child([tools['umount'], str(mount)], time.time() + 10,
+                                                 installer.pin(tools['umount']), loop=role)
+                    self.assertEqual(result['numeric'], 0)
+                os.close(fd)
+                subprocess.run([tools['losetup'], '--detach', device], check=True)
+            self.assertFalse(media.owned_mount(mount, device))
+
     def test_normal_worker_transport_outlives_short_helper_without_resetting_deadline(self):
         """Real owned child transport; child models the normal worker boundary only."""
         import libvirt_native as native

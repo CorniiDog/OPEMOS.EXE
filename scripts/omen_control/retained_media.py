@@ -331,3 +331,68 @@ def held_row(row):
                      'immutable held row full9')
                 return now
         yield Held()
+
+
+def loop_guard(role):
+    """Prove only a held readonly loop role; never read PCI configuration."""
+    need(type(role) is dict and set(role) == {'fd', 'path', 'backing'}, 'typed owned loop role')
+    fd, path = role['fd'], role['path']
+    need(type(fd) is int and fd >= 0 and type(path) is str
+         and re.fullmatch(r'/dev/loop[0-9]+', path), 'held loop descriptor/path')
+    a = os.fstat(fd); named = os.lstat(path)
+    core = lambda st: {k: v for k, v in identity(st).items()
+                       if k not in ('st_mtime_ns', 'st_ctime_ns')}
+    need(stat.S_ISBLK(a.st_mode) and a.st_uid == 0 and a.st_nlink == 1
+         and core(a) == core(named) and a.st_rdev == named.st_rdev
+         and os.readlink('/proc/self/fd/' + str(fd)) == path
+         and fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY,
+         'same held Root readonly loop node')
+    root = Path('/sys/class/block') / Path(path).name
+    need((root / 'dev').read_text().strip() == str(os.major(a.st_rdev)) + ':' + str(os.minor(a.st_rdev))
+         and (root / 'loop/backing_file').read_text().strip() == role['backing']
+         and (root / 'ro').read_text().strip() == '1', 'exact readonly loop backing/device')
+    need(core(a) == core(os.fstat(fd)) == core(os.lstat(path)), 'held loop core stable')
+    return {'core': core(a), 'rdev': a.st_rdev, 'flags': fcntl.fcntl(fd, fcntl.F_GETFL),
+            'path': path, 'backing': role['backing']}
+
+
+def loop_fd_changes(before, after, role, proof):
+    """Block-node timestamps are metadata, not descriptor identity. Keep raw snapshots."""
+    import copy
+    import libvirt_peer as peer
+    need(loop_guard(role) == proof, 'same held readonly loop before/after helper')
+    a = [x for x in before['rows'] if x['fd'] == role['fd']]
+    b = [x for x in after['rows'] if x['fd'] == role['fd']]
+    need(len(a) == len(b) == 1 and a[0]['target'] == b[0]['target'] == role['path']
+         and all(a[0]['identity'][k] == b[0]['identity'][k] == v for k, v in proof['core'].items()),
+         'exact observed owned loop core')
+    normalized = copy.deepcopy(after)
+    row = next(x for x in normalized['rows'] if x['fd'] == role['fd'])
+    for key in ('st_mtime_ns', 'st_ctime_ns'):
+        row['identity'][key] = a[0]['identity'][key]
+    return peer.fd_changes(before, normalized)
+
+
+def owned_mount(mount, loop):
+    """Observe actual mount state even when a successful command's postcondition raises."""
+    rows = [line.split() for line in _read('/proc/self/mountinfo', 1048576).splitlines()
+            if line.split()[4] == str(mount)]
+    if not rows:
+        return False
+    need(len(rows) == 1, 'one own mount, no stacked/foreign mount')
+    a = rows[0]; cut = a.index('-'); st = os.lstat(loop)
+    need(stat.S_ISBLK(st.st_mode) and a[2] == str(os.major(st.st_rdev)) + ':' + str(os.minor(st.st_rdev))
+         and a[3] == '/' and a[cut + 1:cut + 3] == ['ext4', loop]
+         and {'ro', 'nodev', 'nosuid', 'noexec'} <= set(a[5].split(','))
+         and {'ro', 'norecovery'} <= set(a[cut + 3].split(',')), 'exact own readonly ext4 mount')
+    return True
+
+
+def placement_root(c):
+    """Attempt-bound output; preserve earlier failed placement namespaces as history."""
+    io = Path(c['run']).parent
+    prefix = 'opemos-libvirt-io-' + c['nonce'] + '-'
+    need(io.parent == Path('/run') and re.fullmatch(re.escape(prefix) + '[0-9a-f]{32}', io.name)
+         and Path(c['run']) == io / 'run' and Path(c['output']) == io / 'output',
+         'same typed attempt IO and placement identity')
+    return Path('/run/opemos-steamos-placement-' + c['nonce'] + '-' + io.name[len(prefix):])

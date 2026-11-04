@@ -157,7 +157,7 @@ class Run:
         self.loop = None; self.loop_fd = None; self.mounted = False; self.submitted = False
         self.sequence = 0; self.effects = []; self.last_job = None; self.diagnostic_errors = []
         self.heavy = heavy_custody(cfg['queuePrograms'][2])
-        self.placement_root = Path('/run/opemos-steamos-placement-' + self.c['nonce'])
+        self.placement_root = media.placement_root(self.c)
         self.native = native_module(cfg['nativeReadOnlyPin'])
         # Read/admit before the first operation namespace or mount effect.
         self.guard_native()
@@ -185,6 +185,11 @@ class Run:
         p.need(current['owner']==self.heavy['owner'] and current['OFD']==self.heavy['OFD']
                and current['lockCore']==self.heavy['lockCore'], 'same admitted heavy owner for this entire operation')
 
+    def loop_role(self):
+        if self.loop_fd is None: return None
+        return {'fd': self.loop_fd, 'path': self.loop,
+                'backing': self.c['installer']['backing']['path']}
+
     def tool(self, argv, seconds=30, stage=True, worker=False):
         # No command or executable body comes from the request/candidate.
         ref = self.profile['nativeTools'][argv[0]]
@@ -192,7 +197,7 @@ class Run:
         self.heavy_guard()
         try:
             end=min(deadline,time.time()+seconds)
-            result = native_queue_worker(argv,end,ref) if worker else native_child(argv,end,ref)
+            result = native_queue_worker(argv,end,ref) if worker else native_child(argv,end,ref,loop=self.loop_role())
         except BaseException as error:
             value=getattr(error,'nativeChildEvidence',getattr(error,'evidence',None))
             if value is not None:self.diagnostic('native-'+Path(argv[0]).name+'-FIRST',value)
@@ -304,7 +309,9 @@ class Run:
                and (sysloop / 'ro').read_text().strip() == '1', 'actual readonly backing association')
         self.effects.append({'loop': self.loop, 'backing': backing})
         self.tool(['/usr/bin/mount', '-t', 'ext4', '-o', 'ro,noload,nodev,nosuid,noexec', self.loop, str(self.mount)])
-        self.mounted = True; self.effects.append({'mount': str(self.mount), 'loop': self.loop})
+        self.mounted = media.owned_mount(self.mount, self.loop)
+        p.need(self.mounted, 'successful mount must exist in kernel mount table')
+        self.effects.append({'mount': str(self.mount), 'loop': self.loop})
         w = self.mount / 'working.raw'; wi = p.ident(os.lstat(w))
         self.c['working'] = {'path': str(w), 'bytes': media.RAW_BYTES, 'sha256': media.RAW_SHA, 'identity': wi}
         self.c['installer']['bootCopy'] = self.c['working']
@@ -392,14 +399,14 @@ class Run:
         p.need((root / 'loop/backing_file').read_text().strip() == self.c['installer']['backing']['path']
                and (root / 'ro').read_text().strip() == '1', 'exact own readonly loop before cleanup')
         # Non-lazy umount refuses a real user; never detach a busy/foreign mount.
-        if self.mounted:
+        if media.owned_mount(self.mount, self.loop):
             self.tool(['/usr/bin/umount', str(self.mount)], 15, stage=False)
             self.mounted = False
         p.need((root / 'loop/backing_file').read_text().strip() == self.c['installer']['backing']['path']
                and (root / 'ro').read_text().strip() == '1', 'own association after unmount, before detach')
-        self.tool(['/usr/sbin/losetup', '--detach', self.loop], 15, stage=False)
         if self.loop_fd is not None:
             os.close(self.loop_fd); self.loop_fd = None
+        self.tool(['/usr/sbin/losetup', '--detach', self.loop], 15, stage=False)
         p.need(not (root / 'loop/backing_file').exists(), 'own loop detached')
         p.need(pin(self.c['installer']['backing']['path'], self.c['installer']['backing']['bytes'])
                == self.c['installer']['backing'], 'entire retained backing unchanged after operation')

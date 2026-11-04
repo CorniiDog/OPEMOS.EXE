@@ -21,7 +21,7 @@ def produce(expectation_pin,seed_pin,persist):
  """Must run under separately admitted existing Root preparation, never now.
  A negative guard retains exact partial metadata and never authorizes runtime.
  """
- started=time.time();peer.need(os.getuid()==0,'native Root preparation producer only');e=protected(expectation_pin);seed=protected(seed_pin);c=e['candidate'];root='/run/opemos-steamos-placement-'+NONCE
+ started=time.time();peer.need(os.getuid()==0,'native Root preparation producer only');e=protected(expectation_pin);seed=protected(seed_pin);c=e['candidate'];root=str(__import__('retained_media').placement_root(c))
  peer.need(e['kind']=='ROOT_LIBVIRT_R4_PREFLIGHT_EXPECTATION'and e['RootAdopted']is True and e['issuedUnix']<=started<e['startBeforeUnix']<=e['issuedUnix']+300 and e['purpose']in('PCI_RUNTIME_READY','INSTALLER_BOOT_READY'),'separate original finite current expectation; no issuance here')
  peer.need(c.get('installer')is not None and e['purpose']=='INSTALLER_BOOT_READY','installer-only source preparation, no old disk fallback')
  peer.need(e['nonce']==c['nonce']==NONCE and c['hostBoot']==e['bootID']==Path('/proc/sys/kernel/random/boot_id').read_text().strip(),'fresh unused scope/current boot')

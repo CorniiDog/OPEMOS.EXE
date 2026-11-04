@@ -13,7 +13,7 @@ from pathlib import Path
 import re
 import stat
 
-SOURCE_ROOT = Path('/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r120')
+SOURCE_ROOT = Path('/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r122')
 RUNTIME = {'libvirt_peer','libvirt_access','libvirt_native','libvirt_preflight','libvirt_producer',
            'queue_assignment','runtime_entry','guest_delta','guest_firmware_probe','held_history_reader',
            'two_boot_contract','postqueue_issuer','libvirt_storage','retained_media','source_contract'}
