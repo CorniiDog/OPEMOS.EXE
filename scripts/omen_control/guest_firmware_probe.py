@@ -59,7 +59,9 @@ def storage_installer_config(value,nonce,boot):
  import libvirt_peer as p
  p.need(all(k in value for k in('nonce','boot','original','working','installer')),'complete recorded storage scope and roles; no omitted-field fallback')
  p.need(nonce==p.SOURCE_PLACEMENT_NONCE and value['nonce']==nonce and value['boot']==boot,'authenticated recorded storage nonce/boot equality; no ambient substitution')
- return {'nonce':value['nonce'],'hostBoot':value['boot'],'original':value['original'],'working':value['working'],'installer':value['installer']}
+ result={'nonce':value['nonce'],'hostBoot':value['boot'],'original':value['original'],'working':value['working'],'installer':value['installer']}
+ if 'operationContext'in value:result.update({k:value[k]for k in('operationContext','lineageNonce','jobId','run','output')})
+ return result
 
 def installer_contract(c):
  import libvirt_peer as p
@@ -344,9 +346,14 @@ def metadata_cohort(roots,allowed_socket=None):
    except FileNotFoundError:continue
    entries+=1
    need(Path(root).is_absolute()and '..'not in Path(root).parts and len(Path(root).parts)<=32,'absolute bounded metadata ancestry');fd=os.open('/',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);h.own_descriptor(anchors,fd,'mdA');chain=[('/',fd,ident(os.fstat(fd)))];at=Path('/')
-   for name in Path(root).parts[1:]:
-    s=os.stat(name,dir_fd=fd,follow_symlinks=False);need(stat.S_ISDIR(s.st_mode),'nofollow directory ancestry before descent');fd=os.open(name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd);h.own_descriptor(anchors,fd,'mdA');at=at/name;need(ident(s)==ident(os.fstat(fd)),'same opened metadata ancestor');chain.append((str(at),fd,ident(s)))
-   walk(fd,str(root),0)
+   leaf=False
+   for index,name in enumerate(Path(root).parts[1:]):
+    s=os.stat(name,dir_fd=fd,follow_symlinks=False);leaf=index==len(Path(root).parts)-2 and stat.S_ISREG(s.st_mode)
+    need(stat.S_ISDIR(s.st_mode)or(leaf and s.st_uid==s.st_gid==0 and stat.S_IMODE(s.st_mode)==0o444 and s.st_nlink==1 and s.st_size<=1048576),'nofollow metadata ancestry or exact bounded Root public record')
+    fd=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC|(0 if leaf else os.O_DIRECTORY),dir_fd=fd);h.own_descriptor(anchors,fd,'mdA');at=at/name;need(ident(s)==ident(os.fstat(fd)),'same opened metadata ancestor');chain.append((str(at),fd,ident(s)))
+   if leaf:
+    key=(s.st_dev,s.st_ino);need(key not in seen,'no aliased public metadata leaf');seen.add(key);total+=max(s.st_size,s.st_blocks*512);need(total<=500000000 and ident(s)==ident(os.fstat(fd))==ident(os.lstat(root)),'public metadata charge/full9 stable in same500MB reserve')
+   else:walk(fd,str(root),0)
    for name,fd,old in chain:need(ident(os.fstat(fd))==ident(os.lstat(name))and all(ident(os.fstat(fd))[k]==old[k]for k in CORE),'held metadata ancestry core/name unchanged')
    close(anchors)
  except BaseException as error:first=error

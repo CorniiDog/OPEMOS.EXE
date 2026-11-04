@@ -4,7 +4,7 @@ No SQLite API, DB copy/index or closure inference on this postlaunch path.
 import hashlib,json,time,types,sys
 import libvirt_peer as p
 from libvirt_native import held
-QUEUE_SHA='87774cd3f04c161cea085a0adfd0e2132e8886b0a3e47dff2b3f0f8abe2221f8'
+QUEUE_SHA='ec8a377b96a4c7b1bac2edab75183011e3c8aad9efeb51130b18d61c42d47e42'
 CONTROL_QUEUE_SHA='16177e18b25de4b5b4a45849f5eddb7f7b58527f7d3425d48849927d5843103e'
 
 def protected_continuation_value(ref,mode=0o400):
@@ -54,7 +54,7 @@ def execution_job(c,parent,prior=None):
  return job
 
 def capture_execution_job(c,binding):
- ref=binding['parentManifestPin'];p.need(ref['identity']['st_uid']==ref['identity']['st_gid']==0 and __import__('stat').S_IMODE(ref['identity']['st_mode'])==0o444 and ref['identity']['st_nlink']==1,'Root444 capture parent');parent=json.loads(held(ref,1048576));p.need(parent['sourceRoles']==binding['sourceRoles']and parent['queuePrograms']==binding['queuePrograms']and parent['bootID']==binding['bootID']and binding['parentManifestPin']['path']=='/run/opemos-libvirt-parent-'+c['nonce']+'.json','held exact capture parent/source/queue/boot');return execution_job(c,parent)
+ ref=binding['parentManifestPin'];p.need(ref['identity']['st_uid']==ref['identity']['st_gid']==0 and __import__('stat').S_IMODE(ref['identity']['st_mode'])==0o444 and ref['identity']['st_nlink']==1,'Root444 capture parent');parent=json.loads(held(ref,1048576));p.need(parent['sourceRoles']==binding['sourceRoles']and parent['queuePrograms']==binding['queuePrograms']and parent['bootID']==binding['bootID']and binding['parentManifestPin']['path']==__import__('source_contract').parent_paths(parent)['parentPath'],'held exact capture parent/source/queue/boot');return execution_job(c,parent)
 
 def from_values(value,prior,c,g,queue,parent=None):
  counts={k:len(v)for k,v in prior.items()};raw=p.canon(prior)

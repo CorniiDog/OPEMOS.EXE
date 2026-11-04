@@ -390,6 +390,8 @@ def owned_mount(mount, loop):
 
 def placement_root(c):
     """Attempt-bound output; preserve earlier failed placement namespaces as history."""
+    if 'operationContext' in c:
+        return Path(__import__('source_contract').candidate_paths(c)['placementRoot'])
     io = Path(c['run']).parent
     prefix = 'opemos-libvirt-io-' + c['nonce'] + '-'
     need(io.parent == Path('/run') and re.fullmatch(re.escape(prefix) + '[0-9a-f]{32}', io.name)
@@ -401,6 +403,8 @@ def placement_root(c):
 
 def placement_for_candidate(c):
     """Current retained/attempt IO is strict; original raw-copy lineage stays exact."""
+    if 'operationContext' in c:
+        return placement_root(c)
     prefix = 'opemos-libvirt-io-' + c['nonce'] + '-'
     if is_adopted(c) or Path(c['run']).parent.name.startswith(prefix):
         return placement_root(c)

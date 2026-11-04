@@ -149,15 +149,21 @@ class Run:
                re.fullmatch(r'[A-Za-z0-9_.-]{1,80}', req['jobId']), 'fresh normal execution identifiers')
         self.c = copy.deepcopy(cfg['candidateTemplate'])
         self.c.update(hostBoot=self.boot, jobId=req['jobId'], runtimeAuthorized=False, sourceAccepted=False)
-        p.need(self.c['nonce'] == p.SOURCE_PLACEMENT_NONCE and media.is_adopted(self.c), 'retained guest profile')
-        self.root = Path('/run/opemos-current-media-' + req['executionAttempt'])
-        self.mount = Path('/run/opemos-media-mount-' + req['executionAttempt'])
-        self.io = Path('/run/opemos-libvirt-io-' + self.c['nonce'] + '-' + req['executionAttempt'])
+        self.c['lineageNonce'] = self.c['nonce']
+        self.c['nonce'] = req['executionAttempt']
+        self.c['name'] = 'opemos-libvirt-' + self.c['nonce']
+        p.need(self.c['lineageNonce'] == self.contract['guestNonce'] and media.is_adopted(self.c), 'protected retained guest profile')
+        p.SOURCE_PLACEMENT_NONCE = self.c['nonce']
+        paths = source_contract.operation_paths(self.contract['deployment']['id'], req['executionAttempt'])
+        self.c['operationContext'] = {'deploymentId': self.contract['deployment']['id'], 'attempt': req['executionAttempt'], 'paths': paths}
+        self.root = Path(paths['operationRoot'])
+        self.mount = Path(paths['mountRoot'])
+        self.io = Path(paths['ioRoot'])
         self.c.update(run=str(self.io / 'run'), output=str(self.io / 'output'))
         self.loop = None; self.loop_fd = None; self.mounted = False; self.submitted = False
         self.sequence = 0; self.effects = []; self.last_job = None; self.diagnostic_errors = []
         self.heavy = heavy_custody(cfg['queuePrograms'][2])
-        self.placement_root = media.placement_root(self.c)
+        self.placement_root = Path(paths['placementRoot'])
         self.native = native_module(cfg['nativeReadOnlyPin'])
         # Read/admit before the first operation namespace or mount effect.
         self.guard_native()
@@ -272,8 +278,8 @@ class Run:
         return self.record('capture-' + role, proof)
 
     def public(self, name, value):
-        p.need(name in ('opemos-libvirt-parent-' + self.c['nonce'] + '.json',
-                        'opemos-libvirt-job-' + self.c['nonce'] + '.json'), 'two normal public roles')
+        paths = source_contract.candidate_paths(self.c)
+        p.need(name in (Path(paths['parentPath']).name, Path(paths['jobPath']).name), 'two bound public roles')
         raw = p.canon(value); p.need(len(raw) <= 1048576, 'normal public cap')
         with access.Held('/run') as parent:
             fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
@@ -341,19 +347,19 @@ class Run:
              'rootBoundaryPin': {'path': '/', 'identity': p.ident(os.lstat('/'))},
              'priorHistory': {'counts': history['counts'], 'bytes': history['rawBytes'], 'sha256': history['rawSHA256']},
              'priorHistoryCodecPin': codec, **private}
-        e['unusedPaths'] += ['/run/opemos-libvirt-parent-' + self.c['nonce'] + '.json',
-                             '/run/opemos-libvirt-job-' + self.c['nonce'] + '.json',
-                             '/run/opemos-libvirt-runtime-' + self.c['nonce']]
+        paths = source_contract.candidate_paths(self.c)
+        e['unusedPaths'] += [paths['parentPath'], paths['jobPath'], paths['runtimeRoot']]
         seed = copy.deepcopy(self.profile['placementSeedTemplate'])
         seed.update(nonce=self.c['nonce'], boot=self.boot, original=self.c['original'], working=self.c['working'],
-                    backing=backing, operationRoot=str(self.root))
+                    backing=backing, operationRoot=str(self.root), operationContext=self.c['operationContext'],
+                    lineageNonce=self.c['lineageNonce'], jobId=self.c['jobId'], run=self.c['run'], output=self.c['output'])
         ep = self.record('initial-expectation', e)
         import current_media_preparation
         prepared = current_media_preparation.prepare(ep, seed, self.contract['originCopyReceiptPin'], self.record)
         final = protected(prepared['expectationPin'], 0o400)
         import fresh_media_parent
         result = fresh_media_parent.produce(prepared, final, self.contract_pin, self.c['jobId'], self.public)
-        producer.create_root('/run/opemos-libvirt-runtime-' + self.c['nonce'])
+        producer.create_root(source_contract.candidate_paths(self.c)['runtimeRoot'])
         return result
 
     def execute(self):

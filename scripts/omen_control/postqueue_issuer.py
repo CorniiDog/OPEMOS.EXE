@@ -174,8 +174,9 @@ def bind_placement(peer,parent,parent_ref,context=None):
  Never changes the frozen peer's nonce, strict geometry or owner predicate.
  """
  nonce=parent['nonce'];roles=parent['sourceRoles'];candidate=parent['candidate']
- peer.need(nonce=='cd9ef0826364409da287f6f3e3830c95'and peer.SOURCE_PLACEMENT_NONCE==nonce and candidate['nonce']==nonce and __import__('queue_assignment').execution_job(candidate,parent)==parent['jobId'],'D23 unused scope only; D22 is consumed')
- peer.need(parent['RootIssued']is True and parent['kind']=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'and parent['bootID']==candidate['hostBoot']and parent_ref['path']=='/run/opemos-libvirt-parent-'+nonce+'.json','existing exact Root parent/boot/source scope')
+ if 'operationContext'in candidate:__import__('source_contract').bind_scope(peer,parent)
+ peer.need(peer.SOURCE_PLACEMENT_NONCE==nonce and candidate['nonce']==nonce and __import__('queue_assignment').execution_job(candidate,parent)==parent['jobId'],'D23 unused scope only; D22 is consumed')
+ peer.need(parent['RootIssued']is True and parent['kind']=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'and parent['bootID']==candidate['hostBoot']and parent_ref['path']==__import__('source_contract').parent_paths(parent)['parentPath'],'existing exact Root parent/boot/source scope')
  peer.need(set(roles)==__import__('source_contract').RUNTIME_ROLES,'closed twelve-role binding')
  __import__('source_contract').validate(roles,parent['queuePrograms'],parent['installedSourceContractPin'])
  ref=parent['sourcePlacementPin'];qr=parent['placementQualificationPin'];root=str(__import__('retained_media').placement_for_candidate(candidate))
@@ -236,7 +237,7 @@ class PublicationEvidence:
  grant authority. Original per-scope caps and original clocks stay unchanged.
  """
  def __init__(self,parent,parent_ref):
-  self.parent=parent;self.parent_ref=parent_ref;self.root='/run/opemos-libvirt-runtime-'+parent['nonce'];self.previous=None
+  self.parent=parent;self.parent_ref=parent_ref;self.root=__import__('source_contract').parent_paths(parent)['runtimeRoot'];self.previous=None
   self.anchor=p.RootFiles(self.root);self.anchor.__enter__();self.closed=False
  def guard_anchor(self,files):
   value={'kind':'ROOT_ORIGINAL_PUBLISHER_FD_LIFETIME_R270','namespace':os.readlink('/proc/self/ns/mnt'),'originalRun':self.anchor.run_row(self.anchor.runFD),'runtimeHeld':p.ident(os.fstat(self.anchor.fd)),'runtimeNamed':p.ident(os.lstat(self.root)),'phaseRuntime':p.ident(os.fstat(files.fd)),'ancestry':[]}
@@ -302,9 +303,9 @@ def bind_current_preflight(g,parent,parent_ref,observed,proof_pin,assignment_pin
 
 def _issue(parent_ref,ops=None):
  """Runs inside the exact Root queue entry; does not enqueue or touch hardware."""
- parent=protected(parent_ref,0o444);__import__('guest_firmware_probe').require_firstboot_only(parent['candidate']);root='/run/opemos-libvirt-runtime-'+parent['nonce'];before=set(os.listdir('/proc/self/fd'));first=None;secondary=[];outputs=[]
+ parent=protected(parent_ref,0o444);__import__('guest_firmware_probe').require_firstboot_only(parent['candidate']);root=__import__('source_contract').parent_paths(parent)['runtimeRoot'];before=set(os.listdir('/proc/self/fd'));first=None;secondary=[];outputs=[]
  p.need(parent['kind']=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'and parent['RootIssued']is True and parent['postqueueDelegation']=='ROOT_EXACT_CANONICAL_BINDING_ONLY_R5','separate immutable Root delegation')
- p.need(parent_ref['path']=='/run/opemos-libvirt-parent-'+parent['nonce']+'.json'and parent['contextPath']==root+'/context.json','exact parent/runtime names')
+ p.need(parent_ref['path']==__import__('source_contract').parent_paths(parent)['parentPath']and parent['contextPath']==root+'/context.json','exact parent/runtime names')
  __import__('source_contract').validate(parent['sourceRoles'],parent['queuePrograms'],parent['installedSourceContractPin'])
  p.need(set(parent['sourceRoles'])==ROLES and all(Path(ref['path']).name==role+'.py'for role,ref in parent['sourceRoles'].items()),'closed twelve-role reviewed source graph')
  p.need(parent['noNIC']is True and parent['noInstall']is True and parent['maxBoots']==1 and parent['failureControl']=='LIBVIRT_AUTODESTROY_CONTROLLER_CONNECTION','unchanged narrow scope')

@@ -39,14 +39,11 @@ def prepare(expectation_pin, seed, origin_pin, persist):
            'new current-boot generation')
     contract = source_contract.validate(e['sourceRoles'], e['queuePrograms'], e['installedSourceContractPin'])
     p.need(contract['originCopyReceiptPin'] == origin_pin, 'installed immutable origin identity')
-    origin = media.origin_data(origin_pin, c['nonce'])
+    origin = media.origin_data(origin_pin, c.get('lineageNonce', c['nonce']))
     p.need(media.is_adopted(c) and 'currentCustody' not in c['installer']
            and 'currentCustodyPin' not in c['installer'], 'new measured custody, not old receipt adoption')
-    p.need(Path(c['run']).parent == Path(c['output']).parent
-           and Path(c['run']).name == 'run' and Path(c['output']).name == 'output'
-           and Path(c['run']).parent.parent == Path('/run')
-           and Path(c['run']).parent.name.startswith('opemos-libvirt-io-' + c['nonce'] + '-'),
-           'fresh confined writable IO outside readonly retained media')
+    source_contract.candidate_paths(c)
+    p.need(c['operationContext']['deploymentId'] == contract['deployment']['id'] and c['lineageNonce'] == contract['guestNonce'], 'same protected deployment/origin lineage')
     p.need(not os.path.lexists(c['run']) and not os.path.lexists(c['output']), 'fresh owned writable IO')
     c['installer'].update(media.capture_current(c, origin, persist))
     seed = copy.deepcopy(seed)

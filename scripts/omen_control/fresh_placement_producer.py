@@ -11,7 +11,7 @@ import libvirt_access as access
 import libvirt_preflight as pre
 import libvirt_producer as producer
 from libvirt_native import held
-NONCE='cd9ef0826364409da287f6f3e3830c95'
+# Guest lineage is bound by the installed definition, not a code selector.
 
 def protected(ref):
  i=ref['identity'];peer.need(i['st_uid']==i['st_gid']==0 and stat.S_IMODE(i['st_mode'])==0o400 and i['st_nlink']==1,'Root0400 protected metadata input')
@@ -21,7 +21,7 @@ def produce(expectation_pin,seed_pin,persist):
  """Must run under separately admitted existing Root preparation, never now.
  A negative guard retains exact partial metadata and never authorizes runtime.
  """
- started=time.time();peer.need(os.getuid()==0,'native Root preparation producer only');e=protected(expectation_pin);seed=protected(seed_pin);c=e['candidate'];root=str(__import__('retained_media').placement_root(c))
+ started=time.time();peer.need(os.getuid()==0,'native Root preparation producer only');e=protected(expectation_pin);seed=protected(seed_pin);c=e['candidate'];NONCE=c['nonce'];root=str(__import__('retained_media').placement_root(c))
  peer.need(e['kind']=='ROOT_LIBVIRT_R4_PREFLIGHT_EXPECTATION'and e['RootAdopted']is True and e['issuedUnix']<=started<e['startBeforeUnix']<=e['issuedUnix']+300 and e['purpose']in('PCI_RUNTIME_READY','INSTALLER_BOOT_READY'),'separate original finite current expectation; no issuance here')
  peer.need(c.get('installer')is not None and e['purpose']=='INSTALLER_BOOT_READY','installer-only source preparation, no old disk fallback')
  peer.need(e['nonce']==c['nonce']==NONCE and c['hostBoot']==e['bootID']==Path('/proc/sys/kernel/random/boot_id').read_text().strip(),'fresh unused scope/current boot')
@@ -29,7 +29,7 @@ def produce(expectation_pin,seed_pin,persist):
  peer.need(seed['working']==c['working']and (seed['working']['identity']['st_uid']==seed['working']['identity']['st_gid']==0 or (__import__('retained_media').is_adopted(c)and __import__('retained_media').observe(c)['working']==seed['working'])) and seed['working']['bytes']==(8120172544 if c.get('installer')is not None else 21474836480)and seed['wholeGraphUpperBound']==(__import__('guest_firmware_probe').installer_contract(c)['wholeGraphUpperBound']if c.get('installer')is not None else 58449672960)<60000000000 and seed['hostFloor']==72000000000,'same Root working inode, literal60e9 graph and20percent margin')
  if c.get('installer')is not None:__import__('guest_firmware_probe').authenticate_copy_receipt(c,e['bootID']);peer.need(seed['installer']==c['installer']and seed['backing']==c['installer']['backing'],'same complete installer/charged backing producer data')
  peer.need(seed['placement']['path']=='/media/connor/Games/OPEMOS/SteamOS-test-storage-20261027-ae79cd4de452'and seed['placement']['identity']['st_uid']==seed['placement']['identity']['st_gid']==1000,'exact previously authorized regular-file storage parent; no physical media API')
- __import__('source_contract').validate(e['sourceRoles'],e['queuePrograms'],e['installedSourceContractPin'])
+ definition=__import__('source_contract').validate(e['sourceRoles'],e['queuePrograms'],e['installedSourceContractPin']);peer.need(c['operationContext']['deploymentId']==definition['deployment']['id']and c['lineageNonce']==definition['guestNonce'],'same installed deployment/origin lineage')
  peer.need(peer.SOURCE_PLACEMENT_NONCE==NONCE and peer.SOURCE_PLACEMENT_PIN is None,'unbound current placement')
  for role,ref in e['sourceRoles'].items():
   peer.need(ref['identity']['st_uid']==ref['identity']['st_gid']==0 and stat.S_IMODE(ref['identity']['st_mode'])==0o444 and Path(ref['path']).name==role+'.py','immutable installed role');compile(held(ref,1048576),ref['path'],'exec')

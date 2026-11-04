@@ -242,20 +242,28 @@ class RetainedMediaContract(unittest.TestCase):
 
     @unittest.skipUnless(os.geteuid() == 0 and sys.platform == 'linux', 'disposable Linux CI Root only')
     def test_installed_normal_entry_without_connect_syscall(self):
+        for _ in range(2):
+            with self.subTest(deployment='arbitrary future identity'):
+                self._installed_normal_entry_without_connect_syscall(uuid.uuid4().hex, uuid.uuid4().hex)
+
+    def _installed_normal_entry_without_connect_syscall(self, deployment_id, attempt):
         """Actual installer/isolated entry; external queue helpers and media are MODELED, never executed."""
         import install_media_controller as installer
         import ctypes
-        if os.path.lexists(installer.SOURCE_ROOT): self.skipTest('existing source owner preserved')
-        token = uuid.uuid4().hex
-        queue_root = Path('/var/lib/opemos-queue-r120-' + token)
-        drain_root = Path('/var/lib/opemos-media-drain-r120-' + token)
-        public_parent=Path('/run/opemos-libvirt-parent-cd9ef0826364409da287f6f3e3830c95.json')
+        layout = source_contract.deployment_paths(deployment_id)
+        paths = source_contract.operation_paths(deployment_id, attempt)
+        source_root = Path(layout['sourceRoot'])
+        if os.path.lexists(source_root): self.skipTest('existing source owner preserved')
+        token = attempt
+        guest_nonce = uuid.uuid4().hex
+        queue_root = Path(layout['queueRoot'])
+        drain_root = Path(layout['drainRoot'])
+        public_parent=Path(paths['parentPath'])
         if os.path.lexists(public_parent): self.skipTest('existing public owner preserved')
         parent_identity=None
-        fixture=Path('/run/opemos-libvirt-io-cd9ef0826364409da287f6f3e3830c95-'+token)
-        placement=media.placement_root({'nonce':'cd9ef0826364409da287f6f3e3830c95',
-            'jobId':'fixture-fresh-job-e'+token[:16], 'run':str(fixture/'run'),'output':str(fixture/'output')})
-        runtime=Path('/run/opemos-libvirt-runtime-cd9ef0826364409da287f6f3e3830c95')
+        fixture=Path(paths['ioRoot'])
+        placement=Path(paths['placementRoot'])
+        runtime=Path(paths['runtimeRoot'])
         for path in (fixture,placement,runtime):
             if os.path.lexists(path):self.skipTest('existing connected fixture owner preserved')
         created=[]
@@ -273,12 +281,12 @@ class RetainedMediaContract(unittest.TestCase):
                   'media_probe_remote':member((SOURCE/'media_probe_remote.py').read_bytes()),
                   'normal_probe':model,'normal_cycle':model}
         payload = {'kind':'ROOT_REVIEWED_CURRENT_MEDIA_INSTALL_V1','repository':'CorniiDog/OPEMOS.EXE',
-                   'protectedMain':'a'*40,'reviewedHead':'b'*40,  # modeled identity DATA, no review fabricated
+                   'protectedMain':'a'*40,'reviewedHead':'b'*40,'deploymentId':deployment_id,  # modeled identity DATA, no review fabricated
                    'sources':sources,'queueSources':queue_sources,'queueRoot':str(queue_root),
                    'originCopyData':member(b'{}'), 'drainRoot':str(drain_root),'drainSources':drains,
                    'normalControlPolicy':{'normalProbeSHA256':model['sha256'],'normalCycleSHA256':model['sha256']},
                    'parentTemplate':{'noNIC':True,'noInstall':True,'maxBoots':1},
-                   'operationProfile':{'kind':'OPEMOS_INSTALLED_CURRENT_MEDIA_OPERATION_V1'}}
+                   'operationProfile':{'kind':'OPEMOS_INSTALLED_CURRENT_MEDIA_OPERATION_V1','candidateTemplate':{'nonce':guest_nonce}}}
         def deny_connect():
             class Filter(ctypes.Structure):
                 _fields_=[('code',ctypes.c_ushort),('jt',ctypes.c_ubyte),('jf',ctypes.c_ubyte),('k',ctypes.c_uint)]
@@ -292,7 +300,7 @@ class RetainedMediaContract(unittest.TestCase):
             installed = installer.install(payload)
             self.assertEqual(installed['hardwareEffects'], [])
             ref = installed['operationProfilePin']
-            result = subprocess.run(['/usr/bin/python3','-I','-B',str(installer.SOURCE_ROOT/'run_current_media.py'),
+            result = subprocess.run(['/usr/bin/python3','-I','-B',str(source_root/'run_current_media.py'),
                                      '--profile-pin-json',json.dumps(ref),'--observe-boot'],
                                     capture_output=True,timeout=15,preexec_fn=deny_connect)
             self.assertEqual(result.returncode,0,result.stderr.decode())
@@ -305,7 +313,7 @@ class RetainedMediaContract(unittest.TestCase):
             # by verify_inputs, and are not claimed by this test.
             import standalone_peer_access_adapter as adapter
             roles={n:installed['sourceRoles'][n]for n in installer.RUNTIME}
-            nonce=adapter.NONCE;boot=value['bootID']
+            nonce=attempt;boot=value['bootID']
             observer={k:roles['libvirt_peer'][k]for k in ('path','bytes','sha256')}
             domain={'leaseNonce':nonce,'name':'opemos-libvirt-'+nonce,
                     'uuid':'64f43b0c-9a98-494d-adc1-0782aea1d32e','observer':observer}
@@ -332,7 +340,8 @@ class RetainedMediaContract(unittest.TestCase):
             installer.put(fixture/'output/serial.raw',b'',0o600)
             c={'nonce':nonce,'hostBoot':boot,'jobId':spec['id'],'guestUUID':domain['uuid'],'name':domain['name'],
                'original':original,'working':working,'run':str(fixture/'run'),'output':str(fixture/'output'),
-               'installer':{'kind':'AUTHENTICATED_F9AA_RAW_RECOVERY_USB_FIRSTBOOT','noInstallTarget':True}}
+               'installer':{'kind':'AUTHENTICATED_F9AA_RAW_RECOVERY_USB_FIRSTBOOT','noInstallTarget':True},
+               'operationContext':{'deploymentId':deployment_id,'attempt':attempt,'paths':paths},'lineageNonce':guest_nonce}
             def save(label,value):return installer.put(fixture/(label+'.json'),installer.canon(value),0o400)
             rows=[];after=[]
             leaves=[(fixture/'media','working-parent'),(fixture/'media/working.raw','working'),
@@ -369,7 +378,7 @@ class RetainedMediaContract(unittest.TestCase):
             qualifiedpin=installer.put(placement/'placement-qualified.json',installer.canon(qualification),0o400)
             parent={'kind':'ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT','RootIssued':True,
                     'runtimeAuthorized':True,'MODEL_ONLY':False,'bootID':boot,'nonce':nonce,
-                    'contextPath':'/run/opemos-libvirt-runtime-'+nonce+'/context.json',
+                    'contextPath':paths['runtimeRoot']+'/context.json',
                     'candidate':c,'issuedUnix':now,'startBeforeUnix':now+299,'wholeDeadlineUnix':now+900,
                     'sourceRoles':roles,'jobId':spec['id'],'normalizedSpecTemplate':spec,
                     'installedSourceContractPin':installed['sourceContractPin'],'queuePrograms':installed['queuePrograms'],
@@ -381,16 +390,25 @@ class RetainedMediaContract(unittest.TestCase):
             actual_spec=adapter.parent_spec(parent,parent_ref)
             request={'leaseNonce':nonce,'domainName':domain['name'],'domainUUID':domain['uuid'],
                      'observer':observer,'jobId':spec['id'],
-                     'specSHA256':hashlib.sha256(installer.canon(actual_spec)).hexdigest()}
+                     'specSHA256':hashlib.sha256(installer.canon(actual_spec)).hexdigest(),
+                     'currentControl':{'definitionPin':installed['sourceContractPin'],'parentPin':parent_ref}}
             jobtoken=uuid.uuid4().hex
             request.update(jobToken=jobtoken,unit='opemos-testq-abcdefabcdef-'+jobtoken+'.service',invocation='a'*32,
                            cpus=[0,1,2,3],controllerMemory=2147483648,domainMemory=8589934592,
                            reservationMemory=10737418240,vmSlice='opemos-vm-pool-libvirt'+jobtoken+'.slice',
                            partition='/opemos/vm/pool/libvirt'+jobtoken,gpuGroup='omen-iommu-group-1')
-            with adapter.RootInputs()as inputs:
+            with adapter.RootInputs(request.get('currentControl'))as inputs:
                 accepted=adapter.verify_inputs(request,inputs,boot,include_context=False)
                 self.assertEqual(accepted['implementationAccessPin'],roles['libvirt_access'])
                 self.assertFalse(accepted['originalInputOnly'])
+                for fault in ('source-hash','source-owner','escape'):
+                    control=copy.deepcopy(request['currentControl'])
+                    if fault=='source-hash':control['definitionPin']['sha256']='0'*64
+                    elif fault=='source-owner':control['definitionPin']['identity']['st_uid']=1000
+                    else:control['definitionPin']['path']='/run/../tmp/installed-controller.json'
+                    with self.assertRaises(Exception):
+                        with adapter.RootInputs(control) as wrong_inputs:
+                            adapter.verify_inputs(dict(request,currentControl=control),wrong_inputs,boot,include_context=False)
                 with adapter.load_pair(accepted)as(current_peer,current_access):
                     import postqueue_issuer as issuer
                     current_peer.SOURCE_PLACEMENT_PIN=None
@@ -406,15 +424,14 @@ class RetainedMediaContract(unittest.TestCase):
                         elif fault=='foreign':bad['sourceRoles']['foreign']=bad['sourceRoles']['libvirt_storage']
                         elif fault=='original-current':bad['sourceRoles']['libvirt_peer']['sha256']=adapter.ORIGINAL_PEER_SHA
                         elif fault=='wrong-attempt':
-                            bad['candidate']['run']=c['run'].replace(token,'f'*32)
-                            bad['candidate']['output']=c['output'].replace(token,'f'*32)
+                            bad['candidate']['operationContext']['attempt']='f'*32
                         elif fault=='wrong-job':bad['candidate']['jobId']='foreign-job'
                         else:
                             bad['sourcePlacementPin']['path']='/run/opemos-steamos-placement-'+nonce+'/storage-contract.json'
                             bad['placementQualificationPin']['path']='/run/opemos-steamos-placement-'+nonce+'/placement-qualified.json'
                         with self.assertRaises(Exception):issuer.bind_placement(current_peer,bad,parent_ref)
                         with self.assertRaises(Exception):entry.bind_placement(current_peer,bad,parent_ref)
-                queue_spec=importlib.util.spec_from_file_location('actual_connected_queue',SOURCE/'test_queue.py')
+                queue_spec=importlib.util.spec_from_file_location('actual_connected_queue',installed['queuePrograms'][0]['path'])
                 queue=importlib.util.module_from_spec(queue_spec);sys.modules[queue_spec.name]=queue
                 try:
                     queue_spec.loader.exec_module(queue)
@@ -431,7 +448,7 @@ class RetainedMediaContract(unittest.TestCase):
             if parent_identity is not None:
                 self.assertEqual(media.identity(os.lstat(public_parent)),parent_identity)
                 public_parent.unlink()
-            for path in (installer.SOURCE_ROOT,queue_root,drain_root,*reversed(created)):
+            for path in (source_root,queue_root,drain_root,*reversed(created)):
                 if path.exists(): shutil.rmtree(path)
 
     def test_idle_offline_transition_requires_fresh_post_drain_cut(self):

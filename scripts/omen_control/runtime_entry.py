@@ -92,12 +92,12 @@ def await_root_context(parent_ref):
    return postqueue_issuer.issue(parent_ref)
  peer.need(parent_ref['identity']['st_uid']==parent_ref['identity']['st_gid']==0 and stat.S_IMODE(parent_ref['identity']['st_mode'])==0o444,'actual Root public approval parent')
  raw=held(parent_ref,1048576);parent=json.loads(raw)
- peer.need(parent_ref['path']=='/run/opemos-libvirt-parent-'+parent['nonce']+'.json','exact prequeue parent namespace')
+ peer.need(parent_ref['path']==__import__('source_contract').parent_paths(parent)['parentPath'],'exact prequeue parent namespace')
  peer.need(parent['kind']=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'and parent['RootIssued']is True and parent['MODEL_ONLY']is not True,'separate real Root prequeue parent')
  peer.need(parent['failureControl']=='LIBVIRT_AUTODESTROY_CONTROLLER_CONNECTION'and parent['noInstall']is True and parent['noNIC']is True and parent['maxBoots']==1,'exact no-install two-boot scope')
  peer.need(parent['issuedUnix']<=time.time()<parent['startBeforeUnix']<=parent['issuedUnix']+300,'finite Root parent, no self refresh')
  peer.need(parent['bootID']==Path('/proc/sys/kernel/random/boot_id').read_text().strip(),'same actual Root parent host boot')
- expected='/run/opemos-libvirt-runtime-'+parent['nonce']+'/context.json';peer.need(parent['contextPath']==expected,'one exact postqueue protected context name')
+ expected=__import__('source_contract').parent_paths(parent)['runtimeRoot']+'/context.json';peer.need(parent['contextPath']==expected,'one exact postqueue protected context name')
  end=min(parent['startBeforeUnix'],time.time()+30)
  while time.time()<end:
   peer.need(held(parent_ref,1048576)==raw,'unchanged Root approval while waiting')
@@ -115,8 +115,9 @@ def bind_placement(peer,parent,parent_ref,context=None):
  Never changes the frozen peer's nonce, strict geometry or owner predicate.
  """
  nonce=parent['nonce'];roles=parent['sourceRoles'];candidate=parent['candidate']
- peer.need(nonce=='cd9ef0826364409da287f6f3e3830c95'and peer.SOURCE_PLACEMENT_NONCE==nonce and candidate['nonce']==nonce and __import__('queue_assignment').execution_job(candidate,parent)==parent['jobId'],'D23 unused scope only; D22 is consumed')
- peer.need(parent['RootIssued']is True and parent['kind']=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'and parent['bootID']==candidate['hostBoot']and parent_ref['path']=='/run/opemos-libvirt-parent-'+nonce+'.json','existing exact Root parent/boot/source scope')
+ if 'operationContext'in candidate:__import__('source_contract').bind_scope(peer,parent)
+ peer.need(peer.SOURCE_PLACEMENT_NONCE==nonce and candidate['nonce']==nonce and __import__('queue_assignment').execution_job(candidate,parent)==parent['jobId'],'D23 unused scope only; D22 is consumed')
+ peer.need(parent['RootIssued']is True and parent['kind']=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'and parent['bootID']==candidate['hostBoot']and parent_ref['path']==__import__('source_contract').parent_paths(parent)['parentPath'],'existing exact Root parent/boot/source scope')
  __import__('source_contract').validate(roles,parent['queuePrograms'],parent['installedSourceContractPin'])
  ref=parent['sourcePlacementPin'];qr=parent['placementQualificationPin'];root=str(__import__('retained_media').placement_for_candidate(candidate))
  peer.need(ref['path']==root+'/storage-contract.json'and qr['path']==root+'/placement-qualified.json','fresh exact placement+qualification names, no historical receipt')

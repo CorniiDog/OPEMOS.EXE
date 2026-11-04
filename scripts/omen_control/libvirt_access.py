@@ -311,7 +311,7 @@ def runtime_inventory(files,parent,parent_ref):
  """Validate the complete create-only publisher chain; never a grant."""
  names=None;leaves={};pubs=[]
  try:
-  root='/run/opemos-libvirt-runtime-'+parent['nonce'];p.need(str(files.path)==root,'exact runtime capsule')
+  root=__import__('source_contract').parent_paths(parent)['runtimeRoot'];p.need(str(files.path)==root,'exact runtime capsule')
   names=sorted(os.listdir(files.fd));p.need(len(names)<=1536,'original finite runtime inventory')
   journals=[n for n in names if re.fullmatch(r'publication-[0-9]{3}[.]json',n)];p.need(len(journals)<=512 and journals==['publication-'+str(i).zfill(3)+'.json'for i in range(len(journals))],'ordered bounded publication chain')
   _,lockpin=files.read('lock',0o600,4096);leaves={};pubs=[];last=None;total=0;request_hash=None;publisher=None
@@ -366,7 +366,7 @@ def publish_runtime(files,parent,parent_ref,name,value,deadline):
 @contextlib.contextmanager
 def runtime_snapshot(parent,parent_ref,request,deadline,io):
  """Birth is sampled AFTER SH. Full9 remains exact throughout one read cut."""
- root='/run/opemos-libvirt-runtime-'+parent['nonce'];value={'kind':'ROOT_SHARED_RUNTIME_SNAPSHOT_R201','parentPin':parent_ref,'publisherPin':parent['sourceRoles']['postqueue_issuer'],'jobId':parent['jobId'],'nonce':parent['nonce'],'bootID':parent['bootID'],'startedMonotonic':time.monotonic(),'readLockClosed':False};files=p.RootFiles(root)
+ root=__import__('source_contract').parent_paths(parent)['runtimeRoot'];value={'kind':'ROOT_SHARED_RUNTIME_SNAPSHOT_R201','parentPin':parent_ref,'publisherPin':parent['sourceRoles']['postqueue_issuer'],'jobId':parent['jobId'],'nonce':parent['nonce'],'bootID':parent['bootID'],'startedMonotonic':time.monotonic(),'readLockClosed':False};files=p.RootFiles(root)
  try:
   with files:
    with files.lock(False,deadline)as lock:

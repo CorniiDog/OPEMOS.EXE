@@ -2,6 +2,7 @@
 import copy
 import json
 import time
+from pathlib import Path
 
 
 def produce(preparation, expectation, installed_contract_pin, execution_job, public):
@@ -17,6 +18,7 @@ def produce(preparation, expectation, installed_contract_pin, execution_job, pub
            'fresh candidate job/current boot, not an old execution continuation')
     contract = source_contract.validate(expectation['sourceRoles'], expectation['queuePrograms'],
                                         installed_contract_pin)
+    p.need(c['operationContext']['deploymentId'] == contract['deployment']['id'] and c['lineageNonce'] == contract['guestNonce'], 'same protected deployment/guest lineage')
     q = preparation['qualification']
     qualified = json.loads(held(q['placementQualificationPin'], 1048576))
     pre = qualified['currentPreflight']; now = time.time()
@@ -57,7 +59,7 @@ def produce(preparation, expectation, installed_contract_pin, execution_job, pub
                   postqueueDelegation='ROOT_EXACT_CANONICAL_BINDING_ONLY_R5',
                   workerArgv=['/usr/bin/python3', expectation['queuePrograms'][0]['path'],
                               '--queue', parent['queueStateRoot'], 'run'],
-                  contextPath='/run/opemos-libvirt-runtime-' + c['nonce'] + '/context.json',
+                  contextPath=__import__('source_contract').candidate_paths(c)['runtimeRoot'] + '/context.json',
                   **{k: q[k] for k in ('sourcePlacementPin', 'placementQualificationPin', 'prequeuePreflightPin')})
     # Static privileged commands and tool identities come from the installed
     # reviewed profile; the per-run plan may not supply executable bodies.
@@ -80,12 +82,12 @@ def produce(preparation, expectation, installed_contract_pin, execution_job, pub
     p.need(parent['postqueueDelegation'] == 'ROOT_EXACT_CANONICAL_BINDING_ONLY_R5'
            and spec['approval'] == 'EXACT_PARENT_MINIMAL_PIN', 'normal queue delegation')
     queue_assignment.execution_job(c, parent)
-    ref = public('opemos-libvirt-parent-' + c['nonce'] + '.json', parent)
+    ref = public(Path(__import__('source_contract').candidate_paths(c)['parentPath']).name, parent)
     # Both actual normal consumers must accept the producer's output.
     postqueue_issuer.bind_placement(p, parent, ref)
     runtime_entry.bind_placement(p, parent, ref)
     raw_spec = postqueue_issuer.submission_manifest(parent, ref, '/run')
-    manifest = public('opemos-libvirt-job-' + c['nonce'] + '.json',
+    manifest = public(Path(__import__('source_contract').candidate_paths(c)['jobPath']).name,
                       {'version': 1, 'jobs': [raw_spec]})
     p.need(time.time() < parent['startBeforeUnix']
            and time.time() <= pre['observedUnix'] + 30, 'fresh immediately before normal submit')

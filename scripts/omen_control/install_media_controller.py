@@ -13,7 +13,7 @@ from pathlib import Path
 import re
 import stat
 
-SOURCE_ROOT = Path('/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r122')
+# Deployment roots are authenticated DATA interpreted by source_contract.deployment_paths.
 RUNTIME = {'libvirt_peer','libvirt_access','libvirt_native','libvirt_preflight','libvirt_producer',
            'queue_assignment','runtime_entry','guest_delta','guest_firmware_probe','held_history_reader',
            'two_boot_contract','postqueue_issuer','libvirt_storage','retained_media','source_contract'}
@@ -78,37 +78,43 @@ def install(payload):
          and re.fullmatch('[0-9a-f]{40}', payload['protectedMain'])
          and re.fullmatch('[0-9a-f]{40}', payload['reviewedHead']), 'verified owning repository/merge identities')
     sources = payload['sources']
+    import types
+    definition = types.ModuleType('installed_definition'); exec(compile(body(sources['source_contract']), 'source_contract.py', 'exec'), definition.__dict__)
+    layout = definition.deployment_paths(payload['deploymentId'])
+    source_root = Path(layout['sourceRoot'])
     need(set(sources) == RUNTIME | PREPARE | {'standalone_peer_access_adapter'}, 'whole static runtime and preparation source')
     need(set(payload['queueSources']) == set(QUEUE_NAMES), 'whole current queue deployment')
     queue_root = Path(payload['queueRoot'])
-    need(re.fullmatch('/var/lib/opemos-queue-r120-[0-9a-f]{32}', str(queue_root)), 'fixed owned queue installation family')
+    need(str(queue_root) == layout['queueRoot'], 'same authenticated queue deployment')
     for name, value in sources.items():
         raw = body(value); need(len(raw) <= 65536, 'unchanged per-role source cap'); compile(raw, name + '.py', 'exec')
     for name, value in payload['queueSources'].items():
         raw = body(value); need(len(raw) <= 1048576, 'whole normal queue member cap')
     for name in ('retained_media','source_contract'):
         need(body(sources[name]) == body(payload['queueSources'][name+'.py']), 'same exact runtime/queue helper')
-    root_directory(SOURCE_ROOT); root_directory(queue_root)
-    role_pins = {name:put(SOURCE_ROOT/(name+'.py'), body(value), 0o444) for name,value in sources.items()}
+    root_directory(source_root); root_directory(queue_root)
+    role_pins = {name:put(source_root/(name+'.py'), body(value), 0o444) for name,value in sources.items()}
     queue = [put(queue_root/name,body(payload['queueSources'][name]),0o555 if name.endswith('.sh')else 0o444)
              for name in QUEUE_NAMES]
-    origin = put(SOURCE_ROOT/'origin-copy-data.json', body(payload['originCopyData']), 0o400)
+    origin = put(source_root/'origin-copy-data.json', body(payload['originCopyData']), 0o400)
     template = payload['parentTemplate']
     need(template['noNIC'] is True and template['noInstall'] is True and template['maxBoots'] == 1,
          'no privilege or hardware scope expansion')
-    contract = {'kind':'OPEMOS_INSTALLED_MEDIA_SOURCE_CONTRACT_V1',
+    contract = {'kind':'OPEMOS_INSTALLED_MEDIA_SOURCE_CONTRACT_V2',
                 'repository':payload['repository'],'protectedMain':payload['protectedMain'],
                 'reviewedHead':payload['reviewedHead'],
+                'deployment':{'id':payload['deploymentId'],'paths':layout},
+                'guestNonce':payload['operationProfile']['candidateTemplate']['nonce'],
                 'sourceRoles':{n:role_pins[n] for n in RUNTIME},
                 'preparationRoles':{n:role_pins[n] for n in PREPARE},
                 'queuePrograms':queue,'parentTemplate':template,'originCopyReceiptPin':origin}
-    contract_pin = put(SOURCE_ROOT/'installed-controller.json',canon(contract),0o444)
+    contract_pin = put(source_root/'installed-controller.json',canon(contract),0o444)
     operation = payload['operationProfile']
     need(operation['kind'] == 'OPEMOS_INSTALLED_CURRENT_MEDIA_OPERATION_V1', 'fixed operation profile')
     operation.update(installedSourceContractPin=contract_pin, sourceRoles=contract['sourceRoles'], queuePrograms=queue)
-    operation_pin = put(SOURCE_ROOT/'operation-profile.json',canon(operation),0o444)
+    operation_pin = put(source_root/'operation-profile.json',canon(operation),0o444)
     drain_root = Path(payload['drainRoot'])
-    need(re.fullmatch('/var/lib/opemos-media-drain-r120-[0-9a-f]{32}', str(drain_root)), 'fixed drain source family')
+    need(str(drain_root) == layout['drainRoot'], 'same authenticated drain deployment')
     need(set(payload['drainSources']) == {'media_drain','idle_signal_owner','normal_probe','normal_cycle','media_probe_remote'}, 'exact normal control/drain/probe sources')
     root_directory(drain_root)
     drain_sources = {}
@@ -126,7 +132,7 @@ def install(payload):
     probe_profile = {'kind':'OPEMOS_INSTALLED_MEDIA_PROBE_V1',
                      'normalProbePin':drain_sources['normal_probe'],'policy':policy}
     probe_profile_pin = put(drain_root/'probe-profile.json',canon(probe_profile),0o444)
-    for path in (SOURCE_ROOT,queue_root,drain_root):
+    for path in (source_root,queue_root,drain_root):
         os.chmod(path,0o555)
         fd=os.open(path,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
         try:os.fsync(fd)
@@ -143,7 +149,9 @@ def install(payload):
 def install_window(payload):
     need(os.getuid() == os.geteuid() == 0 and payload['kind'] == 'ROOT_REVIEWED_MEDIA_WINDOW_INSTALL_V1', 'Root controller installation')
     root = Path(payload['root'])
-    need(re.fullmatch('/var/lib/opemos-media-window-r120-[0-9a-f]{32}', str(root)), 'fixed installed window family')
+    import types
+    definition = types.ModuleType('window_definition'); exec(compile(body(payload['sourceDefinition']), 'source_contract.py', 'exec'), definition.__dict__)
+    need(str(root) == definition.deployment_paths(payload['deploymentId'])['windowRoot'], 'same authenticated window deployment')
     need(set(payload['sources']) == {'media_window','media_client','window_common','owned_command','media_probe'}, 'whole fixed window implementation')
     root_directory(root)
     sources = {}

@@ -158,7 +158,7 @@ def verify_historical_lease_set(expected,rows,binding_pairs,queue,boot):
   observed.append(value)
  return observed
 def validate_request(r):
- fields={'jobId','jobToken','unit','invocation','specSHA256','domainUUID','domainName','leaseNonce','cpus','controllerMemory','domainMemory','reservationMemory','vmSlice','partition','gpuGroup','observer'};need(type(r)is dict and set(r)==fields,'exact upstream request schema')
+ fields={'jobId','jobToken','unit','invocation','specSHA256','domainUUID','domainName','leaseNonce','cpus','controllerMemory','domainMemory','reservationMemory','vmSlice','partition','gpuGroup','observer'};need(type(r)is dict and set(r)in(fields,fields|{'currentControl'}),'exact upstream request schema');__import__('source_contract').bind_request(sys.modules[__name__],r)
  t=r['jobToken'];need(re.fullmatch('[0-9a-f]{32}',t)is not None and r['unit'].endswith('-'+t+'.service'),'exact queue token/unit')
  need(re.fullmatch('[0-9a-f]{32}',r['invocation'])is not None and re.fullmatch('[0-9a-f]{64}',r['specSHA256'])is not None,'queue immutable invocation/spec');need(r['vmSlice']=='opemos-vm-pool-libvirt'+t+'.slice' and r['partition']=='/opemos/vm/pool/libvirt'+t,'derived per-job partition')
  need(r['controllerMemory']==2*1024**3 and r['domainMemory']==8*1024**3 and r['reservationMemory']==10*1024**3,'one10GiB split2+8');need(type(r['cpus'])is list and len(r['cpus'])==len(set(r['cpus']))==4 and all(type(n)is int and 0<=n<10 for n in r['cpus']),'same exact assigned four CPUs')
@@ -485,7 +485,7 @@ def verify_worker_lock(lock_pin,state_pin,mode,worker=None,persist=None):
   if fd is not None:os.close(fd)
   if dfd is not None:os.close(dfd)
   need(before==set(os.listdir('/proc/self/fd')),'worker lock owned FD restoration')
-SOURCE_PLACEMENT_NONCE='cd9ef0826364409da287f6f3e3830c95';SOURCE_PLACEMENT_PIN=None  # UNISSUED: fresh Root new-scope receipt required; never D22
+SOURCE_PLACEMENT_NONCE=None;SOURCE_PLACEMENT_PIN=None  # Configured only by authenticated current definition/parent; old bodies remain history.
 def working_metadata(fd,parentfd,path,expected,scope,stage,open_error=None):
  value={'kind':'ACTUAL_WORKING_HELD_NAMED_METADATA','stage':stage,'scope':scope,'path':path,'expectedProtectedPin':expected,'contentHashRecomputedHere':False,'fd':fd,'flags':None,'target':None,'fdinfo':None,'attempts':[],'errors':[],'stable':False}
  def failure(label,error):value['errors'].append({'operation':label,'type':type(error).__name__,'errno':getattr(error,'errno',None),'reason':str(error)[:512]})

@@ -5,16 +5,20 @@ Queue owner must independently adopt exact bytes and consumer contract.
 import contextlib,copy,hashlib,json,os,re,stat,sys,time,traceback,types
 from pathlib import Path
 ORIGINAL_SOURCE_ROOT='/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r107b'
-PEER_SHA='3557262e144d2c881a2a1a3392c21a87a0d0c77b1180430a9c42244d4062a81d'
+PEER_SHA='9e5516fcdf57624d786a91741066998605045fe145ce60fbe8bde68f5b494bdd'
 F=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns');CORE=F[:6]
 NONCE='cd9ef0826364409da287f6f3e3830c95';CONTRACT='R109_CURRENT_NORMAL_QUEUE_FULL_PHASE_READONLY'
-PEER_BYTES=61261
+PEER_BYTES=61355
 ORIGINAL_PEER_SHA='7e1663f8351247b9643b7c14419119449b0bd0722a46b80ae0f8ea34a9f9816a';ORIGINAL_PEER_BYTES=64727
-SOURCE_ROOT='/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r122'
-ACCESS_SHA='43afe945afde15f62a0733cb1dfde430a075b3521c35e4027174264cd6a156de';ACCESS_BYTES=35714
+SOURCE_ROOT=None
+SOURCE_CONTRACT_SHA='4cb604515bbb577e6448283a7b785249929c73216e890a06ca5c531e25bd6e5d'
+CURRENT_DEFINITION=None
+ACCESS_SHA='abe97839a242fd58cc1ab88920dc3b2d6d6d207644372750ca730992d627c274';ACCESS_BYTES=35752
 ORIGINAL_ACCESS_SHA='ee32a4e84df796d6932062ded9e1049ce5e82cbbf01315d8c74da96b9e03aa9e';ORIGINAL_ACCESS_BYTES=33928
 ROLES={'libvirt_peer','libvirt_access','libvirt_native','libvirt_preflight','libvirt_producer','queue_assignment','runtime_entry','guest_delta','guest_firmware_probe','held_history_reader','two_boot_contract','postqueue_issuer','libvirt_storage','retained_media','source_contract'}
 def placement_root(candidate):
+ if 'operationContext'in candidate:
+  need(CURRENT_DEFINITION is not None,'authenticated shared definition available');return CURRENT_DEFINITION.candidate_paths(candidate)['placementRoot']
  nonce=candidate['nonce'];need(nonce==NONCE,'same placement nonce')
  io=Path(candidate['run']).parent;prefix='opemos-libvirt-io-'+nonce+'-'
  if candidate.get('installer',{}).get('kind')=='AUTHENTICATED_RETAINED_F9AA_READONLY_USB' or io.name.startswith(prefix):
@@ -38,12 +42,14 @@ def record_run_epoch(proof,event):
  proof['eventCount']+=1;proof['eventChainSHA256']=hashlib.sha256(bytes.fromhex(proof['eventChainSHA256'])+raw).hexdigest();need(0<proof['eventCount']<=4096 and len(proof['events'])<=256 and len((lambda x:canonical(x).encode())(proof))<=262144,'bounded lossless borrowed run epoch runs')
 class RootInputs:
  """One readonly bounded held-nofollow /run graph; owns and closes all FDs."""
- def __init__(self):self.fds=[];self.dirs={}
+ def __init__(self,control=None):self.fds=[];self.dirs={};self.currentControl=control
  def __enter__(self):
   self.root=os.open('/',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);self.fds.append(self.root)
   try:
    self.run=os.open('run',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=self.root);self.fds.append(self.run)
-   self.dirs={'/':(self.root,ident(os.fstat(self.root)),False),'/run':(self.run,ident(os.fstat(self.run)),False)};self.runBirth=self.run_row(self.run);rows=[x for x in Path('/proc/self/mountinfo').read_text().splitlines()if x.split()[0]==str(self.runBirth['mountID'])];need(len(rows)==1,'exact initial run mount');self.runProof={'kind':'ROOT_BORROWED_RUN_ANCESTRY_R257','path':'/run','birth':self.runBirth,'namespace':os.readlink('/proc/self/ns/mnt'),'mountRow':rows[0],'events':[],'eventCount':0,'eventChainSHA256':'0'*64,'scopeDescriptorsClosed':False,'closeOutcomes':[]};self.check();return self
+   self.dirs={'/':(self.root,ident(os.fstat(self.root)),False),'/run':(self.run,ident(os.fstat(self.run)),False)};self.runBirth=self.run_row(self.run);rows=[x for x in Path('/proc/self/mountinfo').read_text().splitlines()if x.split()[0]==str(self.runBirth['mountID'])];need(len(rows)==1,'exact initial run mount');self.runProof={'kind':'ROOT_BORROWED_RUN_ANCESTRY_R257','path':'/run','birth':self.runBirth,'namespace':os.readlink('/proc/self/ns/mnt'),'mountRow':rows[0],'events':[],'eventCount':0,'eventChainSHA256':'0'*64,'scopeDescriptorsClosed':False,'closeOutcomes':[]};self.check()
+   if self.currentControl is not None:self.bind_definition(self.currentControl)
+   return self
   except BaseException:
    self.__exit__(*sys.exc_info());raise
  def run_row(self,fd):
@@ -84,15 +90,27 @@ class RootInputs:
     error=RuntimeError('held/named declared directory identity/epoch');error.evidence={'path':path,'role':'exclusive'if exclusive else'shared-ancestor','birth':a,'held':x,'named':named,'monotonic':time.monotonic()};raise error
    need(stat.S_ISDIR(x['st_mode'])and x['st_uid']==x['st_gid']==0,'Root directory nofollow custody')
    need(stat.S_IMODE(x['st_mode'])in((0o755,0o777)if path=='/'else(0o755,)if path=='/run'else(0o555,)if path==SOURCE_ROOT else(0o755,)if path.startswith('/run/opemos-steamos-source-')else(0o700,)),'exact role-specific directory mode')
+ def bind_definition(self,control):
+  global SOURCE_ROOT,NONCE,CURRENT_DEFINITION
+  need(type(control)is dict and set(control)=={'definitionPin','parentPin'},'closed protected current control input')
+  ref=control['definitionPin'];root=Path(ref['path']).parent
+  need(root.parent==Path('/run')and Path(ref['path']).name=='installed-controller.json','direct Root definition leaf')
+  SOURCE_ROOT=str(root)
+  raw,helper=self.read_path(str(root/'source_contract.py'),0o444,65536)
+  need(helper['sha256']==SOURCE_CONTRACT_SHA,'exact reviewed shared definition implementation')
+  module=types.ModuleType('scoped_source_definition');module.__file__=str(root/'source_contract.py');exec(compile(raw,module.__file__,'exec'),module.__dict__)
+  value=module.read_definition(ref);need(value['sourceRoles']['source_contract']==helper,'same held definition implementation pin')
+  need(value['deployment']['paths']['sourceRoot']==SOURCE_ROOT and re.fullmatch('[0-9a-f]{32}',value['guestNonce']),'typed protected deployment/guest lineage')
+  self.definition=value;self.definitionPin=ref;NONCE=value['guestNonce'];CURRENT_DEFINITION=module
  def directory(self,path):
-  allowed={SOURCE_ROOT,ORIGINAL_SOURCE_ROOT,'/run/opemos-libvirt-runtime-'+NONCE,getattr(self,'placementRoot','/run/opemos-steamos-placement-'+NONCE)}
+  allowed={SOURCE_ROOT,ORIGINAL_SOURCE_ROOT,getattr(self,'runtimeRoot','/run/opemos-libvirt-runtime-'+NONCE),getattr(self,'placementRoot','/run/opemos-steamos-placement-'+NONCE)}
   need(path in allowed,'declared finite source/context/placement root only')
   if path not in self.dirs:
    fd=os.open(Path(path).name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=self.run);self.fds.append(fd);self.dirs[path]=(fd,ident(os.fstat(fd)),True)
   self.check();return self.dirs[path][0]
  def read_path(self,path,mode,cap):
   path=Path(path);need(path.is_absolute()and path.name not in('','.','..'),'absolute confined declared leaf')
-  if str(path.parent)=='/run':need(str(path)=='/run/opemos-libvirt-parent-'+NONCE+'.json','one normal public parent only');parent=self.run
+  if str(path.parent)=='/run':need(str(path)==(self.currentControl['parentPin']['path']if self.currentControl is not None else'/run/opemos-libvirt-parent-'+NONCE+'.json'),'one bound public parent only');parent=self.run
   else:parent=self.directory(str(path.parent))
   fd=os.open(path.name,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=parent)
   try:
@@ -165,8 +183,16 @@ def parent_spec(parent,parent_ref):
  return s
 
 def verify_inputs(request,io,boot,include_context=True):
- need(request['leaseNonce']==NONCE and request['domainName']=='opemos-libvirt-'+NONCE,'fresh exact D23 scope only')
- cr='/run/opemos-libvirt-runtime-'+NONCE+'/context.json';parentRaw,parentRef=io.read_path('/run/opemos-libvirt-parent-'+NONCE+'.json',0o444,1048576);parent=decode(parentRaw)
+ global NONCE
+ if io.currentControl is None:need(request['leaseNonce']==NONCE,'exact historical input scope')
+ parent_path=io.currentControl['parentPin']['path']if io.currentControl is not None else'/run/opemos-libvirt-parent-'+NONCE+'.json'
+ parentRaw,parentRef=io.read_path(parent_path,0o444,1048576);parent=decode(parentRaw)
+ if io.currentControl is not None:
+  need(parentRef==io.currentControl['parentPin']and request.get('currentControl')==io.currentControl,'whole current parent/request pin')
+  if 'operationContext'in parent['candidate']:
+   paths=CURRENT_DEFINITION.candidate_paths(parent['candidate']);need(parent['candidate']['operationContext']['deploymentId']==io.definition['deployment']['id']and parent['candidate']['lineageNonce']==io.definition['guestNonce']and parent['installedSourceContractPin']==io.definitionPin and parent_path==paths['parentPath'],'same protected deployment/operation parent');io.runtimeRoot=paths['runtimeRoot'];io.placementRoot=paths['placementRoot']
+ NONCE=parent['nonce'];need(request['leaseNonce']==NONCE and request['domainName']=='opemos-libvirt-'+NONCE,'same protected current domain/scope')
+ cr=getattr(io,'runtimeRoot','/run/opemos-libvirt-runtime-'+NONCE)+'/context.json'
  contextRaw=contextRef=context=None
  if include_context:
   try:contextRaw,contextRef=io.read_path(cr,0o400,1048576);context=decode(contextRaw)
@@ -194,7 +220,7 @@ def verify_inputs(request,io,boot,include_context=True):
  need(original or roles['libvirt_access']==accessRef,'new parent access is exact current implementation')
  assignmentRef=grantRef=None;assignment=grant=None
  if context is not None:
-  assignmentRef=context['assignmentPin'];need(assignmentRef['path']=='/run/opemos-libvirt-runtime-'+NONCE+'/assignment.json'and context['grantPin']['path']=='/run/opemos-libvirt-runtime-'+NONCE+'/child-grant.json','two exact same-scope child control leaves');assignment=decode(io.read(assignmentRef,0o400,1048576));grantRef=context['grantPin'];grant=decode(io.read(grantRef,0o400,1048576))
+  assignmentRef=context['assignmentPin'];need(assignmentRef['path']==getattr(io,'runtimeRoot','/run/opemos-libvirt-runtime-'+NONCE)+'/assignment.json'and context['grantPin']['path']==getattr(io,'runtimeRoot','/run/opemos-libvirt-runtime-'+NONCE)+'/child-grant.json','two exact same-scope child control leaves');assignment=decode(io.read(assignmentRef,0o400,1048576));grantRef=context['grantPin'];grant=decode(io.read(grantRef,0o400,1048576))
   need(assignment['kind']=='ROOT_CANONICAL_QUEUE_LIBVIRT_ASSIGNMENT_R4'and assignment['request']==request and grant['assignmentPin']==assignmentRef and grant['parentPin']==parentRef and grant['normalizedSpecSHA256']==request['specSHA256'],'canonical assignment and child grant exact request/spec/parent')
   need(grant['queuePrograms']==parent['queuePrograms']and grant['sourcePlacementPin']==context['sourcePlacementPin']==parent['sourcePlacementPin']and grant['placementQualificationPin']==context['placementQualificationPin']==parent['placementQualificationPin'],'current queue authority and placement pins across child/context/parent')
   need(grant['RootIssued']is True and grant['MODEL_ONLY']is False and grant['runtimeAuthorized']is True and grant['jobId']==request['jobId']and grant['leaseNonce']==NONCE and grant['bootID']==boot and parent['issuedUnix']<=grant['issuedUnix']<grant['startBeforeUnix']<=parent['startBeforeUnix']and grant['wholeDeadlineUnix']<=parent['wholeDeadlineUnix'],'existing finite Root child only, no new runtime grant')
@@ -206,12 +232,14 @@ def _bind_placement(peer,parent,parent_ref,context,verify_access):
  Never changes the frozen peer's nonce, strict geometry or owner predicate.
  """
  nonce=parent['nonce'];roles=parent['sourceRoles'];candidate=parent['candidate']
- peer.need(nonce=='cd9ef0826364409da287f6f3e3830c95'and peer.SOURCE_PLACEMENT_NONCE==nonce and candidate['nonce']==nonce and __import__('queue_assignment').execution_job(candidate,parent)==parent['jobId'],'D23 unused scope only; D22 is consumed')
- peer.need(parent['RootIssued']is True and parent['kind']=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'and parent['bootID']==candidate['hostBoot']and parent_ref['path']=='/run/opemos-libvirt-parent-'+nonce+'.json','existing exact Root parent/boot/source scope')
+ if 'operationContext'in candidate:__import__('source_contract').bind_scope(peer,parent)
+ peer.need(peer.SOURCE_PLACEMENT_NONCE==nonce and candidate['nonce']==nonce and __import__('queue_assignment').execution_job(candidate,parent)==parent['jobId'],'D23 unused scope only; D22 is consumed')
+ peer.need(parent['RootIssued']is True and parent['kind']=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'and parent['bootID']==candidate['hostBoot']and parent_ref['path']==__import__('source_contract').parent_paths(parent)['parentPath'],'existing exact Root parent/boot/source scope')
  __import__('source_contract').validate(roles,parent['queuePrograms'],parent['installedSourceContractPin'])
  peer.need((roles['libvirt_peer']['sha256'],roles['libvirt_peer']['bytes'])in((PEER_SHA,PEER_BYTES),(ORIGINAL_PEER_SHA,ORIGINAL_PEER_BYTES))and (roles['libvirt_access']['sha256'],roles['libvirt_access']['bytes'])in((ACCESS_SHA,ACCESS_BYTES),(ORIGINAL_ACCESS_SHA,ORIGINAL_ACCESS_BYTES)),'frozen exact D23 peer and unchanged access bytes')
  for name,ref in roles.items():peer.need(ref['path']==str(Path(roles['libvirt_peer']['path']).parent/(name+'.py'))and str(Path(roles['libvirt_peer']['path']).parent)in(SOURCE_ROOT,ORIGINAL_SOURCE_ROOT)and ref['identity']['st_uid']==ref['identity']['st_gid']==0 and stat.S_IMODE(ref['identity']['st_mode'])==0o444 and ref['identity']['st_nlink']==1,'same immutable Root source12 namespace')
  ref=parent['sourcePlacementPin'];qr=parent['placementQualificationPin'];root=placement_root(candidate)
+ if 'operationContext'in candidate:__import__('source_contract').bind_scope(peer,parent)
  peer.need(ref['path']==root+'/storage-contract.json'and qr['path']==root+'/placement-qualified.json','fresh exact placement+qualification names, no historical receipt')
  files=peer.RootFiles(root);primary=None;result=None
  try:
@@ -285,7 +313,7 @@ def run(request,io,boot):
     if v['context']is not None:
      need(io.read(v['contextPin'],0o400,1048576)==v['contextRaw'],'post-use exact context bytes');io.read(v['assignmentPin'],0o400,1048576);io.read(v['grantPin'],0o400,1048576)
     else:
-     try:io.read_path('/run/opemos-libvirt-runtime-'+NONCE+'/context.json',0o400,1048576)
+     try:io.read_path(getattr(io,'runtimeRoot','/run/opemos-libvirt-runtime-'+NONCE)+'/context.json',0o400,1048576)
      except FileNotFoundError:pass
      else:raise RuntimeError('context absence changed during exact NOT_PREPARED observation; no retry')
     heldPlacement['recheck']();heldQualification['recheck']()
@@ -297,7 +325,7 @@ def run(request,io,boot):
 def main():
  need(os.getuid()==0 and len(sys.argv)==4 and sys.argv[1]in(PEER_SHA,ORIGINAL_PEER_SHA) and sys.argv[2]=='--queue-libvirt-request-json','exact existing Root standalone queue argv')
  request=json.loads(sys.argv[3]);before=set(os.listdir('/proc/self/fd'))
- with RootInputs()as io:result=run(request,io,Path('/proc/sys/kernel/random/boot_id').read_text().strip())
+ with RootInputs(request.get('currentControl'))as io:result=run(request,io,Path('/proc/sys/kernel/random/boot_id').read_text().strip())
  need(before==set(os.listdir('/proc/self/fd')),'adapter full owned FD closure');print(canonical(result),flush=True)
 if __name__=='__main__':
  try:main()
