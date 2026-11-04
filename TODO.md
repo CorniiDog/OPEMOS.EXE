@@ -5159,3 +5159,24 @@ R121 publication: normal receive-pack returned server500 three times with ref ab
   and diff checks pass; tests await automatic admitted CI after necessary owning
   fast-forward push for exact source/effects review. No new PR under cap TWO;
   c8 Debian cancellation/artifact-delivery merge hold remains separate.
+
+## R122 physical allocation padding — 2026-11-04
+
+- Actual473/2085 passed retained-media custody and reached normal storage
+  preflight, then refused before submission at the backing predicate. A held
+  native measurement proves every identity/owner/mode/link/logical-size term
+  true; actual allocated bytes8400003072 exceed logical8400000000 by3072.
+  Whole five-role measurement preserves all original pins and shows only that
+  backing tail. Native1/192.632s and ordinary mount/loop/timer cleanup closed.
+- Charge max(logical upper, real allocated) without changing any declared file
+  size or hardware budget: external-file allocation padding consumes the
+  EXISTING500000000 metadata reserve together with observed metadata. Existing
+  whole59971770624 bound/60GB ceiling, no sparsity exemption, source hashes,
+  Root backing custody, private file/inode union and no-foreign-writer guards
+  remain. Return explicit per-file allocation observations and reserve usage.
+  Noninstaller legacy allocation predicate remains unchanged.
+- Existing Root test uses a real nonaligned file and actual st_blocks, exact
+  reserve boundary/one-byte overflow, owner/name/symlink/alias refusals and FD
+  closure. AST/diff checks pass; automatic CI/exact Core source+caller+effects
+  review required before another fresh normal entry. No old2085/7bd9/c50/66
+  replay, source overwrite, package-check relabel, extra PR or budget raise.

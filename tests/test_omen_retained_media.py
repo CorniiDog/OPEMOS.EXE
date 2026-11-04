@@ -178,6 +178,37 @@ class RetainedMediaContract(unittest.TestCase):
             self.assertFalse(media.owned_mount(mount, device))
 
     @unittest.skipUnless(os.geteuid() == 0 and sys.platform == 'linux', 'admitted Linux Root only')
+    def test_external_allocation_padding_consumes_existing_metadata_reserve(self):
+        import libvirt_storage as storage
+        import install_media_controller as installer
+        root = Path('/run/opemos-allocation-' + uuid.uuid4().hex); root.mkdir(mode=0o700)
+        before = set(os.listdir('/proc/self/fd'))
+        try:
+            path = root/'backing.raw'; path.write_bytes(os.urandom(65537)); path.chmod(0o600)
+            ref = installer.pin(path); allocated = path.stat().st_blocks * 512
+            self.assertGreater(allocated, ref['bytes'])
+            roles = [{'role':'container','pin':ref,'upperBytes':ref['bytes']},
+                     {'role':'metadata','pin':None,'upperBytes':500000000}]
+            padding, rows = storage.allocation_padding(roles)
+            self.assertEqual(padding, allocated-ref['bytes'])
+            self.assertEqual(rows[0]['allocatedBytes'], allocated)
+            self.assertEqual(storage.reserve_usage(500000000-padding,padding,500000000),500000000)
+            with self.assertRaisesRegex(RuntimeError, 'within existing reserve'):
+                storage.reserve_usage(500000001-padding,padding,500000000)
+            with self.assertRaisesRegex(RuntimeError, 'distinct charged external inodes'):
+                storage.allocation_padding([roles[0], roles[0]])
+            os.chown(path, 1000, 1000)
+            with self.assertRaisesRegex(RuntimeError, 'exact charged external file'):
+                storage.allocation_padding(roles)
+            os.chown(path, 0, 0); ref = installer.pin(path)
+            path.rename(root/'saved'); path.symlink_to('saved')
+            with self.assertRaises(OSError):
+                storage.allocation_padding([dict(roles[0],pin=ref)])
+            path.unlink(); (root/'saved').rename(path)
+            self.assertEqual(before,set(os.listdir('/proc/self/fd')))
+        finally: shutil.rmtree(root)
+
+    @unittest.skipUnless(os.geteuid() == 0 and sys.platform == 'linux', 'admitted Linux Root only')
     def test_media_ancestor_churn_keeps_endpoint_and_mount_custody(self):
         """Real files/mount IDs; no media hash, device or VM acceptance modeled as pass."""
         import install_media_controller as installer

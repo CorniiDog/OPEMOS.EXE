@@ -33,6 +33,31 @@ def declared_metadata_roots(ref,nonce,config,v,adopted,request=None):
  if request is not None:roots+=['/run/opemos-libvirt-queue-'+request['jobToken'],'/home/connor/.local/state/opemos-test-queue-r2/state/logs/'+request['jobId']]
  return list(dict.fromkeys(roots)),socket
 
+def allocation_padding(charged):
+ """Charge real external-file allocation beyond logical roles inside the reserve."""
+ from libvirt_peer import need,ident
+ rows=[];seen=set();padding=0
+ for item in charged:
+  ref=item['pin']
+  if ref is None:continue
+  fd=os.open(ref['path'],os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+  try:
+   st=os.fstat(fd);before=ident(st);allocated=st.st_blocks*512
+   need(before==ref['identity']==ident(os.lstat(ref['path']))and stat.S_ISREG(st.st_mode)and st.st_nlink==1 and st.st_size==ref['bytes']<=item['upperBytes'],'exact charged external file FD/name/full9')
+   key=(st.st_dev,st.st_ino);need(key not in seen,'distinct charged external inodes');seen.add(key)
+   extra=max(0,allocated-item['upperBytes']);padding+=extra
+   after=os.fstat(fd);need(ident(after)==before==ident(os.lstat(ref['path']))and after.st_blocks==st.st_blocks,'charged allocation/epoch stable')
+   rows.append({'role':item['role'],'pin':ref,'logicalUpperBytes':item['upperBytes'],'allocatedBytes':allocated,'paddingBytes':extra})
+  finally:os.close(fd)
+ return padding,rows
+
+def reserve_usage(metadata_bytes,padding_bytes,reserve):
+ from libvirt_peer import need,Refused
+ need(all(type(x)is int and x>=0 for x in(metadata_bytes,padding_bytes,reserve)),'typed nonnegative reserve accounting')
+ if metadata_bytes+padding_bytes>reserve:
+  error=Refused('metadata and external allocation padding within existing reserve');error.evidence={'kind':'VM_RESERVE_ALLOCATION_EXCEEDED','metadataBytes':metadata_bytes,'allocationPaddingBytes':padding_bytes,'reserveBytes':reserve};raise error
+ return metadata_bytes+padding_bytes
+
 def storage_contract(nonce,request=None,persist=None):
  """Exact one declared Games regular-file container; no physical-device API."""
  from libvirt_peer import need,SOURCE_PLACEMENT_NONCE,SOURCE_PLACEMENT_PIN,RootFiles,CORE,ident,working_metadata,require_working_metadata,metadata_cohort
@@ -61,7 +86,8 @@ def storage_contract(nonce,request=None,persist=None):
   need(pn==partial['bytes']and ph.hexdigest()==partial['sha256']and ident(os.fstat(pf))==partial['identity'],'preserved partial exact full content/EOF');parentfd=chain[-1][1];s=os.fstat(parentfd);need((s.st_dev,s.st_ino,s.st_uid,s.st_gid,stat.S_IMODE(s.st_mode))==(2051,93499,1000,1000,0o700),'only approved UID1000 parent boundary')
   expected=['storage-plan.json',Path(v['retainedPartial']['path']).name,Path(v['backing']['path']).name];retained=v.get('retainedPlacementLeaves',[])if installer else [];need(type(retained)is list and len(retained)<=4,'bounded preserved old backing metadata');
   for prior in retained:need(Path(prior['path']).parent==Path(v['placement']['path'])and ident(os.stat(Path(prior['path']).name,dir_fd=parentfd,follow_symlinks=False))==prior['identity'],'retained old backing custody only, no outer-digest authority');expected.append(Path(prior['path']).name)
-  need(sorted(os.listdir(parentfd))==sorted(expected),'no foreign placement files/writers');bf=os.open(Path(v['backing']['path']).name,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=parentfd);fds.append(bf);back=epoch(bf,v['backing']['path']);need(back==ident(os.lstat(v['backing']['path']))and all(back[k]==v['backing']['identity'][k]for k in CORE)and stat.S_ISREG(back['st_mode'])and back['st_uid']==back['st_gid']==0 and stat.S_IMODE(back['st_mode'])==0o600 and back['st_nlink']==1 and back['st_size']==v['backing']['bytes']and os.fstat(bf).st_blocks*512<=v['backingCharge'],'exact Root0 fixed bounded regular backing/current FD/name')
+  need(sorted(os.listdir(parentfd))==sorted(expected),'no foreign placement files/writers');bf=os.open(Path(v['backing']['path']).name,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=parentfd);fds.append(bf);back=epoch(bf,v['backing']['path']);need(back==ident(os.lstat(v['backing']['path']))and all(back[k]==v['backing']['identity'][k]for k in CORE)and stat.S_ISREG(back['st_mode'])and back['st_uid']==back['st_gid']==0 and stat.S_IMODE(back['st_mode'])==0o600 and back['st_nlink']==1 and back['st_size']==v['backing']['bytes']and (v['backingCharge']==v['backing']['bytes']if installer else os.fstat(bf).st_blocks*512<=v['backingCharge']),'exact Root0 fixed bounded regular backing/current FD/name')
+  padding,allocationRows=allocation_padding(graph['charged'])if installer else(0,[]);reserve_usage(0,padding,500000000)
   loop=Path(v['loop']).name;need(re.fullmatch('loop[0-9]+',loop)is not None,'exact generated loop name');sysloop=Path('/sys/class/block')/loop/'loop';looprow={'backing':(sysloop/'backing_file').read_text().strip(),'offset':int((sysloop/'offset').read_text()),'sizelimit':int((sysloop/'sizelimit').read_text())};need(looprow['backing']==v['backing']['path']and looprow['offset']==0 and looprow['sizelimit']in(0,v['backing']['bytes']),'only generated file loop, no physical source')
   mf=os.open(v['mount']['path'],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);fds.append(mf);mi=ident(os.fstat(mf));need(mi==ident(os.lstat(v['mount']['path']))and all(mi[k]==v['mount']['identity'][k]for k in('st_dev','st_ino','st_uid','st_gid')),'same exact Root ext4 mounted object')
   import libvirt_access as access;mode=stat.S_IMODE(mi['st_mode']);need(mode in(0o700,0o710),'only private or exact libvirt traversal mount mode')
@@ -85,8 +111,9 @@ def storage_contract(nonce,request=None,persist=None):
    now=ident(os.fstat(fd));need(now==ident(os.lstat(path))and all(now[k]==old[k]for k in CORE),'current placement ancestor core/FD/name after check')
   afterBack=epoch(bf,v['backing']['path']);afterWorking=epoch(wf,v['working']['path']);need(all(afterBack[k]==back[k]for k in CORE+('st_size',))and all(afterWorking[k]==wi[k]for k in('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size')),'same only declared mutable backing/working core after use')
   roots,socket=declared_metadata_roots(ref,nonce,config,v,adopted,request)
-  observedExtra,entries,metadataClosure=__import__('guest_firmware_probe').metadata_cohort(roots,allowed_socket=socket);need(observedExtra<=500000000,'all metadata/source/capture/private SQL growth remains in declared500MB reserve')
-  return{'receiptPin':ref,'wholeGraphUpperBound':v['wholeGraphUpperBound'],'outerAvailableBytes':outer.f_bavail*outer.f_frsize,'backingCurrent':ident(os.fstat(bf)),'backingCharge':v['backingCharge'],'innerAvailableBytes':inner.f_bavail*inner.f_frsize,'innerAllocatedWorkingBytes':os.fstat(wf).st_blocks*512,'currentMountID':mid,'loop':looprow,'workingCurrent':wi,'workingAfter':afterWorking,'workingObservation':evidence,'extraIOObservedBytes':observedExtra,'extraIOEntries':entries,'metadataFDClosure':metadataClosure,'mutableEpochsOnlyForDeclaredBackingWorkingAndMount':True,'optionalDiagnosticErrors':diagnosticErrors}
+  observedExtra,entries,metadataClosure=__import__('guest_firmware_probe').metadata_cohort(roots,allowed_socket=socket);reserveUsed=reserve_usage(observedExtra,padding,500000000)
+  if installer:need(os.fstat(bf).st_blocks*512==next(x['allocatedBytes']for x in allocationRows if x['pin']['path']==v['backing']['path']),'same held backing allocation after observation')
+  return{'receiptPin':ref,'wholeGraphUpperBound':v['wholeGraphUpperBound'],'outerAvailableBytes':outer.f_bavail*outer.f_frsize,'backingCurrent':ident(os.fstat(bf)),'backingCharge':v['backingCharge'],'innerAvailableBytes':inner.f_bavail*inner.f_frsize,'innerAllocatedWorkingBytes':os.fstat(wf).st_blocks*512,'currentMountID':mid,'loop':looprow,'workingCurrent':wi,'workingAfter':afterWorking,'workingObservation':evidence,'extraIOObservedBytes':observedExtra,'externalAllocationPaddingBytes':padding,'externalAllocationObservations':allocationRows,'metadataReserveUsedBytes':reserveUsed,'extraIOEntries':entries,'metadataFDClosure':metadataClosure,'mutableEpochsOnlyForDeclaredBackingWorkingAndMount':True,'optionalDiagnosticErrors':diagnosticErrors}
  except BaseException as error:
   if diagnosticErrors:error.optionalDiagnosticErrors=diagnosticErrors
   raise
