@@ -5332,3 +5332,8 @@ R121 publication: normal receive-pack returned server500 three times with ref ab
   bounded active-workflow frontier; retained as API frontier failure, NOT busy
   Runner21 or a VM/GPU failure. Existing offline-queue patch remains for adoption
   at safe checkpoint; not substituted for direct actual VM test.
+
+- Byte bounds apply incrementally while terminal/assignment readers decode rows,
+  with duplicate IDs and complete binding equality checked before accumulation.
+  Final whole-product SHA/byte/count/afterguards remain; no unbounded replacement
+  for removed lifetime row/cardinality gates or any budget increase.

@@ -1741,14 +1741,15 @@ def terminal_history_resolve(root,uid,value,job,unit,invocation):
     if value.get('kind')!=HISTORY_KIND:
         require(set(value)=={'rows','pool','bindings','config'} and type(value['rows'])is list,'Exact legacy embedded epoch, never unknown reference')
         return value
-    require(set(value)=={'kind','identity','manifest','epochBytes','epochSHA256','rowCount'} and value['identity']=={'jobId':job,'unit':unit,'InvocationID':invocation} and type(value['rowCount'])is int and 0<value['rowCount'],'Exact original terminal reference context')
+    require(set(value)=={'kind','identity','manifest','epochBytes','epochSHA256','rowCount'} and value['identity']=={'jobId':job,'unit':unit,'InvocationID':invocation} and type(value['rowCount'])is int and 0<value['rowCount']and type(value['epochBytes'])is int and 0<value['epochBytes']<=HISTORY_FILE_MAX,'Exact original terminal reference context')
     with history_directory(root,uid) as parent:
         history_inventory(parent,uid)
         mraw=history_read_leaf(parent,value['manifest'],uid,HISTORY_METADATA_MAX);m=json.loads(mraw)
         require((canonical(m)+'\n').encode()==mraw and set(m)=={'kind','identity','rows','pool','bindings','config','epochBytes','epochSHA256'} and m['kind']==HISTORY_KIND and m['identity']==value['identity'] and m['epochBytes']==value['epochBytes'] and m['epochSHA256']==value['epochSHA256'] and len(m['rows'])==value['rowCount'],'Whole canonical manifest binding')
-        rows=[]
+        rows=[];row_bytes=2;seen=set()
         for pin in m['rows']:
-            b=history_read_leaf(parent,pin,uid,HISTORY_FILE_MAX);r=json.loads(b);require((canonical(r)+'\n').encode()==b,'Whole canonical history row');rows.append(r)
+            b=history_read_leaf(parent,pin,uid,HISTORY_FILE_MAX);r=json.loads(b);require((canonical(r)+'\n').encode()==b,'Whole canonical history row')
+            row_bytes+=len(b);require(row_bytes<=HISTORY_FILE_MAX and r['id']not in seen,'Bounded unique complete history rows');seen.add(r['id']);rows.append(r)
         require(len({r['id'] for r in rows})==len(rows),'Unique ordered history IDs')
         epoch={'rows':rows,'pool':m['pool'],'bindings':m['bindings'],'config':m['config']};raw=(canonical(epoch)+'\n').encode()
         require(len(raw)==value['epochBytes'] and hashlib.sha256(raw).hexdigest()==value['epochSHA256'],'Complete ordered epoch reconstruction SHA/bytes')
@@ -3185,9 +3186,14 @@ def read_libvirt_assignment_export(root,job,expectedWorker,expectedSource,expect
         with history_directory(root,uid)as history,history_archive_view(history,uid,archive_metrics)as archive_view:
             history_inventory(history,uid,archive_view);mr=history_read_leaf(history,header['manifest'],uid,HISTORY_METADATA_MAX,archive_view);manifest=json.loads(mr)
             require((canonical(manifest)+'\n').encode()==mr and set(manifest)=={'kind','request','rows','bindings','config','canonicalBytes','canonicalSHA256'}and manifest['kind']==LIBVIRT_ASSIGNMENT_KIND and manifest['request']==header['request'],'Whole assignment manifest source/context')
-            enriched=[json.loads(history_read_leaf(history,pin,uid,HISTORY_FILE_MAX,archive_view))for pin in manifest['rows']]
             bindings=dict(manifest['bindings']);require(len(bindings)==len(manifest['bindings']),'Unique whole raw binding strings')
-            for row in enriched:require('_poolBinding'in row and row['_poolBinding']==(json.loads(bindings[row['id']])if row['id']in bindings else None),'Every augmented binding matches original raw SQL binding')
+            enriched=[];row_bytes=2;seen=set()
+            for pin in manifest['rows']:
+                row=json.loads(history_read_leaf(history,pin,uid,HISTORY_FILE_MAX,archive_view))
+                require(row['id']not in seen,'Unique complete snapshot rows');seen.add(row['id'])
+                require('_poolBinding'in row and row['_poolBinding']==(json.loads(bindings[row['id']])if row['id']in bindings else None),'Every augmented binding matches original raw SQL binding')
+                row_bytes+=len(canonical({k:v for k,v in row.items()if k!='_poolBinding'}).encode())+1
+                require(row_bytes<=HISTORY_FILE_MAX,'Complete snapshot within unchanged byte ceiling');enriched.append(row)
             rows=[{k:v for k,v in r.items()if k!='_poolBinding'}for r in enriched]
             value={'rows':rows,'bindings':manifest['bindings'],'config':manifest['config']};raw=(canonical(value)+'\n').encode()
             require(len(raw)==header['canonicalBytes']==manifest['canonicalBytes']<=HISTORY_FILE_MAX and hashlib.sha256(raw).hexdigest()==header['canonicalSHA256']==manifest['canonicalSHA256'],'Complete exact current rows/bindings/config SHA')
