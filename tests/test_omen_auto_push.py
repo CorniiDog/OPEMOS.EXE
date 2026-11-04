@@ -59,7 +59,9 @@ class AutomaticCandidateData(unittest.TestCase):
         self.recipe_path=self.root/'installed-operation.json'
     def tearDown(self):self.temp.cleanup()
     def pin(self):
-        raw=json.dumps(self.recipe).encode();self.recipe_path.write_bytes(raw);self.recipe_path.chmod(0o400)
+        raw=json.dumps(self.recipe).encode()
+        if self.recipe_path.exists():self.assertEqual(self.recipe_path.read_bytes(),raw)
+        else:self.recipe_path.write_bytes(raw);self.recipe_path.chmod(0o400)
         return {'path':str(self.recipe_path),'sha256':hashlib.sha256(raw).hexdigest()}
     def prepare(self):return P.automatic_operation(self.pin(),self.r,str(self.root))
     def test_real_non_main_producer_to_planner_and_final_identity_consumer(self):
