@@ -222,20 +222,37 @@ def reconcile(db,job,capture,history):
     that external native boundary; those fixtures are not native acceptance.
     """
     before=ledger(db);row,binding,spec=selected(before,job)
-    need(row['state']=='running','only an original running row; retained intermediate needs separate owning disposition')
     first=capture(job);validate_observation(first,before,job)
-    old=preserve(history/'original-row.json',row);proof=preserve(history/'before-native.json',first)
-    pending={'kind':'HOST_REBOOT_INTERRUPTED','historicalRowPin':old,'originalBinding':binding,'currentBoot':first['currentBoot'],'oldBoot':first['oldBoot'],'beforeNativePin':proof,'historicalQMPClosed':None,'historicalChildExit':None,'historicalLeaseClosed':None,'historicalACLRestored':None,'automaticRetryAuthorized':False,'terminalLifecycle':{'phase':'REBOOT_DISPOSITION_PENDING','intendedState':'failed','reservationRetained':True}}
-    with writer(db):
-        need(ledger(db)==before,'original whole ledger drift before retained commit')
-        db.execute('UPDATE jobs SET state=?,result=? WHERE id=? AND state=? AND finished IS NULL',('terminal_cleanup',canonical(pending),job,'running'))
-        need(db.execute('SELECT changes()').fetchone()[0]==1,'one original retained interrupted job')
+    proof=preserve(history/'before-native.json',first)
+    if row['state']=='running':
+        old=preserve(history/'original-row.json',row)
+        pending={'kind':'HOST_REBOOT_INTERRUPTED','historicalRowPin':old,'originalBinding':binding,'currentBoot':first['currentBoot'],'oldBoot':first['oldBoot'],'beforeNativePin':proof,'historicalQMPClosed':None,'historicalChildExit':None,'historicalLeaseClosed':None,'historicalACLRestored':None,'automaticRetryAuthorized':False,'terminalLifecycle':{'phase':'REBOOT_DISPOSITION_PENDING','intendedState':'failed','reservationRetained':True}}
+        with writer(db):
+            need(ledger(db)==before,'original whole ledger drift before retained commit')
+            db.execute('UPDATE jobs SET state=?,result=? WHERE id=? AND state=? AND finished IS NULL',('terminal_cleanup',canonical(pending),job,'running'))
+            need(db.execute('SELECT changes()').fetchone()[0]==1,'one original retained interrupted job')
+    else:
+        # Only an explicit owning API invocation can continue its own retained
+        # commit. Nothing resumes a VM, retries automatically or reopens failure.
+        pending=json.loads(row['result'])
+        need(set(pending)=={'kind','historicalRowPin','originalBinding','currentBoot','oldBoot','beforeNativePin','historicalQMPClosed','historicalChildExit','historicalLeaseClosed','historicalACLRestored','automaticRetryAuthorized','terminalLifecycle'}and
+             pending['kind']=='HOST_REBOOT_INTERRUPTED'and pending['originalBinding']==binding and
+             pending['currentBoot']==first['currentBoot']and pending['oldBoot']==first['oldBoot']and
+             pending['automaticRetryAuthorized']is False and pending['terminalLifecycle']=={'phase':'REBOOT_DISPOSITION_PENDING','intendedState':'failed','reservationRetained':True}and
+             all(pending[k]is None for k in('historicalQMPClosed','historicalChildExit','historicalLeaseClosed','historicalACLRestored')),
+             'only exact original retained reboot transaction, no alternate cleanup authority')
+        old=json.loads(read_pin(pending['historicalRowPin'],64*1048576))
+        need(old['state']=='running'and old['finished']is None and all(old[k]==row[k]for k in row if k not in('state','result')),
+             'complete original interrupted row remains exact')
+        prior=json.loads(read_pin(pending['beforeNativePin'],1048576))
+        need(prior['job_id']==job and prior['binding']==binding and prior['oldBoot']==first['oldBoot']and prior['currentBoot']==first['currentBoot'],
+             'original prepared native custody remains bound')
     # Any later failure leaves the durable retained reservation, not a pass.
     current=ledger(db);second=capture(job);validate_observation(second,current,job)
     need(second['oldBoot']==first['oldBoot']and second['currentBoot']==first['currentBoot']and second['binding']==binding,'same old/current boot and original binding')
     afterpin=preserve(history/'after-native.json',second)
     need(0<=time.monotonic()-second['observedMonotonic']<=5,'fresh final native boundary')
-    final=dict(pending,afterNativePin=afterpin,currentDispositionOnly=True,noHistoricalClosureFabrication=True,
+    final=dict(pending,continuationBeforeNativePin=proof,afterNativePin=afterpin,currentDispositionOnly=True,noHistoricalClosureFabrication=True,
                terminalLifecycle={'phase':'CLOSED','closureDomain':'CURRENT_BOOT_RECONCILIATION','intendedState':'failed','reservationRetained':False,'automaticRetryAuthorized':False})
     with writer(db):
         need(ledger(db)==current,'whole canonical epoch changed before failed disposition')

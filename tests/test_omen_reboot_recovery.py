@@ -94,6 +94,11 @@ class RebootReconciliationTests(unittest.TestCase):
         row=R.ledger(self.db)['rows'][0];self.assertEqual(row['state'],'terminal_cleanup');self.assertIsNone(row['finished'])
         saved=json.loads(row['result']);self.assertTrue(saved['terminalLifecycle']['reservationRetained'])
         self.assertFalse(saved['automaticRetryAuthorized']);self.assertEqual(R.ledger(self.db)['rows'][1:],self.before['rows'][1:])
+        continued=self.root/'explicit-continuation';continued.mkdir()
+        result=R.reconcile(self.db,JOB,ModeledNativeBoundary(self.db),continued)
+        self.assertFalse(result['terminalLifecycle']['reservationRetained'])
+        self.assertEqual(json.loads(R.read_pin(result['historicalRowPin'],1048576)),self.before['rows'][0])
+        self.assertEqual(R.ledger(self.db)['rows'][0]['state'],'failed')
     def test_expired_final_fence_keeps_pending_not_released(self):
         def fault(native,proof):
             if native.calls==2:proof['observedMonotonic']-=6
