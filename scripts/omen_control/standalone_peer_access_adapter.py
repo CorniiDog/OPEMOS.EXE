@@ -76,7 +76,7 @@ class RootInputs:
    if not(x==named and all(x[k]==a[k]for k in(CORE if not exclusive else F))):
     error=RuntimeError('held/named declared directory identity/epoch');error.evidence={'path':path,'role':'exclusive'if exclusive else'shared-ancestor','birth':a,'held':x,'named':named,'monotonic':time.monotonic()};raise error
    need(stat.S_ISDIR(x['st_mode'])and x['st_uid']==x['st_gid']==0,'Root directory nofollow custody')
-   need(stat.S_IMODE(x['st_mode'])in((0o755,0o777)if path=='/'else(0o755,)if path=='/run'else(0o755,)if path.startswith('/run/opemos-steamos-source-')else(0o700,)),'exact role-specific directory mode')
+   need(stat.S_IMODE(x['st_mode'])in((0o755,0o777)if path=='/'else(0o755,)if path=='/run'else(0o555,)if path==SOURCE_ROOT else(0o755,)if path.startswith('/run/opemos-steamos-source-')else(0o700,)),'exact role-specific directory mode')
  def directory(self,path):
   allowed={SOURCE_ROOT,ORIGINAL_SOURCE_ROOT,'/run/opemos-libvirt-runtime-'+NONCE,'/run/opemos-steamos-placement-'+NONCE}
   need(path in allowed,'declared finite source/context/placement root only')
