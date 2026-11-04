@@ -11,7 +11,7 @@ import libvirt_peer as p
 import libvirt_producer as prod
 import libvirt_preflight as pre
 from libvirt_native import held,NativeTransactionOps
-ROLES={'libvirt_peer','libvirt_access','libvirt_native','libvirt_preflight','libvirt_producer','queue_assignment','runtime_entry','guest_delta','guest_firmware_probe','held_history_reader','two_boot_contract','postqueue_issuer'}
+ROLES=__import__('source_contract').RUNTIME_ROLES
 
 def protected(ref,mode=0o400,cap=1048576):
  i=ref['identity'];p.need(i['st_uid']==i['st_gid']==0 and stat.S_IMODE(i['st_mode'])==mode,'exact Root protected input mode')
@@ -177,8 +177,7 @@ def bind_placement(peer,parent,parent_ref,context=None):
  peer.need(nonce=='cd9ef0826364409da287f6f3e3830c95'and peer.SOURCE_PLACEMENT_NONCE==nonce and candidate['nonce']==nonce and __import__('queue_assignment').execution_job(candidate,parent)==parent['jobId'],'D23 unused scope only; D22 is consumed')
  peer.need(parent['RootIssued']is True and parent['kind']=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'and parent['bootID']==candidate['hostBoot']and parent_ref['path']=='/run/opemos-libvirt-parent-'+nonce+'.json','existing exact Root parent/boot/source scope')
  peer.need(set(roles)=={'libvirt_peer','libvirt_access','libvirt_native','libvirt_preflight','libvirt_producer','queue_assignment','runtime_entry','guest_delta','guest_firmware_probe','held_history_reader','two_boot_contract','postqueue_issuer'},'closed twelve-role binding')
- peer.need(roles['libvirt_peer']['sha256']=='a4f05164c4fcf9779a8d8f6a0c4281a1674441a13115ace9e58c1499c9e2b92d'and roles['libvirt_peer']['bytes']==65460 and roles['libvirt_access']['sha256']=='97d1dbdad2db5428b15674e6792c05832570e1ff9dc4acf5ee97620d605f6c92'and roles['libvirt_access']['bytes']==34663,'frozen exact D23 peer and unchanged access bytes')
- for name,ref in roles.items():peer.need(ref['path']=='/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r118'+'/'+name+'.py'and ref['identity']['st_uid']==ref['identity']['st_gid']==0 and stat.S_IMODE(ref['identity']['st_mode'])==0o444 and ref['identity']['st_nlink']==1,'same immutable Root source12 namespace')
+ __import__('source_contract').validate(roles,parent['queuePrograms'],parent['installedSourceContractPin'])
  ref=parent['sourcePlacementPin'];qr=parent['placementQualificationPin'];root='/run/opemos-steamos-placement-'+nonce
  peer.need(ref['path']==root+'/storage-contract.json'and qr['path']==root+'/placement-qualified.json','fresh exact placement+qualification names, no historical receipt')
  files=peer.RootFiles(root);primary=None;result=None
@@ -306,6 +305,7 @@ def _issue(parent_ref,ops=None):
  parent=protected(parent_ref,0o444);__import__('guest_firmware_probe').require_firstboot_only(parent['candidate']);root='/run/opemos-libvirt-runtime-'+parent['nonce'];before=set(os.listdir('/proc/self/fd'));first=None;secondary=[];outputs=[]
  p.need(parent['kind']=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'and parent['RootIssued']is True and parent['postqueueDelegation']=='ROOT_EXACT_CANONICAL_BINDING_ONLY_R5','separate immutable Root delegation')
  p.need(parent_ref['path']=='/run/opemos-libvirt-parent-'+parent['nonce']+'.json'and parent['contextPath']==root+'/context.json','exact parent/runtime names')
+ __import__('source_contract').validate(parent['sourceRoles'],parent['queuePrograms'],parent['installedSourceContractPin'])
  p.need(set(parent['sourceRoles'])==ROLES and all(Path(ref['path']).name==role+'.py'for role,ref in parent['sourceRoles'].items()),'closed twelve-role reviewed source graph')
  p.need(parent['noNIC']is True and parent['noInstall']is True and parent['maxBoots']==1 and parent['failureControl']=='LIBVIRT_AUTODESTROY_CONTROLLER_CONNECTION','unchanged narrow scope')
  ops=ops or NativeIssueOps(parent,root);now=ops.now();p.need(os.getuid()==0 and parent['bootID']==ops.boot()and parent['issuedUnix']<=now<parent['startBeforeUnix']<=parent['issuedUnix']+300,'Root same boot finite actual authority')

@@ -5070,3 +5070,17 @@ current and their repository ownership is unambiguous.
 - Same PR219 bounded VFIO mitigation: material normal native/parent/issuer bodies now in repo, preserving old source as history. First existing module initialization supplies disable_idle_d3=1 before sole libvirt managed binding; original unloaded state restored only after genuine closure/no foreign users. Exact Ubuntu42 source and passive unloaded metadata retained externally. No PM/module/queue effect yet; remote CI/Core exact source/caller/effects still required.
 
 - Same PR219 successor addresses Core R119-F1/F2/F3: actual inherited Bash OFD/fdinfo owner, immediate post-prepare create clock, attempted/proven module custody and exact single-module removal preserving pre-existing dependencies. Existing real wrapper fixture and modeled dependency/partial/foreign cases added; no controller project tests or machine effect. Frozen35d and all failed evidence preserved.
+# Current retained installer custody — R120
+
+- [ ] Finish and independently review the fresh post-reboot producer/stage/queue
+  path. Preserve R118 as failed/CLOSED current-boot reconciliation, with old
+  QMP/lease/exit/ACL unknowns retained. PR219 merged as
+  `03cfaa1e38b691142a738bc81f0273b6bc4abb1d`; actual R119 normal reconciliation
+  finished `1793767872.4803286`, released its reservation, and left no domain or
+  active pool allocation. R120 readonly full raw hash again matches `f9aa0fa2…`;
+  full backing hash is `16e1943b…`, unchanged full9, with owned EOF/reap/FD closure.
+  No new VM, module initialization or installer acceptance is claimed.
+- [ ] Require admitted CI and exact Core source/PR/effects approval, protected
+  squash, then a fresh normal queue-admitted virtualUSB NVIDIA launch. Retained
+  media stays readonly; new IO is separate. Reuse no consumed session/grant or
+  old prepared-continuation constructor. Preserve cap TWO and #213's hold.
