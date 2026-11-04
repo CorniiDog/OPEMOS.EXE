@@ -71,12 +71,17 @@ def admitted_media(value):
 def observe_after_drain(probe, inputs, deadline, cuts):
     """Only expected idle API status convergence can request a new full cut."""
     while True:
+        need(time.monotonic() < deadline, 'bounded runner status convergence before fresh cut')
         try:
-            return probe.observe(inputs)
+            value = probe.observe(inputs)
         except probe.RunnerStatusTransition as error:
             cuts.append({'runnerStatusTransition': {'before': error.before, 'after': error.after}})
-            need(time.monotonic() < deadline, 'bounded runner status convergence after normal drain')
-            time.sleep(.5)
+            remaining = deadline - time.monotonic()
+            need(remaining > 0, 'bounded runner status convergence after normal drain')
+            time.sleep(min(.5, remaining))
+            continue
+        need(time.monotonic() < deadline, 'bounded runner status convergence after fresh cut')
+        return value
 
 
 def execute(profile_pin, attempt):

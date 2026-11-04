@@ -377,6 +377,29 @@ class RetainedMediaContract(unittest.TestCase):
                 observe=lambda inputs:media_probe.require_stable_assignment(online,offline),
                 RunnerStatusTransition=media_probe.RunnerStatusTransition), {}, time.monotonic()-1, [])
 
+    def test_post_drain_cut_keeps_original_deadline_before_and_after_observation(self):
+        import time
+        idle={'runnerOnline':True,'runnerBusy':False,'actionsInProgress':0}
+        offline=dict(idle,runnerOnline=False)
+        calls=[]
+        def fresh(inputs):calls.append(inputs);return offline
+        probe=types.SimpleNamespace(observe=fresh,RunnerStatusTransition=media_probe.RunnerStatusTransition)
+        with self.assertRaisesRegex(RuntimeError,'before fresh cut'):
+            media_window.observe_after_drain(probe,{},time.monotonic()-1,[])
+        self.assertEqual(calls,[])
+        def late(inputs):calls.append(inputs);time.sleep(.03);return offline
+        probe.observe=late
+        with self.assertRaisesRegex(RuntimeError,'after fresh cut'):
+            media_window.observe_after_drain(probe,{},time.monotonic()+.015,[])
+        self.assertEqual(len(calls),1)
+        calls=[]
+        def transition(inputs):
+            calls.append(inputs);media_probe.require_stable_assignment(idle,offline)
+        probe.observe=transition
+        with self.assertRaisesRegex(RuntimeError,'before fresh cut'):
+            media_window.observe_after_drain(probe,{},time.monotonic()+.03,[])
+        self.assertEqual(len(calls),1)  # remaining sleep never starts a late second observation
+
     def test_assigned_busy_and_unknown_probe_failures_remain_final(self):
         import time
         idle={'runnerOnline':True,'runnerBusy':False,'actionsInProgress':0}
