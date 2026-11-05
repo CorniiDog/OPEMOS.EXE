@@ -252,8 +252,8 @@ def ci10_root(context):
     finally:os.close(fd)
     policy=ci9_json(raw);need(policy['kind']=='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1',
                             'current normal pointer operation authority')
-    root=Path(context['operation_root']);need(root.parent==Path(policy['operationRoot'])and
-         root.name.endswith('-'+context['identity']['operation_nonce'])and
+    root=Path(context['operation_root']);need(root.parent==Path(policy['runtimeRoot'])and
+         root.name=='robot-ubuntu-'+context['identity']['operation_nonce']and
          root.is_absolute()and root.resolve()==root,'same typed normal pointer evidence root')
     own=root.lstat();need(stat.S_ISDIR(own.st_mode)and own.st_uid==os.getuid()and
                          stat.S_IMODE(own.st_mode)==0o700,'private normal pointer root')
@@ -618,12 +618,244 @@ def transact(operation):
             if first is None:raise ValueError('Actual pointer output/socket closure failed')
 
 
+class RobotPipeline:
+    """The normal job produces observations; the existing Robot child sends input."""
+    ACTIONS=('chooser-open','chooser-confirm-exact-input','Build',
+             'virtualUSB-select-and-review','virtualUSB-Write-confirmation')
+    TRANSITIONS=dict(zip(ACTIONS,(('main','chooser'),('chooser','input-selected'),
+        ('input-selected','build-started'),('output-ready','usb-reviewed'),('usb-reviewed','write-started'))))
+
+    def __init__(self,pipeline,config,engine,owned):
+        import threading
+        self.p=pipeline;self.cfg=config;self.engine=Path(engine);self.owned=owned
+        self.files={};self.actions={};self.reports=[];self.controls={};self.threading=threading
+        r=pipeline.ready;b=pipeline.binding;d=config['candidate']['descriptor']
+        need(r['guest_uid']==1000 and r['guest_architecture']=='x86_64'and
+             re.fullmatch('[0-9a-f-]{36}',r['guest_boot_id'])and r['display_connection'],
+             'actual native guest boot/session/architecture')
+        self.clock={'domain':'monotonic-ns','id':b['host_boot_id']}
+        self.identity={'source_commit':config['source_commit'],'run_id':config['run_id'],
+            'attempt':config['attempt'],'operation_nonce':b['nonce'],
+            'inventory_vm_id':config['inventory_vm_id'],'runtime_instance_id':b['vm_name'],
+            'queue_job_ids':[config['queue_job_id']],'original_source':config['original_source'],
+            'executable':d}
+        display={'id':r['display_connection'],'width':1280,'height':800,'scale':1,
+            'coordinate_width':1280,'coordinate_height':800,'origin_x':0,'origin_y':0,
+            'coordinate_space':'physical-pixels'}
+        self.session={'runtime_instance_id':b['vm_name'],'platform':'linux','architecture':'x86_64',
+            'boot_id':r['guest_boot_id'],'id':r['display_connection']+':uid1000','display':display}
+        birth=r['process'];self.birth={'pid':birth['pid'],'start':int(birth['start_ticks'])}
+        self.sender=Path(config['programRoot'])/'connection_control.py'
+        self.sender_sha=config['normalPolicy']['programSHA256']['connection_control.py']
+        self.observer_sha=config['normalPolicy']['programSHA256']['observer_guest.py']
+        self.destination=None
+
+    def retain(self,ref,path,kind):
+        raw=held(path,24*1024*1024);info=Path(path).lstat()
+        self.files[ref]={'path':str(path),'size':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),
+            'identity':{k:getattr(info,k)for k in FULL9},'kind':kind,'public':True}
+        return self.files[ref]
+
+    def put(self,ref,value,kind):
+        path=self.p.root/(ref+'.json');save(path,value);return self.retain(ref,path,kind)
+
+    def capture(self,prefix):
+        import uuid
+        tick=time.monotonic_ns();value=frame(self.p.q,self.p.root/(prefix+'.png'))
+        ref=prefix+'-png';self.retain(ref,value['path'],'screenshot')
+        record={'capture_id':uuid.uuid4().hex,'clock':self.clock,'tick':tick,
+            'frame_ref':ref,'frame_sha256':value['sha256'],'session':self.session,'acquired':True}
+        self.put(prefix+'-capture',record,'frame-capture')
+        return {'capture_id':record['capture_id'],'clock':self.clock,'tick':tick,
+                'ref':ref,'capture_ref':prefix+'-capture'}
+
+    def destination_admission(self,app):
+        b=self.p.binding;process(b);path=Path(b['qmp_socket']);before=path.lstat()
+        need(self.p.q.call('query-name')['name']==b['vm_name']and
+             self.p.q.call('query-status')['status']=='running','actual same running QMP destination')
+        disks=[x for x in self.p.q.call('query-block')if x.get('device')=='osdisk']
+        need(len(disks)==1 and disks[0]['inserted']['file']==str(self.p.root/'desktop-overlay.qcow2')
+             and disks[0]['inserted']['ro']is False,'actual writable owned guest destination')
+        actual={'qmp_name':b['vm_name'],'qemu_process':{'pid':b['pid'],'start':int(b['start_ticks'])},
+            'host_boot_id':b['host_boot_id'],'socket_path':str(path),
+            'socket_identity':{k:getattr(before,k)for k in FULL9},
+            'peer':{'pid':b['pid'],'uid':os.getuid(),'gid':os.getgid()},
+            'disk':{'path':disks[0]['inserted']['file'],'read_only':False},
+            'argv_sha256':hashlib.sha256((Path('/proc')/str(b['pid'])/'cmdline').read_bytes()).hexdigest()}
+        need(ci10_sig(before)==ci10_sig(path.lstat()),'actual destination socket epoch')
+        record={'schema':1,'kind':'OPEMOS_ADMITTED_POINTER_DESTINATION','admitted':True,
+            'identity':self.identity,'session':self.session,'clock':self.clock,
+            'app':{k:app[k]for k in('process','executable_sha256','root_window_id')},'qmp':actual}
+        if self.destination is None:self.destination=self.put('pointer-destination',record,'pointer-destination-admission')
+        else:need(json.loads(held(self.destination['path'],1048576))==record,'same original destination for every action')
+        return self.destination
+
+    def after_state(self,name,before):
+        """Read native state after input; a QMP acknowledgement is insufficient."""
+        p=self.p;end=min(p.end,time.monotonic()+25)
+        while True:
+            raw=p.request('UI_STATE');windows=raw['value']['windows']
+            names=[n for w in raw['value']['namesByWindow']for n in w['names']]
+            dialogs=[w for w in windows if w['dialog_type']and
+                (w['transient_for']==p.app['window_id']or w['pid']==p.app['pid'])]
+            labels=p.cfg['labels'];ok=False
+            if name=='chooser-open':ok=len(dialogs)==1
+            elif name=='chooser-confirm-exact-input':
+                ok=not dialogs and any(Path(p.cfg['input_path']).name in n for n in names)
+            elif name=='Build':
+                ok=any(n in names for n in ('Opening build progress…','Build progress is open in a separate window.',
+                    'Preparing builder','Starting builder','Normalizing compressed image','Build Progress is open'))
+            elif name=='virtualUSB-select-and-review':
+                ok=any('Type ERASE exactly to confirm '+p.selected_usb['path'] in n for n in names)
+            elif name=='virtualUSB-Write-confirmation':
+                ok=any(n.startswith(('Revalidating the exact image and removable drive.',
+                    'USB writing','Writing','Verifying'))for n in names)
+            need(not any(n.startswith(('Build failed','USB write failed','Error:'))for n in names),
+                 'actual native application failure after '+name)
+            if ok:return raw
+            need(time.monotonic()<end,'actual action-specific native transition absent: '+name)
+            time.sleep(min(.2,end-time.monotonic()))
+
+    def click(self,p,name,label,roles,window):
+        import uuid
+        need(name==self.ACTIONS[len(self.actions)],'five actual canonical actions in order')
+        native=p.app if window is None else window;prefix='robot-'+str(len(self.actions)+1)
+        before=self.capture(prefix+'-before')
+        raw=p.target(label,list(roles),window);control=raw['value']
+        need(control['pid']==self.birth['pid']and control['window_id']==native['window_id']and
+             control['visible']is True and control['enabled']is True and
+             control['hitObservation']=='native-same-control-unoccluded',
+             'fresh native unoccluded same app/window target')
+        rect=lambda v:dict(zip(('x','y','width','height'),v))
+        app={'process':self.birth,'executable_sha256':p.ready['process']['exe_sha256'],
+            'root_window_id':p.app['window_id'],'window_id':native['window_id'],
+            'window_title':native['title'],'window_rect':rect(native['rect'])}
+        cid=control['nativeAccessibleId']or(control['role']+':'+control['label'])
+        target={'control_id':cid,'role':control['role'],'app_process':self.birth,
+            'window_id':native['window_id'],'visible':True,'enabled':True,'rect':rect(control['rect']),
+            'hit_observation':control['hitObservation']}
+        self.controls[name]={'control_id':cid,'role':control['role']}
+        destination=self.destination_admission(app)
+        observation={'schema':1,'identity':self.identity,'session':self.session,'app':app,'target':target,
+            'observer_source_sha256':self.observer_sha,'app_birth_rechecked':True,
+            'before_frame_ref':before['ref'],'capture_id':before['capture_id'],'delivery_clock':self.clock,
+            'delivered_tick':time.monotonic_ns(),'method':'native-readonly','native_observation':raw}
+        ob=self.put(prefix+'-target',observation,'gui-observation')
+        context={'action':name,'action_id':uuid.uuid4().hex,'sequence':len(self.actions)+1,
+            'identity':self.identity,'session':self.session,'app':app,'target':target,'point':control['point'],
+            'clock':self.clock,'before':before,'transition_ref':prefix+'-transition',
+            'sender_lifecycle_ref':prefix+'-life','target_observation_ref':prefix+'-target',
+            'normal_policy_pin':self.cfg['normalPolicyPin'],'operation_root':str(p.root),
+            'sender_source_sha256':self.sender_sha,'before_path':self.files[before['ref']]['path'],
+            'before_sha256':self.files[before['ref']]['sha256'],
+            'before_capture_path':self.files[before['capture_ref']]['path'],
+            'before_capture_sha256':self.files[before['capture_ref']]['sha256'],
+            'target_observation_path':ob['path'],'target_observation_sha256':ob['sha256'],
+            'destination_admission_path':destination['path'],'destination_admission_sha256':destination['sha256'],
+            'destination_admission_ref':'pointer-destination'}
+        for key,suffix in [('action_result','action'),('sender_lifecycle','life'),('sender_stdout','stdout'),('sender_stderr','stderr')]:
+            context[key+'_path']=str(p.root/(prefix+'-'+suffix+'.'+('raw'if suffix in('stdout','stderr')else'json')))
+            context[key+'_ref']=prefix+'-'+suffix
+        operation={'platform':'ubuntu','driver':{'path':str(self.sender),'sha256':self.sender_sha},
+            'pointer_context':context,'sender_operation':{'kind':'mouse','binding':p.binding,
+            'deadline_monotonic':p.end},'observed_result_path':str(p.root/(prefix+'-observed.json')),
+            'observer_source_sha256':self.observer_sha}
+        digest=hashlib.sha256(json.dumps(operation,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+        admission=self.put(prefix+'-admission',{'kind':'OPEMOS_ROBOT_POINTER_ADMISSION','admitted':True,
+            'identity':self.identity,'driver_sha256':self.sender_sha,'operation_sha256':digest},'pointer-admission')
+        operation.update(admission={'path':admission['path'],'sha256':admission['sha256']},operation_payload_sha256=digest)
+        op=self.put(prefix+'-operation',operation,'pointer-operation')
+        request=self.put(prefix+'-identity',{'source_commit':self.identity['source_commit'],
+            'run_id':self.identity['run_id'],'attempt':self.identity['attempt'],'nonce':self.identity['operation_nonce']},'robot-identity')
+        env={'GITHUB_REPOSITORY':'CorniiDog/OPEMOS.EXE','GITHUB_RUN_ID':self.identity['run_id'],
+            'GITHUB_RUN_ATTEMPT':self.identity['attempt'],'OPEMOS_SOURCE_SHA':self.identity['source_commit'],
+            'OPEMOS_TRANSACTION_NONCE':self.identity['operation_nonce'],'OPEMOS_POINTER_OPERATION':op['path'],
+            'OPEMOS_POINTER_OPERATION_SHA256':op['sha256']}
+        runner=self.engine/'scripts/run_omen_robot_guest.py';suite=self.engine/'tests/robot/guest.robot'
+        argv=['/usr/bin/env',*[k+'='+v for k,v in env.items()],sys.executable,'-I','-B',str(runner),
+            request['path'],request['sha256'],str(suite),str(p.root/(prefix+'-reports'))]
+        # QMP admits one client. Release the parent's connection before the
+        # already reviewed Robot sender uses it; native observation is separate.
+        need(p.end-time.monotonic()>130,'original GUI clock includes Robot child closure reserve')
+        p.q.close();outcome={}
+        def run():
+            try:outcome['native']=self.owned.run_owned_command(argv,None,min(100,p.end-time.monotonic()),
+                [p.root/(prefix+'-robot.stdout'),p.root/(prefix+'-robot.stderr')],stream_limit=4194304)
+            except BaseException as error:outcome['error']={'type':type(error).__name__,'reason':str(error)}
+        thread=self.threading.Thread(target=run);thread.start();first=None
+        try:
+            end=min(p.end,time.monotonic()+70)
+            while True:
+                if Path(context['sender_lifecycle_path']).exists():
+                    try:life=json.loads(held(context['sender_lifecycle_path'],1048576))
+                    except (OSError,ValueError,UnicodeError,RuntimeError):life={}  # owned pending producer; never acceptance
+                    if life.get('waited')is True:break
+                need(thread.is_alive()and time.monotonic()<end,'Robot sender failed or did not finish before observation')
+                time.sleep(.05)
+            need(life['numeric_exit']==0 and life['stdout_EOF']is True and life['stderr_EOF']is True
+                 and life['pipes_closed']is True and life['original_gone']is True and not life['first_failure'],
+                 'actual Robot sender lifecycle failed; full partial evidence retained')
+            p.q=QMP(connect_owned(p.binding['qmp_socket'],p.binding['pid']))
+            after_native=self.after_state(name,raw);after=self.capture(prefix+'-after')
+            observed={'before_state':self.TRANSITIONS[name][0],'after_state':self.TRANSITIONS[name][1],
+                'before_frame_ref':before['ref'],'after_frame_ref':after['ref'],
+                'window_owner_process':self.birth,'actual_observation':True,'native':after_native}
+            if name in('chooser-confirm-exact-input','Build'):
+                observed.update(input_sha256=p.cfg['input_sha256'],input_path=p.cfg['input_path'])
+            if name=='Build':observed['planned_output']=p.cfg['output_path']
+            if name.startswith('virtualUSB'):
+                observed.update(usb_id='opemos-'+p.binding['nonce'],usb_backing_identity=self.cfg['virtualUSBIdentity'],
+                    usb_device_identity=p.selected_usb,output_image_sha256=p.built_output['value']['sha256'])
+            self.put(prefix+'-transition',{'status':'observed','action_id':context['action_id'],
+                'identity':self.identity,'session':self.session,'app_process':self.birth,'after':after,
+                'delivery_clock':self.clock,'delivered_tick':time.monotonic_ns(),'observation':observed},'pointer-transition')
+            result={'identity':self.identity,'observed':True,'expected_result':True,'native_observer':True,
+                'action_id':context['action_id'],'runtime_instance_id':p.binding['vm_name'],
+                'frame_sha256':self.files[after['ref']]['sha256'],'window_id':native['window_id'],
+                'observer_source_sha256':self.observer_sha}
+            # The observed result is published complete; Robot never sees a
+            # partially written JSON file or an overwritten previous result.
+            temp=p.root/(prefix+'-observed.partial');save(temp,result)
+            import ctypes
+            libc=ctypes.CDLL(None,use_errno=True)
+            numeric=libc.renameat2(-100,os.fsencode(temp),-100,os.fsencode(operation['observed_result_path']),1)
+            need(numeric==0,'atomic create-only independent observed result')
+        except BaseException as error:first=error;raise
+        finally:
+            thread.join(max(0,min(110,p.end-time.monotonic())))
+            if first is not None:outcome['parentFIRST']={'type':type(first).__name__,'reason':str(first)}
+            outcome['originalRobotThreadClosed']=not thread.is_alive()
+            self.put(prefix+'-robot-native',outcome,'robot-child-lifecycle')
+            if thread.is_alive() and first is None:raise RuntimeError('original Robot owned-child closure remains unknown')
+            if p.q.f.closed and not thread.is_alive():p.q=QMP(connect_owned(p.binding['qmp_socket'],p.binding['pid']))
+        need('error'not in outcome and outcome['native']['numericExit']==0
+             and outcome['native']['lifecycleClosed']is True and not outcome['native']['errors'],
+             'real Robot suite or child closure failed')
+        actual=json.loads(held(p.root/(prefix+'-reports/result.json'),1048576))
+        need(actual['numeric_exit']==0 and actual['tests_failed']==0 and actual['tests_passed']==1
+             and actual['actual_pointer_calls']==1,'actual ordinary Robot mouse suite did not pass')
+        for key,kind in [('action_result','pointer-action'),('sender_lifecycle','pointer-sender-lifecycle'),
+                         ('sender_stdout','pointer-sender-stdout'),('sender_stderr','pointer-sender-stderr')]:
+            self.retain(context[key+'_ref'],context[key+'_path'],kind)
+        for item in actual['reports']:self.retain(prefix+'-'+Path(item['path']).name,item['path'],item['kind'])
+        self.actions[name]=prefix+'-action';self.reports.append(actual)
+        record={'action':name,'nativeControl':raw,'robotResult':actual,'beforeFrame':before}
+        p.actions.append(record);return record
+
+    def complete(self):
+        need(tuple(self.actions)==self.ACTIONS and len(self.reports)==5,'all five actual Robot mouse operations required')
+        return {'pointer_actions':self.actions,'files':self.files,'gui_session':self.session,
+            'gui_clock':self.clock,'gui_controls':self.controls,'gui_destination_admission':self.destination,
+            'identity':self.identity,'app_process':self.birth,'app_window_id':self.p.app['window_id'],
+            'robot_reports':self.reports}
+
+
 class Pipeline:
     """Actual native observations and QMP input in the same owned Ubuntu VM."""
     def __init__(self,binding,config,q,observer,ready,root):
         self.binding=binding;self.cfg=config;self.q=q;self.observer=observer;self.ready=ready
         self.root=root;self.sequence=0;self.actions=[];self.observations=[];self.observation_bytes=0
-        self.end=time.monotonic()+config['whole_seconds'];self.app=ready['app'];self.check=lambda:None
+        self.end=time.monotonic()+config['whole_seconds'];self.app=ready['app'];self.check=lambda:None;self.robot_click=None
         need(binding['nonce']==config['nonce']==ready['nonce'] and
              binding['artifact_source']==config['source_commit'] and
              binding['package_sha256']==config['package_sha256'] and
@@ -659,6 +891,8 @@ class Pipeline:
             time.sleep(min(2,remaining))
 
     def click(self,name,label,roles=('push button',),window=None):
+        if self.robot_click is not None and name in ('chooser-open','chooser-confirm-exact-input','Build','virtualUSB-select-and-review','virtualUSB-Write-confirmation'):
+            return self.robot_click(self,name,label,roles,window)
         target=self.target(label,list(roles),window);control=target['value'];point=control['point']
         native=self.app if window is None else window
         need(control['pid']==native['pid']and control['window_id']==native['window_id']and
@@ -705,7 +939,7 @@ class Pipeline:
             remaining=self.end-time.monotonic();need(remaining>0,'native chooser absent');time.sleep(min(.5,remaining))
         need(len(dialogs)==1,'one actual same-app native chooser')
         self.key('l',('ctrl',));self.text(path)
-        self.click(action+'-confirm',confirm,window=dialogs[0])
+        self.click('chooser-confirm-exact-input'if action=='chooser-open'else action+'-confirm',confirm,window=dialogs[0])
 
     def names(self):return self.request('NAMES',window_id=self.app['window_id'])['value']['names']
 
@@ -723,6 +957,7 @@ class Pipeline:
         self.choose('choose-output-directory',labels['choose_output'],self.cfg['output_directory'],labels['select_folder'])
         input_image=self.request('FILE',role='input_path')
         need(input_image['value']['sha256']==self.cfg['input_sha256'],'actual selected original image hash')
+        self.selected_input=input_image
         self.click('Build',labels['build'])
         self.wait_text(labels['build_success'])
         output=self.request('FILE',role='output_path')
@@ -733,6 +968,7 @@ class Pipeline:
         choices=[name for name in self.names()if ' · '+usb['path']+' · 'in name]
         need(len(choices)==1,'one native device option for the actually observed emulated USB')
         self.click('virtualUSB-device',choices[0],('list item','menu item','text'))
+        self.built_output=output;self.selected_usb=usb
         self.click('virtualUSB-select-and-review',labels['review'])
         self.click('virtualUSB-confirmation-entry',labels['confirmation'],('entry',))
         self.text('ERASE')

@@ -93,6 +93,29 @@ class RunnerTest(unittest.TestCase):
                        dict(expected,bytes=1073741825)):
                 with self.subTest(bad=bad),self.assertRaises(RuntimeError):observer.proc_identity(os.getpid(),bad)
 
+    def test_virtual_usb_robot_requires_independent_action_specific_native_transition(self):
+        spec=importlib.util.spec_from_file_location('normal_native_pointer',
+            Path(__file__).resolve().parents[1]/'scripts/omen_control/connection_control.py')
+        sender=importlib.util.module_from_spec(spec);spec.loader.exec_module(sender)
+        bridge=sender.RobotPipeline.__new__(sender.RobotPipeline)
+        current={'kind':'NATIVE_OBSERVATION','value':{'windows':[],
+            'namesByWindow':[{'window_id':42,'names':['Build NVIDIA Image']}]}}
+        bridge.p=SimpleNamespace(end=time.monotonic()+30,app={'pid':73,'window_id':42},
+            cfg={'labels':{},'input_path':'/readonly/exact-input.img'},request=lambda kind:current)
+        # Successful input delivery is insufficient: no chooser appeared.
+        with patch.object(sender.time,'monotonic',side_effect=[0,26]):
+            with self.assertRaisesRegex(RuntimeError,'action-specific native transition absent'):
+                bridge.after_state('chooser-open',{})
+        current['value']['windows']=[{'pid':73,'window_id':43,'transient_for':42,'dialog_type':True}]
+        self.assertIs(bridge.after_state('chooser-open',{}),current)
+        # A surviving chooser cannot be relabelled as input selection.
+        with patch.object(sender.time,'monotonic',side_effect=[0,26]):
+            with self.assertRaisesRegex(RuntimeError,'action-specific native transition absent'):
+                bridge.after_state('chooser-confirm-exact-input',{})
+        current['value']['windows']=[]
+        current['value']['namesByWindow'][0]['names']=['exact-input.img']
+        self.assertIs(bridge.after_state('chooser-confirm-exact-input',{}),current)
+
     def test_virtual_usb_candidate_medium_preserves_actual_package_companion_and_refuses_escape(self):
         import hashlib,io,stat,zipfile
         spec=importlib.util.spec_from_file_location('normal_ubuntu_candidate_medium',
@@ -244,6 +267,8 @@ class RunnerTest(unittest.TestCase):
             def get_name(self):return self.name
             def get_process_id(self):return self.pid
             def get_role_name(self):return self.role
+            def get_attributes(self):return ['toolkit:fixture-native']
+            def get_accessible_id(self):return 'observed-control-17'
             def get_child_count(self):return len(self.children)
             def get_child_at_index(self,index):return self.children[index]
             def get_state_set(self):return SimpleNamespace(contains=lambda flag:flag in self.flags)
@@ -255,6 +280,13 @@ class RunnerTest(unittest.TestCase):
         actual=observer.observed_control(desktop,window,'Build NVIDIA Image',['push button'],states,[1280,800])
         self.assertEqual(actual['point'],{'x':80,'y':52})
         self.assertEqual(actual['rect'],[30,40,100,24]);self.assertTrue(actual['readOnlyObservation'])
+        actual=observer.observed_control(desktop,window,'Build NVIDIA Image',['push button'],
+            states,[1280,800],hit_test=lambda x,y:[481,482])
+        self.assertEqual(actual['nativeAccessibleId'],'observed-control-17')
+        self.assertEqual(actual['hitObservation'],'native-same-control-unoccluded')
+        with self.assertRaisesRegex(RuntimeError,'occluded'):
+            observer.observed_control(desktop,window,'Build NVIDIA Image',['push button'],
+                states,[1280,800],hit_test=lambda x,y:[999])
         for fault in('foreign-pid','disabled','hidden','defunct','outside','duplicate','role'):
             target.pid=731;target.role='push button';target.rect=(30,40,100,24)
             target.flags={'enabled','sensitive','visible','showing'};app.children=[target]

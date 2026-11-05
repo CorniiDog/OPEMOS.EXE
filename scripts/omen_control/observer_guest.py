@@ -150,6 +150,19 @@ class X11:
                          'transient_for':int(transient.value) if own else None})
         return rows
 
+    def hit_window_chain(self,x,y):
+        require(type(x)is int and type(y)is int,'native screen point')
+        window=self.root;seen=[]
+        for _ in range(32):
+            rx=C.c_int();ry=C.c_int();child=C.c_ulong()
+            require(self.x.XTranslateCoordinates(self.d,self.root,window,x,y,
+                    C.byref(rx),C.byref(ry),C.byref(child)),'native topmost window translation')
+            if not child.value:return seen
+            require(child.value not in seen,'native child window cycle')
+            seen.append(int(child.value));window=child.value
+        require(False,'native window hit depth bound')
+
+
 def accessible_descendants(root):
     """Existing native accessibility observation, bounded; never invoke actions."""
     pending=[(root,0)];seen=0
@@ -164,7 +177,7 @@ def accessible_descendants(root):
             if child is not None:pending.append((child,depth+1))
 
 
-def observed_control(desktop,window,label,roles,states,screen,probe=False):
+def observed_control(desktop,window,label,roles,states,screen,probe=False,hit_test=None):
     """Fresh PID/window-owned native target geometry, without AX/DOM activation."""
     require(type(label)is str and 0<len(label)<=512 and roles
             and set(roles)<={'push button','entry','text','check box','list item','menu item','combo box'},
@@ -191,9 +204,15 @@ def observed_control(desktop,window,label,roles,states,screen,probe=False):
                     0<box.width and 0<box.height and 0<=wx<=box.x and 0<=wy<=box.y
                     and box.x+box.width<=wx+ww<=sw and box.y+box.height<=wy+wh<=sh,
                     'native control inside actual mapped window and display')
-            matches.append({'label':label,'role':node.get_role_name(),'rect':rect,
-                'pid':window['pid'],'window_id':window['window_id'],
-                'point':{'x':box.x+box.width//2,'y':box.y+box.height//2},
+            point={'x':box.x+box.width//2,'y':box.y+box.height//2}
+            hit=None if hit_test is None else hit_test(point['x'],point['y'])
+            if hit is not None:require(window['window_id']in hit,'native target window occluded at actual click point')
+            attributes=node.get_attributes()
+            identifier=node.get_accessible_id()if hasattr(node,'get_accessible_id')else None
+            matches.append({'label':node.get_name(),'role':node.get_role_name(),'rect':rect,
+                'pid':window['pid'],'window_id':window['window_id'],'point':point,
+                'nativeAccessibleId':identifier,'nativeAttributes':attributes,
+                'nativeWindowHitChain':hit,'hitObservation':None if hit is None else 'native-same-control-unoccluded',
                 'enabled':True,'visible':True,'readOnlyObservation':True})
     if probe and not matches:return {'available':False,'readOnlyObservation':True}
     require(len(matches)==1,'one genuine enabled PID/window-owned native control')
@@ -303,8 +322,14 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
             window=next((w for w in owned if w['window_id']==request['window_id']),None)
             require(window is not None,'mapped original app or native transient window')
             value=observed_control(desktop,window,request['label'],request['roles'],states,cfg['display'],
-                probe=request.get('probe')is True)
+                probe=request.get('probe')is True,hit_test=x.hit_window_chain)
         elif kind=='WINDOWS':value={'windows':owned}
+        elif kind=='UI_STATE':
+            # Read the actual mapped main/companion/chooser windows. No app
+            # command, DOM mutation or accessibility activation is permitted.
+            value={'windows':owned,'namesByWindow':[
+                {'window_id':w['window_id'],'names':observed_names(desktop,w,states)['names']}
+                for w in owned]}
         elif kind=='NAMES':
             window=next((w for w in owned if w['window_id']==request['window_id']),None)
             require(window is not None,'original mapped app/native transient for visible names')
