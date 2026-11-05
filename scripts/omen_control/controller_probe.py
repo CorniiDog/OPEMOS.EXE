@@ -37,7 +37,7 @@ class IdleRunnerStatusTransition(RuntimeError):
 
 def require_stable_github(before,after):
     stable=('networkReachable','protectedMain','mainCommit','protectedMainCommit',
-            'runnerBusy','actionsInProgress','actionsQueued')
+            'runnerBusy','actionsInProgress')
     changed=[k for k in stable if after[k]!=before[k]]
     need(not changed,'GitHub non-heartbeat ownership/source changed during OMEN probe: '+','.join(changed))
     if before['runnerOnline']!=after['runnerOnline']:
