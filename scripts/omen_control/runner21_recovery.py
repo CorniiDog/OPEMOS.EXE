@@ -834,6 +834,7 @@ def run_cycle(policy, state, now):
                       'GRACEFUL_RENEW','REFRESH_HEARTBEAT'):
         return {'decision':action,'probeSHA256':sha(observed['stdout']),'effect':False}
     cycle_raw=load_code(CYCLE,policy['controllerCycleSHA256'])
+    previous_outcome=strict(canonical(state['lastOutcome']))
     nonce=os.urandom(16).hex()
     state['inflight']=nonce
     state['lastOutcome']={'action':action,'nonce':nonce,
@@ -873,18 +874,54 @@ def run_cycle(policy, state, now):
          result.get('runtimeAuthorized') is True and
          result.get('vmAdmission') is False and
          result.get('jobStartedGuard') is True and
-         result.get('heartbeatReadbackCurrent') is True and
-         result.get('newOrExistingJobRoutable') is True and
          result.get('noDuplicateControllerListenerWorker') is True,
          'exact successful normal finite control receipt')
+    renewal_due=result.get('phase')=='RUNNING_RENEWAL_DUE'
+    if renewal_due:
+        need(action=='RESUME_PENDING' and result.get('heartbeatReadbackCurrent') is False and
+             result.get('newOrExistingJobRoutable') is False and
+             result.get('jobId')==probe['control']['jobId'] and
+             result.get('leaseExpiresUnix')==probe['control']['leaseExpiresUnix'] and
+             time.time()<result['leaseExpiresUnix']<=time.time()+policy['renewLeadSeconds'],
+             'only same unexpired pending control may acknowledge renewal without readiness')
+        child=start_held_python(probe_raw,['--probe'])
+        fresh=capture(child,MAX_PROBE_SECONDS,abort_readonly=True)
+        need(fresh['reaped'] and fresh['numeric']==0 and all(fresh['eof'].values()) and
+             fresh['first'] is None and fresh['stderr']==b'',
+             'fresh native closure after resumed control acknowledgement')
+        current=receipt(fresh['stdout'],'ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1')
+        validate_probe(current,policy,int(time.time()));c=current['control']
+        need(c['jobId']==result['jobId'] and c['state']=='running' and
+             c['leaseExpiresUnix']==result['leaseExpiresUnix'] and time.time()<c['leaseExpiresUnix'] and
+             c['terminalLifecycle'] is None and c['reservationRetained'] is True and
+             all(c[k] for k in ('listenerAlive','controllerAlive','workerAlive','ownUnitBound')) and
+             current['runnerOnline'] and current['networkReachable'] and current['protectedMain'] and
+             current['queueKnown'] and not any(current[k] for k in
+                 ('runnerBusy','actionsInProgress','sourceOwnerBusy','otherActiveJobs',
+                  'unknownReservations','guestActive','gpuLeaseActive')),
+             'actual source/process-bound renewed-due control; keep ordinary job admission floor')
+        raw=canonical({'kind':'ROOT_RESUMED_CONTROL_NATIVE_ACK_NOT_READINESS_V1',
+                       'before':strict(canonical(state)),'result':result,'probe':current,
+                       'heartbeatPublished':False,'queueMutation':False,'atUnix':time.time()})
+        path=ROOT/('resumed-control-'+nonce+'-'+sha(raw)[:16]+'.json')
+        fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+        try:write_all(fd,raw);os.fsync(fd)
+        finally:os.close(fd)
+    else:
+        need(result.get('phase')=='RUNNING' and result.get('heartbeatReadbackCurrent') is True and
+             result.get('newOrExistingJobRoutable') is True,
+             'normal ready result requires actual heartbeat publication and readback')
     state['inflight']=None
     if action!='REFRESH_HEARTBEAT':
         state['completedCycles']+=1
         state['totalCycles']+=1
     state['failureCount']=0
-    state['nextAttemptUnix']=now+60
+    state['nextAttemptUnix']=int(time.time())+(1 if renewal_due else 60)
     state['lastOutcome']={'action':action,'nonce':nonce,'resultSHA256':sha(outcome['stdout']),
-                          'jobId':result.get('jobId'),'phase':result.get('phase')}
+                          'jobId':result.get('jobId'),'phase':result.get('phase'),
+                          **({'originalOutcome':previous_outcome,'heartbeatPublished':False,
+                              'nativeAcknowledgement':str(path),'nativeAcknowledgementSHA256':sha(raw)}
+                             if renewal_due else {})}
     write_state(state)
     return {'decision':action,'effect':'NORMAL_CONTROL_ONLY',
             'nonce':nonce,'resultSHA256':sha(outcome['stdout']),

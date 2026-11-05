@@ -1815,5 +1815,128 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
         self.assertEqual(loaded.call_count,1);self.assertTrue(lineage.call_args.kwargs['pending'])
         saved.assert_called_once()
 
+    def test_normal_pending_transport_requires_unexpired_lease_but_does_not_publish_readiness(self):
+        from unittest import mock
+        import contextlib,time
+        cycle,_=self.modules();nonce='b'*32;job='root-github-robot-control-'+'a'*32
+        policy={'normalProbeSHA256':'1'*64,'recoverySourceSHA256':'2'*64,
+                'queueSourceSHA256':'3'*64,'mainCommit':'4'*40}
+        wire=cycle.enc(policy);trigger=types.SimpleNamespace(strict=json.loads,validate_policy=lambda p,n:p)
+        probe=types.SimpleNamespace(observe=lambda:{})
+        for remaining in (1000,-1):
+            frame={'control':{'jobId':job,'leaseExpiresUnix':time.time()+remaining}}
+            output=io.StringIO()
+            with self.subTest(remaining=remaining), \
+                 mock.patch.object(cycle.os,'geteuid',return_value=0), \
+                 mock.patch.object(cycle.sys,'argv',['normal','--normal-cycle','RESUME_PENDING',nonce,cycle.sha(wire),'5'*64]), \
+                 mock.patch.object(cycle,'REMOTE_POLICY_RAW',wire.hex(),create=True), \
+                 mock.patch.object(cycle,'module',side_effect=lambda p,d:probe if p.name=='normal_probe.py'else trigger), \
+                 mock.patch.object(cycle,'normal_at_use',return_value=frame), \
+                 mock.patch.object(cycle,'current_rows',return_value=({'id':job,'state':'pending'},[],[],[])), \
+                 mock.patch.object(cycle,'dispatch')as dispatch, \
+                 mock.patch.object(cycle,'publish_heartbeat',side_effect=AssertionError('no remote readiness')), \
+                 contextlib.redirect_stdout(output):
+                if remaining>0:
+                    cycle.main();value=json.loads(output.getvalue())
+                    self.assertFalse(value['heartbeatReadbackCurrent'])
+                    self.assertFalse(value['newOrExistingJobRoutable']);dispatch.assert_called_once()
+                else:
+                    with self.assertRaisesRegex(RuntimeError,'pending control lease expired'):cycle.main()
+                    dispatch.assert_not_called()
+
+    def test_actual_controller_cycle_native_ack_keeps_heartbeat_job_window(self):
+        from unittest import mock
+        import importlib.util,time
+        spec=importlib.util.spec_from_file_location('fixture_controller_cycle',SOURCE/'controller_cycle.py')
+        cycle=importlib.util.module_from_spec(spec);spec.loader.exec_module(cycle)
+        _,r=self.modules();policy,state,initial,_,_=self.pending(r)
+        policy.update(renewLeadSeconds=19000,recoverySourceSHA256=cycle.sha(b'trigger'),
+            controllerProbeSHA256=cycle.sha(b'probe'),heartbeatProducerSHA256=cycle.sha(b'heartbeat'),
+            normalCycleSHA256=cycle.sha(b'cycle'),normalProbeSHA256=cycle.sha(b'normal-probe'),
+            sshConfigSHA256=cycle.sha(b'ssh'),normalTemplateSHA256=cycle.sha(b'template'))
+        raw=cycle.enc(policy);nonce='f'*32;state['inflight']=nonce
+        for remaining,fault in ((1000,None),(20000,None),(1000,'binding'),(-1,None)):
+            initial['control']['leaseExpiresUnix']=int(time.time())+remaining
+            live=copy.deepcopy(initial);live['runnerOnline']=True
+            live['control'].update(state='running',terminalLifecycle=None,reservationRetained=True,
+                **{k:True for k in ('listenerAlive','controllerAlive','workerAlive','ownUnitBound')})
+            if fault:live['control']['ownUnitBound']=False
+            probe=types.SimpleNamespace(observe=mock.Mock(side_effect=[initial,live]))
+            heartbeat=types.SimpleNamespace(state_from_current=mock.Mock(return_value={}),
+                publish_once=mock.Mock(return_value={'readbackCurrent':True}))
+            trigger=types.SimpleNamespace(validate_policy=lambda p,n:p,strict=json.loads,
+                validate_state=lambda s:s,validate_probe=mock.Mock(),decision=lambda *args:'RESUME_PENDING')
+            sources={'policy.json':raw,'runner21_recovery.py':b'trigger','state.json':cycle.enc(state),
+                'controller_probe.py':b'probe','normal_heartbeat.py':b'heartbeat',
+                'normal_cycle.py':b'cycle','normal_probe.py':b'normal-probe','normal-template.json':b'template'}
+            remote=dict(kind='ROOT_RUNNER21_REMOTE_ACTION_RESULT_V1',nonce=nonce,action='RESUME_PENDING',
+                mainCommit=policy['mainCommit'],queueSourceSHA256=policy['queueSourceSHA256'],
+                vmAdmission=False,ordinaryRoute=True,jobId=initial['control']['jobId'])
+            def held(path,*args):return sources.get(path.name,b'ssh')
+            def module(raw,name):return {'reviewed_wrapper':trigger,'reviewed_controller_probe':probe,
+                                         'reviewed_current_heartbeat':heartbeat}[name]
+            with self.subTest(remaining=remaining,fault=fault),mock.patch.object(cycle,'held',side_effect=held), \
+                 mock.patch.object(cycle,'module',side_effect=module), \
+                 mock.patch.object(cycle.subprocess,'run',return_value=types.SimpleNamespace(returncode=0,stderr=b'',stdout=cycle.enc(remote))):
+                if remaining<=0 or fault:
+                    with self.assertRaisesRegex(RuntimeError,'native-only resumed control acknowledgement'):
+                        cycle.run('RESUME_PENDING',nonce,cycle.sha(raw),'0'*64)
+                    heartbeat.publish_once.assert_not_called()
+                else:
+                    value=cycle.run('RESUME_PENDING',nonce,cycle.sha(raw),'0'*64)
+                    due=remaining<=19000
+                    self.assertEqual(value['phase'],'RUNNING_RENEWAL_DUE'if due else'RUNNING')
+                    self.assertEqual(value['heartbeatReadbackCurrent'],not due)
+                    self.assertEqual(value['newOrExistingJobRoutable'],not due)
+                    self.assertEqual(heartbeat.publish_once.call_count,0 if due else 1)
+
+    def test_actual_recovery_native_ack_requires_fresh_process_bound_control_and_next_renewal(self):
+        from unittest import mock
+        import time
+        _,r=self.modules()
+        for fault in (None,'expiry','binding','source','job','readiness','action'):
+            policy,state,probe,_,_=self.pending(r);policy.update(renewLeadSeconds=19000,controllerCycleSHA256='7'*64)
+            state['inflight']=None;prior=copy.deepcopy(state['lastOutcome'])
+            probe['control']['leaseExpiresUnix']=int(time.time())+1000
+            live=copy.deepcopy(probe);live['runnerOnline']=True
+            live['control'].update(state='running',terminalLifecycle=None,reservationRetained=True,
+                **{k:True for k in ('listenerAlive','controllerAlive','workerAlive','ownUnitBound')})
+            nonce=('1234567890abcdef'*2);policy_sha=r.sha(r.canonical(policy))
+            result=dict(kind='ROOT_RUNNER21_NORMAL_CYCLE_RESULT_V1',nonce=nonce,action='RESUME_PENDING',
+                policySHA256=policy_sha,probeSHA256=r.sha(r.canonical(probe)),
+                queueSourceSHA256=policy['queueSourceSHA256'],mainCommit=policy['mainCommit'],
+                ordinaryRoute=True,sourceAccepted=True,runtimeAuthorized=True,vmAdmission=False,
+                jobStartedGuard=True,heartbeatReadbackCurrent=False,newOrExistingJobRoutable=False,
+                noDuplicateControllerListenerWorker=True,jobId=probe['control']['jobId'],
+                phase='RUNNING_RENEWAL_DUE',leaseExpiresUnix=probe['control']['leaseExpiresUnix'])
+            if fault=='expiry':result['leaseExpiresUnix']-=1
+            elif fault=='binding':live['control']['ownUnitBound']=False
+            elif fault=='source':result['mainCommit']='0'*40
+            elif fault=='job':result['jobId']='root-github-robot-control-'+'0'*32
+            elif fault=='readiness':result['heartbeatReadbackCurrent']=True
+            elif fault=='action':result['action']='CREATE'
+            def frame(value):return {'reaped':True,'numeric':0,'eof':{'stdout':True,'stderr':True},
+                'first':None,'stdout':r.canonical(value),'stderr':b''}
+            with self.subTest(fault=fault),tempfile.TemporaryDirectory()as directory, \
+                 mock.patch.object(r,'ROOT',Path(directory)), \
+                 mock.patch.object(r,'load_code',return_value=b'modeled authenticated sources'), \
+                 mock.patch.object(r,'start_held_python',return_value=object()), \
+                 mock.patch.object(r,'capture',side_effect=[frame(probe),frame(result),frame(live)]), \
+                 mock.patch.object(r,'validate_probe'),mock.patch.object(r,'renew_epoch',return_value='CURRENT_EPOCH'), \
+                 mock.patch.object(r,'decision',return_value='RESUME_PENDING'), \
+                 mock.patch.object(r.os,'urandom',return_value=bytes.fromhex(nonce)), \
+                 mock.patch.object(r,'write_state')as saved:
+                if fault:
+                    with self.assertRaises(RuntimeError):r.run_cycle(policy,state,int(time.time()))
+                    self.assertIsNotNone(state['inflight'])
+                else:
+                    value=r.run_cycle(policy,state,int(time.time()))
+                    self.assertEqual(value['phase'],'RUNNING_RENEWAL_DUE')
+                    self.assertIsNone(state['inflight']);self.assertFalse(state['lastOutcome']['heartbeatPublished'])
+                    self.assertEqual(state['lastOutcome']['originalOutcome'],prior)
+                    self.assertLessEqual(state['nextAttemptUnix'],int(time.time())+1)
+                    self.assertEqual(saved.call_count,2)
+                    self.assertEqual(len(list(Path(directory).glob('resumed-control-*.json'))),1)
+
 
 if __name__ == '__main__': unittest.main()

@@ -557,9 +557,13 @@ def main():
                  selected['id']==job_id and selected['state']=='pending',
                  'same pending job only')
             new_job=job_id
+            # Starting the control transport does not admit an Actions job.
+            # The broker's first-hook 19000s window and heartbeat producer's
+            # same readiness floor stay unchanged. A short live lease can only
+            # obtain a native acknowledgement and immediate ordinary renewal.
             need(current['control']['leaseExpiresUnix'] is not None and
-                 current['control']['leaseExpiresUnix']-time.time()>19000,
-                 'pending control has insufficient 240-minute job window')
+                 current['control']['leaseExpiresUnix']>time.time(),
+                 'pending control lease expired; never extend or replay it')
             dispatch(nonce,policy,probe_module)
         if 'REMOTE_POLICY_RAW' in globals():
             phase='SUBMITTED_OR_DISPATCHED_AWAIT_CONTROLLER_GITHUB_READBACK'
@@ -575,8 +579,12 @@ def main():
                     break
                 time.sleep(3)
             else:raise RuntimeError('new normal Runner21 job not live before finite bound')
-            publish_heartbeat(policy,probe_module,nonce)
-            phase='RUNNING'
+            if action=='RESUME_PENDING' and fresh['control']['leaseExpiresUnix']<=time.time()+19000:
+                need(time.time()<fresh['control']['leaseExpiresUnix'],'resumed control lease expired')
+                phase='RUNNING_RENEWAL_DUE'
+            else:
+                publish_heartbeat(policy,probe_module,nonce)
+                phase='RUNNING'
     out={'kind':'ROOT_RUNNER21_REMOTE_ACTION_RESULT_V1' if 'REMOTE_POLICY_RAW' in globals()
          else 'ROOT_RUNNER21_NORMAL_CYCLE_RESULT_V1','nonce':nonce,
          'action':action,'policySHA256':policy_sha,'probeSHA256':probe_sha,
@@ -584,8 +592,8 @@ def main():
          'mainCommit':policy['mainCommit'],'ordinaryRoute':True,
          'sourceAccepted':True,'runtimeAuthorized':True,'vmAdmission':False,
          'jobStartedGuard':True,
-         'heartbeatReadbackCurrent':'REMOTE_POLICY_RAW' not in globals(),
-         'newOrExistingJobRoutable':True,
+         'heartbeatReadbackCurrent':'REMOTE_POLICY_RAW' not in globals() and phase=='RUNNING',
+         'newOrExistingJobRoutable':phase=='RUNNING',
          'noDuplicateControllerListenerWorker':True,
          'jobId':new_job,'phase':phase}
     print(enc(out).decode(),end='')
