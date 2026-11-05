@@ -99,6 +99,24 @@ jobs:
       - name: Exercise Robot source adapter and real Unix client fault contracts
         run: python3 -m unittest discover -s tests -p 'test_omen*.py' -v
 
+      - name: Exercise actual Root recovery probe failure custody
+        shell: bash
+        run: |
+          {
+            git rev-parse HEAD
+            sha256sum scripts/omen_control/runner21_recovery.py scripts/omen_control/controller_probe.py
+            sudo python3 -B tests/test_omen_retained_media.py NormalRunnerMaterializationTests.test_actual_failed_held_probe_keeps_original_stderr_without_state_or_effect -v
+          } 2>&1 | tee "$RUNNER_TEMP/r1-native-probe-ci.log"
+
+      - name: Retain exact recovery probe regression evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: r1-native-probe-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r1-native-probe-ci.log
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Exercise retained-media queue consumer through actual protected Root metadata
         run: |
           sudo apt-get install --yes python3-libvirt libvirt-daemon-system

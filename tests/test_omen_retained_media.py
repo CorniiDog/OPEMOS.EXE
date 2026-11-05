@@ -2542,6 +2542,7 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
     @unittest.skipUnless(os.geteuid()==0,'actual Root private failed-native custody')
     def test_actual_failed_held_probe_keeps_original_stderr_without_state_or_effect(self):
         from unittest import mock
+        import stat
         _,r=self.modules();policy,state,_,_,_=self.pending(r)
         policy.update(maxTotalCycles=4096,maxCycles=128,controllerProbeSHA256='1'*64)
         state.update(inflight=None,nextAttemptUnix=0,totalCycles=2,completedCycles=1)
