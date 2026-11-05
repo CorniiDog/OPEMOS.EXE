@@ -998,8 +998,37 @@ except peer.Refused as error:
                         def write(self,value):raise OSError('modeled unwritable diagnostic stream')
                     normal_entry.emit_completion_first(first,BrokenOptionalStream())
                     self.assertTrue(any('Optional native FIRST emission failed'in x for x in first.__notes__))
+                    # Real native output cap remains1MiB. Large structured
+                    # failure evidence is retained once in a lossless optional
+                    # FIRST frame, with the actual predicate still primary.
+                    diagnostic_code=('import sys;sys.path.insert(0,sys.argv[1]);'
+                        'from test_queue import PoolAdmissionFailure;'
+                        'from run_current_media import emit_completion_first;'
+                        'e=PoolAdmissionFailure("actual predicate",{"complete":"x"*1200000});'
+                        'emit_completion_first(e,sys.stderr.buffer);'
+                        'print(str(e),file=sys.stderr);sys.exit(7)')
+                    large=child_native.native_queue_worker([python,'-c',diagnostic_code,str(SOURCE)],
+                        time.time()+10,installer.pin(python))
+                    self.assertEqual(large['numeric'],7)
+                    self.assertTrue(large['EOF']and large['reaped']and large['pipesClosed'])
+                    self.assertLess(len(large['stderr'].encode()),1048576)
+                    encoded=json.loads(large['stderr'].splitlines()[0])['completeFirst']
+                    import base64,zlib
+                    complete=zlib.decompress(base64.b64decode(encoded['data'],validate=True))
+                    self.assertEqual(len(complete),encoded['bytes'])
+                    self.assertEqual(hashlib.sha256(complete).hexdigest(),encoded['sha256'])
+                    decoded=json.loads(complete)
+                    self.assertEqual(decoded['failureEvidence'],{'complete':'x'*1200000})
+                    self.assertEqual(decoded['reason'],'Current pool admission refused: actual predicate')
                     captures=[]
+                    import time
+                    started=time.monotonic()
                     actual=queue.observe_queue_libvirt(request,captures=captures)
+                    if prior_version:
+                        with self.assertRaisesRegex(Exception,'original subject actual CLOSED/current implementation only'):
+                            normal_queue.validate_libvirt_observation(captures[-1]['proof'],request,started,implementation['sourceContractPin'])
+                        with self.assertRaisesRegex(Exception,'explicit current implementation'):
+                            normal_queue.validate_libvirt_observation(captures[-1]['proof'],request,started)
                     self.assertEqual(actual['phase'],'NOT_PREPARED')
                     self.assertTrue(captures)
                     self.assertTrue(captures[-1]['proof']['allOwnedDescriptorsClosed'])

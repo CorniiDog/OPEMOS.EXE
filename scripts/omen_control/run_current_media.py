@@ -709,7 +709,21 @@ def emit_completion_first(error,stream):
     evidence=getattr(error,'nativeChildEvidence',getattr(error,'evidence',None))
     if evidence is None:return
     try:
-        stream.write(p.canon({'kind':'CURRENT_MEDIA_NATIVE_FIRST','type':type(error).__name__,'reason':str(error),'nativeChildEvidence':evidence})+b'\n');stream.flush()
+        value={'kind':'CURRENT_MEDIA_NATIVE_FIRST','type':type(error).__name__,'reason':str(error),
+               'nativeChildEvidence'if hasattr(error,'nativeChildEvidence')else'failureEvidence':evidence}
+        raw=p.canon(value)
+        if len(raw)>262144:
+            import base64,zlib
+            encoded={'encoding':'ZLIB_BASE64_JSON_V1','bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),
+                     'data':base64.b64encode(zlib.compress(raw)).decode()}
+            value={'kind':'CURRENT_MEDIA_NATIVE_FIRST','type':type(error).__name__,
+                   'reason':str(error)if len(str(error).encode())<=4096 else'Oversized FIRST reason is in completeFirst',
+                   'completeFirst':encoded}
+            if len(p.canon(value))>262144:
+                value['completeFirst']={k:encoded[k]for k in('bytes','sha256')}
+                value['completeFirst'].update(omitted=True,reason='Optional complete FIRST exceeds diagnostic output budget')
+            raw=p.canon(value)
+        stream.write(raw+b'\n');stream.flush()
     except BaseException as diagnostic:error.add_note('Optional native FIRST emission failed: '+repr(diagnostic))
 
 

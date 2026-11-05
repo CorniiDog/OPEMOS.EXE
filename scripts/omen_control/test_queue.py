@@ -432,7 +432,7 @@ def validate_readonly_fd_custody(value,proof,request):
                 if request['observer']['sha256']!=BORROWED_PEER_INPUT_SHA:
                     require(set(p['epochs'])=={'snapshot','anchored','named','held'}and p['epochs']['snapshot']==r['identity'],'all raw run epochs retained')
                     for e in p['epochs'].values():identity(e);require(all(e[k]==r['identity'][k]for k in('st_dev','st_ino','st_mode','st_uid','st_gid')),'same positively anchored run epoch core')
-                require(path.name=='libvirt_peer.py'and path.parent.parent==Path('/run')and (path.parent in(Path(current_source_root()),Path(R109_ORIGINAL_SOURCE_ROOT))if request['observer']['sha256']in(R109_PEER_SHA,R109_ORIGINAL_PEER_SHA)else re.fullmatch('opemos-steamos-source-[0-9a-f]{32}',path.parent.name)is not None) and stat.S_ISDIR(parent['st_mode'])and parent['st_uid']==parent['st_gid']==0 and not parent['st_mode']&0o022,'protected source ancestry')
+                require(path.name=='libvirt_peer.py'and path.parent.parent==Path('/run')and (path.parent==Path(closed_subject_source_root(request))if request['observer']['sha256']in CLOSED_SUBJECT_PEERS else path.parent in(Path(current_source_root()),Path(R109_ORIGINAL_SOURCE_ROOT))if request['observer']['sha256']in(R109_PEER_SHA,R109_ORIGINAL_PEER_SHA)else re.fullmatch('opemos-steamos-source-[0-9a-f]{32}',path.parent.name)is not None) and stat.S_ISDIR(parent['st_mode'])and parent['st_uid']==parent['st_gid']==0 and not parent['st_mode']&0o022,'protected source ancestry')
     snapshot(value['before'],'readonly-observe-before',True);snapshot(value['after'],'readonly-observe-after',True)
     require(value['before']['atUnix']<=value['after']['atUnix'],'ordered actual FD cuts')
     changes=borrowed_fd_changes(value['before'],value['after']);require(value['changes']==changes==dict(added=[],removed=[],replaced=[]),'all FD lifetime identities stable; only proven shared-run epochs')
@@ -442,10 +442,27 @@ def validate_readonly_fd_custody(value,proof,request):
         snapshot(close['before'],'readonly-before-close',False);snapshot(close['after'],'readonly-after-close',False)
     return value
 
-def validate_libvirt_observation(proof,request,started):
+def closed_subject_source_root(request):
+    control=request['currentControl'];parent=installer_root_value(control['parentPin'],0o444,1048576)
+    require(parent['installedSourceContractPin']==control['definitionPin']and parent['jobId']==request['jobId']and parent['candidate']['nonce']==request['leaseNonce'],'same original closed subject parent/job/nonce')
+    definition=__import__('source_contract').validate(parent['sourceRoles'],parent['queuePrograms'],control['definitionPin'])
+    candidate=parent['candidate'];paths=__import__('source_contract').candidate_paths(candidate)
+    require(candidate['operationContext']['deploymentId']==definition['deployment']['id']and candidate['lineageNonce']==definition['guestNonce']and control['parentPin']['path']==paths['parentPath'],'same authenticated original deployment/guest/operation namespace')
+    ref=parent['sourceRoles']['libvirt_peer'];sha=request['observer']['sha256']
+    require(sha in(CLOSED_SUBJECT_PEERS|{R109_PEER_SHA:R109_PEER_BYTES})and ref['bytes']==(CLOSED_SUBJECT_PEERS|{R109_PEER_SHA:R109_PEER_BYTES})[sha]and request['observer']=={k:ref[k]for k in('path','bytes','sha256')},'enrolled unchanged original subject observer')
+    return definition['deployment']['paths']['sourceRoot']
+
+def validate_libvirt_observation(proof,request,started,implementation_definition_pin=None):
     fields={'kind','request','bootID','producer','sourceSHA256','startedMonotonic','completedMonotonic','phase','scope','leader','intentPin','intentParentPin','lease','domainUUID','persistent','noNIC','fullDomainEnumeration','allOwnedDescriptorsClosed','effects'}
     current_raw=request['observer']['sha256']in(R109_PEER_SHA,R109_ORIGINAL_PEER_SHA)
-    if current_raw:
+    compat=request['observer']['sha256']in CLOSED_SUBJECT_PEERS or implementation_definition_pin is not None and request['observer']['sha256']==R109_PEER_SHA
+    if compat:
+        require(implementation_definition_pin is not None,'explicit current implementation for closed subject observation')
+        definition=__import__('source_contract').read_definition(implementation_definition_pin)
+        __import__('source_contract').validate(definition['sourceRoles'],definition['queuePrograms'],implementation_definition_pin)
+        require(definition['queuePrograms'][0]['path']==__file__,'actual current queue observation implementation')
+        closed_subject_source_root(request);current_raw=True
+    elif current_raw:
         require(request['observer']=={'path':(current_source_root() if request['observer']['sha256']==R109_PEER_SHA else R109_ORIGINAL_SOURCE_ROOT)+'/libvirt_peer.py','bytes':R109_PEER_BYTES if request['observer']['sha256']==R109_PEER_SHA else 64727,'sha256':request['observer']['sha256']}and(request['observer']['sha256']==R109_PEER_SHA or proof.get('phase')=='NOT_PREPARED'),'exact current source; preserved original no-grant input only')
     installer=request['observer']['sha256']in(INSTALLER_PEER_SHA,SOURCE201_PEER_SHA,BORROWED_PEER_INPUT_SHA,SOURCE247_PEER_INPUT_SHA)
     installer=installer or current_raw
@@ -465,6 +482,7 @@ def validate_libvirt_observation(proof,request,started):
     if borrowed:validate_readonly_fd_custody(proof['readonlyFDCustody'],proof,request)
     root_ancestry=validate_generated_scope_ancestry(proof['rootAncestorCustody'],proof,request)if current_ancestry else None
     access=validate_installer_access_custody(proof['accessCustody'],proof,request)if installer else None
+    if compat:require(proof['phase']=='CLOSED','original subject actual CLOSED/current implementation only')
     if proof['phase']=='NOT_PREPARED':
         require(proof['scope']is None and proof['leader']is None and proof['intentPin']is None and proof['intentParentPin']is None and proof['lease']is None,'No invented pre-intent/domain/lease identity')
         return ({k:proof[k]for k in ('request','phase','scope','leader','domainUUID','persistent','noNIC','intentPin','intentParentPin','lease')}|({'accessCustody':access}if installer else{}))|({'rootAncestorCustody':root_ancestry}if current_ancestry else{})
@@ -981,7 +999,7 @@ def observe_queue_libvirt(request,deadline=None,captures=None,terminal_implement
             require(set(proof)=={'kind','upstreamObserver','implementation','proof','effects'}and proof['kind']=='ROOT_REVIEWED_LIBVIRT_PEER_INPUT_AND_IMPLEMENTATION'and proof['effects']==[]and proof['implementation']=={'bytes':40019,'sha256':REVIEWED_PEER_IMPLEMENTATION_SHA256},'Exact reviewed peer implementation envelope')
             upstream=dict(observer,identity={k:getattr(st,k)for k in fields});require(proof['upstreamObserver']==upstream and st.st_uid==st.st_gid==0 and stat.S_IMODE(st.st_mode)in(0o400,0o444),'Exact original immutable upstream peer full9, not a substituted spec/source')
             implementation={'upstreamObserver':upstream,'implementation':proof['implementation']};proof=proof['proof']
-        stable=validate_libvirt_observation(proof,request,started)
+        stable=validate_libvirt_observation(proof,request,started,terminal_implementation_pin if compat else None)
         if captures is not None:
             capture_observation(captures,dict(request=request,proof=proof,implementation=implementation,adapter=child))
         if implementation is not None:
@@ -1141,7 +1159,7 @@ POOL_PROOF_SHA = '1e38e2fe3aaeedaac9fe3492e93bc6b788fe7afbc11594323abce6f0195051
 class PoolAdmissionFailure(ValueError):
     def __init__(self, first, evidence):
         self.evidence = evidence
-        super().__init__("Current pool admission refused: " + first + "; complete pool evidence=" + canonical(evidence))
+        super().__init__("Current pool admission refused: " + first)
 
 _RAW_SYSTEMCTL = systemctl
 _EXPECTED_INVOCATION_CONTEXT = None
