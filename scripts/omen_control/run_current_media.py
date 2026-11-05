@@ -203,7 +203,7 @@ class Run:
             root, name = self.placement_root, label + '.json'
         else:
             root = self.root; self.sequence += 1
-            name = str(self.sequence).zfill(3) + '-' + label + '.json'
+            name = getattr(self,'record_prefix','') + str(self.sequence).zfill(3) + '-' + label + '.json'
         with p.RootFiles(root) as files, files.lock(True):
             return producer.put(files, name, value)
 
@@ -259,7 +259,7 @@ class Run:
         """Same-byte immutable private reader. Never SQL-open the original as Root."""
         original = pin(Path(self.profile['queueStateRoot']) / 'queue.sqlite3')
         family = pre.quiet_db_family(original)
-        private = self.root / ('private-' + str(self.sequence + 1) + '.sqlite3')
+        private = self.root / (getattr(self,'record_prefix','') + 'private-' + str(self.sequence + 1) + '.sqlite3')
         raw = held(original, 67108864)
         fd = os.open(private, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o400)
         try:
@@ -512,14 +512,12 @@ def continue_closed_mount(profile_ref):
     with p.RootFiles('/run/opemos-vfio-'+request['leaseNonce'])as files,files.lock(False,time.monotonic()+10):
         state,lease,_=p.read_lease(files,request,c['hostBoot']);p.need(state['closed']and state['restored']and state['changed']==[],'actual original logical closure, not Root process absence')
     observed=media.observe(c)
-    paths=source_contract.candidate_paths(c);scratch=Path(paths['operationRoot'])/('recovery-'+cfg['recoveryNonce'])
-    p.need(not os.path.lexists(scratch),'create-only owned recovery records, originals preserved')
-    producer.create_root(str(scratch))
+    paths=source_contract.candidate_paths(c);scratch=Path(paths['operationRoot'])
     # Reconstitute only this already-owned cleanup state. execute/prepare are
     # never called, and the new clock authorizes no VM, ACL or device binding.
     run=object.__new__(Run);run.profile=old;run.contract=contract;run.contract_pin=old['installedSourceContractPin'];run.c=c
     run.request={'kind':'CLOSED_MOUNT_CLEANUP_ONLY','startBeforeUnix':cfg['startBeforeUnix'],'wholeDeadlineUnix':cfg['startBeforeUnix']}
-    run.root=scratch;run.placement_root=Path(paths['placementRoot']);run.mount=Path(paths['mountRoot']);run.io=Path(paths['ioRoot'])
+    run.root=scratch;run.record_prefix='recovery-'+cfg['recoveryNonce']+'-';run.placement_root=Path(paths['placementRoot']);run.mount=Path(paths['mountRoot']);run.io=Path(paths['ioRoot'])
     run.loop=observed['loop']['path'];run.loop_fd=None;run.mounted=True;run.submitted=True;run.sequence=0;run.effects=[];run.last_job=None;run.diagnostic_errors=[]
     run.heavy=heavy_custody(old['queuePrograms'][2]);run.native=native_module(old['nativeReadOnlyPin'])
     try:
@@ -555,6 +553,16 @@ def complete_failed_media(profile_pin,transaction_ref):
             'VMOrGPUActivation':False,'originalFailureReinterpretedAsSuccess':False}
 
 
+def recovery_inputs(root,nonce,closure_input,cleanup_input):
+    """Create-only records in the existing charged operation root, no subroot."""
+    p.need(re.fullmatch('[0-9a-f]{32}',nonce)is not None,'confined recovery record identity')
+    prefix='recovery-'+nonce+'-'
+    with p.RootFiles(root)as files,files.lock(True,time.monotonic()+10):
+        closure=producer.put(files,prefix+'logical-completion.json',closure_input)
+        cleanup=producer.put(files,prefix+'mount-completion.json',cleanup_input)
+        return producer.put(files,prefix+'transaction.json',{'kind':'ROOT_FAILED_MEDIA_COMPLETION_TRANSACTION_V1','closurePin':closure,'cleanupPin':cleanup})
+
+
 def complete_failed_context(profile_pin,context_ref,recovery_nonce):
     """Machine-captured per-recovery DATA; executable code is installed once."""
     p.need(os.getuid()==os.geteuid()==0 and re.fullmatch('[0-9a-f]{32}',recovery_nonce),'Root typed recovery identity')
@@ -576,13 +584,10 @@ def complete_failed_context(profile_pin,context_ref,recovery_nonce):
     old_profile=pin(Path(definition['deployment']['paths']['sourceRoot'])/'operation-profile.json',1048576)
     # All generated records remain inside the already charged original metadata
     # namespace. They cannot grant a new VM or change original artifacts.
-    root=Path(paths['operationRoot'])/('recovery-inputs-'+recovery_nonce)
-    p.need(not os.path.lexists(root),'create-only recovery data; prior attempts preserved')
-    producer.create_root(str(root));now=time.time();end=now+300
-    with p.RootFiles(root)as files,files.lock(True,time.monotonic()+10):
-        closure=producer.put(files,'logical-completion.json',{'kind':'ROOT_FAILED_UNLAUNCHED_PREPARED_COMPLETION_V1','apply':True,'contextPin':context_ref,'terminalPin':terminal_pin,'childStartPin':child_start,'childResultPin':child_result,'workerLockPin':worker,'notBeforeUnix':now,'notAfterUnix':end})
-        cleanup=producer.put(files,'mount-completion.json',{'kind':'ROOT_CLOSED_MEDIA_MOUNT_COMPLETION_V1','contextPin':context_ref,'operationProfilePin':old_profile,'recoveryNonce':recovery_nonce,'issuedUnix':now,'startBeforeUnix':end})
-        transaction=producer.put(files,'transaction.json',{'kind':'ROOT_FAILED_MEDIA_COMPLETION_TRANSACTION_V1','closurePin':closure,'cleanupPin':cleanup})
+    now=time.time();end=now+300
+    closure_input={'kind':'ROOT_FAILED_UNLAUNCHED_PREPARED_COMPLETION_V1','apply':True,'contextPin':context_ref,'terminalPin':terminal_pin,'childStartPin':child_start,'childResultPin':child_result,'workerLockPin':worker,'notBeforeUnix':now,'notAfterUnix':end}
+    cleanup_input={'kind':'ROOT_CLOSED_MEDIA_MOUNT_COMPLETION_V1','contextPin':context_ref,'operationProfilePin':old_profile,'recoveryNonce':recovery_nonce,'issuedUnix':now,'startBeforeUnix':end}
+    transaction=recovery_inputs(paths['operationRoot'],recovery_nonce,closure_input,cleanup_input)
     return complete_failed_media(profile_pin,transaction)
 
 

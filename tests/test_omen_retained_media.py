@@ -654,6 +654,22 @@ class RetainedMediaContract(unittest.TestCase):
                     'noNIC':True,'noInstall':True,'maxBoots':1,
                     'failureControl':'LIBVIRT_AUTODESTROY_CONTROLLER_CONNECTION',
                     'TEST_SCOPE':'Structural/source/ACL/readonly observer only; no real media qualification or grant'}
+            # Real create-only recovery DATA and normal record consumer share
+            # the existing charged top-level operation root, never a subroot.
+            operation=Path(paths['operationRoot'])
+            producer.create_root(str(operation));created.append(operation)
+            recovery_nonce=uuid.uuid4().hex
+            transaction=normal_entry.recovery_inputs(str(operation),recovery_nonce,{'mode':'MODELED closure DATA'},{'mode':'MODELED cleanup DATA'})
+            stored=json.loads(normal_entry.held(transaction,1048576))
+            self.assertEqual(json.loads(normal_entry.held(stored['closurePin'],1048576)),{'mode':'MODELED closure DATA'})
+            with self.assertRaises(Exception):normal_entry.recovery_inputs(str(operation),recovery_nonce,{}, {})
+            cleanup_run=object.__new__(normal_entry.Run);cleanup_run.root=operation;cleanup_run.sequence=0
+            cleanup_run.record_prefix='recovery-'+recovery_nonce+'-'
+            record=cleanup_run.record('cleanup-proof',{'nativeFacts':'MODELED, no cleanup effect'})
+            self.assertEqual(json.loads(normal_entry.held(record,1048576))['nativeFacts'],'MODELED, no cleanup effect')
+            self.assertEqual(Path(record['path']).parent,operation)
+            with self.assertRaises(Exception):normal_entry.recovery_inputs(str(operation/'foreign'),uuid.uuid4().hex,{}, {})
+            with self.assertRaises(Exception):normal_entry.recovery_inputs(str(operation),'../escape',{}, {})
             # Actual installed recovery entry must reject non-context DATA
             # before any phase/lease or recovery namespace can be created.
             invalid_recovery=save('not-a-runtime-context',{'kind':'NOT_A_RUNTIME_CONTEXT'})
