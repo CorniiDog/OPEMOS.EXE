@@ -5,10 +5,10 @@ Queue owner must independently adopt exact bytes and consumer contract.
 import contextlib,copy,hashlib,json,os,re,stat,sys,time,traceback,types
 from pathlib import Path
 ORIGINAL_SOURCE_ROOT='/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r107b'
-PEER_SHA='e6703942b7f471b1535e0b1f8e716f9a265ca448051467d91803392eb0a3819a'
+PEER_SHA='9668f019a0fc2ea9aface89e130a70307f37f8276d416fa668ef344033a1fc14'
 F=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns');CORE=F[:6]
 NONCE='cd9ef0826364409da287f6f3e3830c95';CONTRACT='R109_CURRENT_NORMAL_QUEUE_FULL_PHASE_READONLY'
-PEER_BYTES=63527
+PEER_BYTES=63682
 ORIGINAL_PEER_SHA='7e1663f8351247b9643b7c14419119449b0bd0722a46b80ae0f8ea34a9f9816a';ORIGINAL_PEER_BYTES=64727
 CLOSED_SUBJECT_PEERS={'9e5516fcdf57624d786a91741066998605045fe145ce60fbe8bde68f5b494bdd':61355,'224aa4a8b06999e318350267195cc681a095aaf2a2b5e407552f8811673a8614':61400}
 SOURCE_ROOT=None
@@ -109,8 +109,8 @@ class RootInputs:
   root=Path(ref['path']).parent;need(ref['path']==str(root/'installed-controller.json')and root.parent==Path('/run')and re.fullmatch('opemos-media-source-[0-9a-f]{32}',root.name),'separate normal immutable implementation definition')
   self.implementationRoot=str(root)
   raw,actual=self.read_path(ref['path'],0o444,1048576);need(actual==ref,'held separate implementation definition')
-  value=CURRENT_DEFINITION.read_definition(ref);CURRENT_DEFINITION.validate(value['sourceRoles'],value['queuePrograms'],ref)
-  need(value['deployment']['paths']['sourceRoot']==str(root),'same typed implementation root')
+  value=CURRENT_DEFINITION.read_definition(ref)
+  need(set(value['sourceRoles'])==ROLES and value['deployment']['paths']['sourceRoot']==str(root),'complete typed implementation membership/root')
   helper=value['sourceRoles']['source_contract'];need(helper['sha256']==SOURCE_CONTRACT_SHA and self.read(helper,0o444,65536),'unchanged reviewed shared definition implementation')
   self.implementationDefinition=value
  def directory(self,path):
@@ -218,7 +218,8 @@ def verify_inputs(request,io,boot,include_context=True):
  need(request['observer']=={k:roles['libvirt_peer'][k]for k in('path','bytes','sha256')}and request['jobId']==parent['jobId'],'exact original request observer/job')
  source={}
  for name,ref in sorted(roles.items()):
-  need(ref['path']==str(Path(roles['libvirt_peer']['path']).parent/(name+'.py')) and str(Path(roles['libvirt_peer']['path']).parent)in(SOURCE_ROOT,ORIGINAL_SOURCE_ROOT),'same exact source namespace');source[name]=io.read(ref,0o444,65536);compile(source[name],ref['path'],'exec')
+  need(ref['path']==str(Path(roles['libvirt_peer']['path']).parent/(name+'.py')) and str(Path(roles['libvirt_peer']['path']).parent)in(SOURCE_ROOT,ORIGINAL_SOURCE_ROOT),'same exact source namespace');source[name]=io.read(ref,0o444,65536)
+  if not compat:compile(source[name],ref['path'],'exec')
  spec=parent_spec(parent,parentRef);bound=spec['libvirt_domain'];need(bound=={'leaseNonce':NONCE,'name':request['domainName'],'observer':request['observer'],'uuid':request['domainUUID']}and hashlib.sha256(canonical(spec).encode()).hexdigest()==request['specSHA256'],'complete final normalized spec/hash/domain identity')
  original=roles['libvirt_peer']['sha256']==ORIGINAL_PEER_SHA
  need((roles['libvirt_access']['sha256'],roles['libvirt_access']['bytes'])==((ORIGINAL_ACCESS_SHA,ORIGINAL_ACCESS_BYTES)if original else(ACCESS_SHA,ACCESS_BYTES)),'one coherent original/current peer/access pair')
@@ -231,6 +232,11 @@ def verify_inputs(request,io,boot,include_context=True):
  accessRaw,accessRef=io.read_path(implementationRoot+'/libvirt_access.py',0o444,65536)
  need(accessRef['sha256']==ACCESS_SHA and accessRef['bytes']==ACCESS_BYTES,'separate exact current access implementation')
  need(compat or original or roles['libvirt_access']==accessRef,'new parent access is exact current implementation')
+ implementationSource={}
+ if compat:
+  for name,ref in io.implementationDefinition['sourceRoles'].items():
+   need(ref['path']==io.implementationRoot+'/'+name+'.py','current implementation modules never execute original subject sources')
+   implementationSource[name]=io.read(ref,0o444,65536)
  assignmentRef=grantRef=None;assignment=grant=None
  if context is not None:
   assignmentRef=context['assignmentPin'];need(assignmentRef['path']==getattr(io,'runtimeRoot','/run/opemos-libvirt-runtime-'+NONCE)+'/assignment.json'and context['grantPin']['path']==getattr(io,'runtimeRoot','/run/opemos-libvirt-runtime-'+NONCE)+'/child-grant.json','two exact same-scope child control leaves');assignment=decode(io.read(assignmentRef,0o400,1048576));grantRef=context['grantPin'];grant=decode(io.read(grantRef,0o400,1048576))
@@ -238,7 +244,7 @@ def verify_inputs(request,io,boot,include_context=True):
   need(grant['queuePrograms']==parent['queuePrograms']and grant['sourcePlacementPin']==context['sourcePlacementPin']==parent['sourcePlacementPin']and grant['placementQualificationPin']==context['placementQualificationPin']==parent['placementQualificationPin'],'current queue authority and placement pins across child/context/parent')
   need(grant['RootIssued']is True and grant['MODEL_ONLY']is False and grant['runtimeAuthorized']is True and grant['jobId']==request['jobId']and grant['leaseNonce']==NONCE and grant['bootID']==boot and parent['issuedUnix']<=grant['issuedUnix']<grant['startBeforeUnix']<=parent['startBeforeUnix']and grant['wholeDeadlineUnix']<=parent['wholeDeadlineUnix'],'existing finite Root child only, no new runtime grant')
  io.placementRoot=placement_root(parent['candidate'])
- return {'implementationAccessRaw':accessRaw,'implementationAccessPin':accessRef,'implementationPeerRaw':implRaw,'implementationPeerPin':implRef,'originalInputOnly':original,'parent':parent,'parentPin':parentRef,'parentRaw':parentRaw,'context':context,'contextPin':contextRef,'contextRaw':contextRaw,'source':source,'assignmentPin':assignmentRef,'assignmentRaw':None if assignment is None else canonical(assignment).encode(),'grantPin':grantRef,'grantRaw':None if grant is None else canonical(grant).encode()}
+ return {'implementationDefinitionPin':io.implementationPin,'implementationSource':implementationSource,'implementationRoles':None if not compat else io.implementationDefinition['sourceRoles'],'implementationAccessRaw':accessRaw,'implementationAccessPin':accessRef,'implementationPeerRaw':implRaw,'implementationPeerPin':implRef,'originalInputOnly':original,'parent':parent,'parentPin':parentRef,'parentRaw':parentRaw,'context':context,'contextPin':contextRef,'contextRaw':contextRaw,'source':source,'assignmentPin':assignmentRef,'assignmentRaw':None if assignment is None else canonical(assignment).encode(),'grantPin':grantRef,'grantRaw':None if grant is None else canonical(grant).encode()}
 
 def _bind_placement(peer,parent,parent_ref,context,verify_access):
  """Bind only the fresh protected same-source/same-scope metadata operand.
@@ -293,11 +299,13 @@ def bind_observer_placement(peer,parent,parent_ref,context):
 def load_pair(v):
  names=('libvirt_storage','retained_media','source_contract','libvirt_peer','libvirt_access','guest_firmware_probe','libvirt_native','queue_assignment');missing=object();previous={k:sys.modules.get(k,missing)for k in names}
  try:
-  roles=v['parent']['sourceRoles'];modules={}
+  roles=v['implementationRoles']if v['implementationDefinitionPin']is not None else v['parent']['sourceRoles'];modules={}
   for name in names:
    module=types.ModuleType(name);module.__file__=roles[name]['path'];sys.modules[name]=module;modules[name]=module
   for name in names:
-   module=modules[name];body=v['implementationPeerRaw']if name=='libvirt_peer'else v['implementationAccessRaw']if name=='libvirt_access'else v['source'][name];module.__file__=v['implementationPeerPin']['path']if name=='libvirt_peer'else v['implementationAccessPin']['path']if name=='libvirt_access'else module.__file__;exec(compile(body,module.__file__,'exec'),module.__dict__)
+   module=modules[name];body=v['implementationSource'][name]if v['implementationDefinitionPin']is not None else v['implementationPeerRaw']if name=='libvirt_peer'else v['implementationAccessRaw']if name=='libvirt_access'else v['source'][name];module.__file__=v['implementationPeerPin']['path']if name=='libvirt_peer'else v['implementationAccessPin']['path']if name=='libvirt_access'else module.__file__;exec(compile(body,module.__file__,'exec'),module.__dict__)
+  if v['implementationDefinitionPin']is not None:
+   definition=modules['source_contract'].read_definition(v['implementationDefinitionPin']);modules['source_contract'].validate(definition['sourceRoles'],definition['queuePrograms'],v['implementationDefinitionPin'])
   yield modules['libvirt_peer'],modules['libvirt_access']
  finally:
   for name,old in previous.items():

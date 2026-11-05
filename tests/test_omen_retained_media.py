@@ -969,6 +969,14 @@ except peer.Refused as error:
                     for key in ('sourceRoot','queueRoot','drainRoot'):created.append(Path(implementation_layout[key]))
                     current_queue=queue_assignment.load_queue(implementation['queuePrograms'][0],
                         implementation_definition=implementation['sourceContractPin'])
+                    combined_roots,combined_socket=storage_module.declared_metadata_roots(storagepin,nonce,declared_config,
+                        storage_value,True,request,implementation_definition=implementation['sourceContractPin'])
+                    self.assertTrue(set(implementation_layout.values()).issubset(combined_roots))
+                    combined_charge,_,combined_closure=walker(combined_roots,allowed_socket=combined_socket)
+                    original_charge,_,_=walker(roots,allowed_socket=socket)
+                    self.assertGreater(combined_charge,original_charge)
+                    self.assertTrue(combined_closure['allClosed']and combined_closure['FDSetRestored'])
+
                     row={'id':request['jobId'],'unit':request['unit'],'spec':queue.canonical(actual_spec),
                          'cpus':queue.canonical(request['cpus'])}
                     bound={'job_id':row['id'],'unit':row['unit'],'specSHA256':request['specSHA256'],

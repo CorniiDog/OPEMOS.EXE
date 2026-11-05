@@ -170,7 +170,7 @@ def observe_closed_subject(request,definition_ref,custody=None):
  control=request['currentControl'];ref=control['parentPin'];raw=held(ref,1048576);parent=json.loads(raw)
  need(parent['installedSourceContractPin']==control['definitionPin']and parent['jobId']==request['jobId']and parent['candidate']['jobId']==request['jobId'],'same protected original readonly subject')
  source_contract.validate(parent['sourceRoles'],parent['queuePrograms'],control['definitionPin'])
- _CLOSED_SUBJECT={'pid':os.getpid(),'request':request,'parent':parent,'parentRef':ref}
+ _CLOSED_SUBJECT={'pid':os.getpid(),'request':request,'parent':parent,'parentRef':ref,'implementationDefinitionPin':definition_ref}
  try:
   proof=observe(request,custody=custody);need(proof['phase']=='CLOSED'and proof['lease']['closed']is True and proof['lease']['restored']is True,'original subject accepted for actual CLOSED observation only')
   need(held(ref,1048576)==raw,'original readonly subject remains exact');return proof
@@ -290,7 +290,7 @@ class NativeOps:
   need(cpus(fields['cpuset.cpus.effective'])==set(r['cpus']),'actual same four CPUs');pool=Path('/sys/fs/cgroup'+POOL);need((pool/'cpu.max').read_text().strip()=='1000000 100000'and(pool/'memory.max').read_text().strip()==str(32*1024**3)and(pool/'memory.swap.max').read_text().strip()=='0','unchanged whole pool')
   children=[p.name for p in root.iterdir()if p.is_dir()];need(children==([]if scope is None else[scope]),'no foreign scope even empty')
   if phase!='ACTIVE':need(not fields['cgroup.procs']and 'populated 0'in fields['cgroup.events'],'inactive partition actually empty')
-  if r['leaseNonce']==SOURCE_PLACEMENT_NONCE:storage_contract(r['leaseNonce'],r,self.persist)
+  if r['leaseNonce']==SOURCE_PLACEMENT_NONCE:storage_contract(r['leaseNonce'],r,self.persist,implementation_definition=None if _CLOSED_SUBJECT is None else _CLOSED_SUBJECT['implementationDefinitionPin'])
  def leader(self,reg,intent):
   a=process(reg['leader']['pid']);need({k:a[k]for k in('pid','start','uid')}==reg['leader']and a['tgid']==a['pid']and a['uid']==64055,'fresh original QEMU leader PID/start/UID')
   r=intent['request'];prefix=POOL+'/'+r['vmSlice']+'/'+reg['scope'];need(a['cgroup']==prefix or a['cgroup'].startswith(prefix+'/'),'exact domain scope descendant')
