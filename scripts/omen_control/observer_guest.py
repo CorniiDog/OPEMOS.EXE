@@ -22,7 +22,7 @@ def require(value, reason):
     if not value:
         raise RuntimeError(reason)
 
-def proc_identity(pid):
+def proc_identity(pid, expected=None):
     proc = Path('/proc') / str(pid)
     raw = (proc/'stat').read_text()
     start = raw[raw.rfind(')')+2:].split()[19]
@@ -30,8 +30,10 @@ def proc_identity(pid):
     fd = os.open(proc/'exe', os.O_RDONLY|os.O_CLOEXEC)
     try:
         before = os.fstat(fd)
-        require(stat.S_ISREG(before.st_mode) and before.st_size <= CAP,
-                'app executable outside bounded native proof')
+        require(stat.S_ISREG(before.st_mode) and before.st_size <= CAP if expected is None else
+                stat.S_ISREG(before.st_mode) and type(expected['bytes'])is int and
+                0<before.st_size==expected['bytes']<=1073741824,
+                'actual descriptor-bound native executable size')
         digest = hashlib.sha256()
         while block := os.read(fd, 1048576):
             digest.update(block)
@@ -41,6 +43,7 @@ def proc_identity(pid):
                 'app process changed while hashing')
     finally:
         os.close(fd)
+    if expected is not None:require(digest.hexdigest()==expected['sha256'],'actual descriptor-bound native executable hash')
     cmdline = (proc/'cmdline').read_bytes().replace(b'\0', b' ').decode('utf-8','replace')[:4096]
     env=(proc/'environ').read_bytes().split(b'\0')
     inherited_nonce=next((part.partition(b'=')[2].decode()for part in env
@@ -220,16 +223,7 @@ def observed_names(desktop,window,states):
     return {'names':names,'pid':window['pid'],'window_id':window['window_id'],'readOnlyObservation':True}
 
 
-def pipeline_requests(port,x,app,birth,nonce,config_path,config_sha):
-    """Observe the same admitted GUI operation over its existing virtio channel.
-
-    Requests return native facts only. All pointer input stays in the separate
-    host QMP sender, and no request can fabricate a stage or activate a control.
-    """
-    import select
-    import gi
-    gi.require_version('Atspi','2.0')
-    from gi.repository import Atspi
+def pipeline_config(config_path,config_sha,nonce):
     config_file=Path(config_path)
     require(config_file==Path('/media/opemosgui/OPROBOT/operation.json')
             and re.fullmatch('[0-9a-f]{64}',config_sha),'same readonly observer medium config')
@@ -247,6 +241,22 @@ def pipeline_requests(port,x,app,birth,nonce,config_path,config_sha):
             and type(cfg['whole_seconds'])is int and 1<=cfg['whole_seconds']<=7200
             and cfg['usb_serial']=='opemos-'+nonce and type(cfg['usb_bytes'])is int
             and 0<cfg['usb_bytes']<=60_000_000_000,'same admitted source/operation/virtual USB')
+    require(type(cfg['native_executable_bytes'])is int and 0<cfg['native_executable_bytes']<=1073741824
+            and re.fullmatch('[0-9a-f]{64}',cfg['native_executable_sha256']),'exact producer native executable role')
+    return cfg
+
+
+def pipeline_requests(port,x,app,birth,nonce,cfg):
+    """Observe the same admitted GUI operation over its existing virtio channel.
+
+    Requests return native facts only. All pointer input stays in the separate
+    host QMP sender, and no request can fabricate a stage or activate a control.
+    """
+    import select
+    import gi
+    gi.require_version('Atspi','2.0')
+    from gi.repository import Atspi
+    expected={'bytes':cfg['native_executable_bytes'],'sha256':cfg['native_executable_sha256']}
     desktop=Atspi.get_desktop(0);deadline=time.monotonic()+cfg['whole_seconds'];sequence=0
     states={key:getattr(Atspi.StateType,name)for key,name in
             [('enabled','ENABLED'),('sensitive','SENSITIVE'),('visible','VISIBLE'),('showing','SHOWING'),('defunct','DEFUNCT')]}
@@ -286,7 +296,7 @@ def pipeline_requests(port,x,app,birth,nonce,config_path,config_sha):
             require(len(line)<=4096,'native request cap')
         request=json.loads(line);sequence+=1
         require(request['nonce']==nonce and request['sequence']==sequence,'exact ordered native operation request')
-        require(proc_identity(app['pid'])==birth,'original app PID/start/executable/nonce unchanged')
+        require(proc_identity(app['pid'],expected)==birth,'original app PID/start/executable/nonce unchanged')
         current=x.windows();owned=[w for w in current if w['pid']==app['pid']or w['transient_for']==app['window_id']]
         kind=request['kind'];value={}
         if kind=='CONTROL':
@@ -339,7 +349,9 @@ def main():
             app=matches[0];break
         time.sleep(.2)
     require(app is not None, 'unique actual app native X11 window absent')
-    birth=proc_identity(app['pid'])
+    cfg=pipeline_config(sys.argv[4],sys.argv[5],sys.argv[1])if pipeline else None
+    expected={'bytes':cfg['native_executable_bytes'],'sha256':cfg['native_executable_sha256']}if pipeline else None
+    birth=proc_identity(app['pid'],expected)
     require(birth['inherited_nonce']==sys.argv[1],
             'native window process did not inherit exact verified-package launch nonce')
     port_custody={'before':os.environ.get('OPROBOT_PORT_BEFORE'),
@@ -378,9 +390,12 @@ def main():
                 'bounded private observer channel write failed')
     emit({'kind':'READY','nonce':sys.argv[1],'app':app,'process':birth,
           'baseline_windows':before,'port_custody':port_custody,
+          'guest_boot_id':Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+          'display_connection':os.environ['DISPLAY'],'guest_uid':os.getuid(),
+          'guest_architecture':os.uname().machine,
           'clock_ns':time.monotonic_ns()})
     if pipeline:
-        try:pipeline_requests(port,x,app,birth,sys.argv[1],sys.argv[4],sys.argv[5])
+        try:pipeline_requests(port,x,app,birth,sys.argv[1],cfg)
         finally:os.close(port);x.x.XCloseDisplay(x.d)
         return
     # Host sends one narrow line after it has pinned a genuine visible chooser

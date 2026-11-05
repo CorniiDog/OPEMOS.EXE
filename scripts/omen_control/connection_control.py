@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""One actual QMP pointer + independent native chooser proof in an owned VM.
+"""Native observations and bounded QMP input in an admitted Ubuntu VM.
 
-This is a scoped connection diagnostic, never full image/USB/NVIDIA acceptance.
-The normal queue job owns QEMU creation and final closure. Its binding is a
-fresh private file, not an argument from a GitHub workflow.
+The ordinary queue job owns QEMU creation and closure. Diagnostic clicks and
+normal GUI Build/write observations retain separate results; neither alone
+establishes SteamOS boot, installation or NVIDIA acceptance.
 """
 import hashlib
 import json
@@ -224,6 +224,398 @@ def main():
         try:obs.close()
         finally:q.close()
         save(root/'connection-result.json',receipt)
+
+
+# Existing Robot CI10 owned sender custody, reused for the normal Ubuntu job.
+# Original source: producer-candidates-r10/ubuntu-owned-ui.py. The Root-selected
+# operation replaces only the historical fixed directory/destination data.
+CI10_OUTPUTS={'action_result_path':1048576,'sender_lifecycle_path':1048576,'sender_stdout_path':1048576,'sender_stderr_path':1048576}
+CI10_FIELDS=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+
+def ci10_root(context):
+    ref=context['normal_policy_pin'];path=Path(ref['path'])
+    need(path.parent.parent==Path('/var/lib/opemos-robot-control-r1/releases')and
+         re.fullmatch('[0-9a-f]{32}',path.parent.name)and path.name=='fixed-policy.json',
+         'existing immutable normal pointer policy')
+    for parent in(path.parent,*path.parent.parents):
+        info=parent.lstat();need(stat.S_ISDIR(info.st_mode)and info.st_uid==info.st_gid==0
+                               and not info.st_mode&0o022,'Root normal pointer ancestry')
+    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    try:
+        before=os.fstat(fd);raw=bytearray()
+        need(stat.S_ISREG(before.st_mode)and before.st_uid==before.st_gid==0 and
+             before.st_nlink==1 and stat.S_IMODE(before.st_mode)==0o444 and
+             0<before.st_size<=1048576,'Root normal pointer policy custody')
+        while block:=os.read(fd,65536):raw.extend(block);need(len(raw)<=1048576,'policy cap')
+        need(len(raw)==before.st_size and ci10_sig(before)==ci10_sig(os.fstat(fd))==ci10_sig(path.lstat())
+             and hashlib.sha256(raw).hexdigest()==ref['sha256'],'held immutable pointer policy epoch')
+    finally:os.close(fd)
+    policy=ci9_json(raw);need(policy['kind']=='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1',
+                            'current normal pointer operation authority')
+    root=Path(context['operation_root']);need(root.parent==Path(policy['operationRoot'])and
+         root.name.endswith('-'+context['identity']['operation_nonce'])and
+         root.is_absolute()and root.resolve()==root,'same typed normal pointer evidence root')
+    own=root.lstat();need(stat.S_ISDIR(own.st_mode)and own.st_uid==os.getuid()and
+                         stat.S_IMODE(own.st_mode)==0o700,'private normal pointer root')
+    need(policy['programSHA256']['connection_control.py']==context['sender_source_sha256'],
+         'Root selected current normal sender bytes')
+    return root
+
+
+def ci9_json(raw):
+ def unique(pairs):
+  result={}
+  for key,value in pairs:
+   if key in result:raise ValueError('Duplicate pointer JSON field')
+   result[key]=value
+  return result
+ def invalid(value):raise ValueError('Nonfinite pointer JSON')
+ return json.loads(raw,object_pairs_hook=unique,parse_constant=invalid)
+
+def ci9_read(path,expected=None,cap=16777216):
+ path=Path(path);fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+ fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+ try:
+  before=os.fstat(fd);assert stat.S_ISREG(before.st_mode)and before.st_uid==os.getuid()and before.st_nlink==1 and before.st_size<=cap
+  raw=bytearray()
+  while True:
+   block=os.read(fd,min(65536,cap+1-len(raw)))
+   if not block:break
+   raw.extend(block);assert len(raw)<=cap
+  assert len(raw)==before.st_size and tuple(getattr(before,k)for k in fields)==tuple(getattr(os.fstat(fd),k)for k in fields)==tuple(getattr(path.lstat(),k)for k in fields)
+  assert expected is None or hashlib.sha256(raw).hexdigest()==expected
+  return bytes(raw)
+ finally:os.close(fd)
+
+def ci10_sig(value):return {key:getattr(value,key)for key in CI10_FIELDS}
+
+def ci10_error(error,phase):return {'type':type(error).__name__,'phase':phase}
+
+def ci10_inputs(value):
+ result=[]
+ if isinstance(value,dict):
+  for key,item in value.items():
+   if key not in CI10_OUTPUTS and isinstance(item,str)and(key=='path'or key.endswith('_path')):result.append(item)
+   elif key not in CI10_OUTPUTS:result.extend(ci10_inputs(item))
+ elif isinstance(value,list):
+  for item in value:result.extend(ci10_inputs(item))
+ return result
+
+def ci10_reserve_paths(paths,root,inputs=()):
+ root=Path(root);assert root.is_absolute()and root.resolve()==root
+ targets=[Path(value[0])for value in paths.values()]
+ assert len(set(targets))==len(targets)
+ forbidden={str(Path(x).absolute())for x in inputs}
+ records={}
+ # Validate the WHOLE set before creating or effecting anything.
+ for key,(name,cap)in paths.items():
+  target=Path(name);assert target.is_absolute()and target.is_relative_to(root)and target.parent.resolve()==target.parent
+  assert str(target)not in forbidden and not os.path.lexists(target)and type(cap)is int and cap>0
+  parent=target.parent
+  while True:
+   info=parent.lstat();assert stat.S_ISDIR(info.st_mode)and info.st_uid==os.getuid()and not info.st_mode&0o077
+   if parent==root:break
+   assert parent.is_relative_to(root);parent=parent.parent
+ required={}
+ for name,cap in paths.values():
+  volume=os.stat(Path(name).parent).st_dev;required[volume]=required.get(volume,0)+cap
+ for name,_ in paths.values():
+  volume=os.stat(Path(name).parent).st_dev;space=os.statvfs(Path(name).parent)
+  assert space.f_bavail*space.f_frsize>=required[volume]and(space.f_favail==0 or space.f_favail>=len(paths))
+ try:
+  for key,(name,cap)in paths.items():
+   fd=os.open(name,os.O_RDWR|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)
+   record={'fd':fd,'path':str(name),'cap':cap,'confirmed_bytes':0};records[key]=record
+   # Reserve actual blocks before input; no optimistic free-space-only promise.
+   os.posix_fallocate(fd,0,cap)
+   before=os.fstat(fd);assert stat.S_ISREG(before.st_mode)and before.st_uid==os.getuid()and before.st_nlink==1 and not before.st_mode&0o077
+   assert ci10_sig(before)==ci10_sig(Path(name).lstat());record['created_identity']=ci10_sig(before)
+  return records
+ except BaseException:
+  ci10_close_outputs(records);raise
+
+def ci10_reserve(context,inputs=(),stdout_cap=1048576):
+ assert all(key in context for key in CI10_OUTPUTS)
+ assert all(isinstance(context.get(key),str)and context[key]for key in('action_id','sender_lifecycle_ref','sender_stdout_ref','sender_stderr_ref'))
+ assert len({context[key]for key in('sender_lifecycle_ref','sender_stdout_ref','sender_stderr_ref')})==3
+ caps=dict(CI10_OUTPUTS,sender_stdout_path=stdout_cap)
+ return ci10_reserve_paths({key:(context[key],cap)for key,cap in caps.items()},ci10_root(context),tuple(inputs)+tuple(ci10_inputs(context))+(__file__,))
+
+def ci10_check_outputs(context,records):
+ assert set(records)==set(CI10_OUTPUTS)
+ assert len({record['path']for record in records.values()})==4
+ for key,record in records.items():
+  assert record['path']==context[key]
+  info=os.fstat(record['fd']);actual=ci10_sig(info);created=record['created_identity']
+  assert stat.S_ISREG(info.st_mode)and info.st_uid==os.getuid()and info.st_nlink==1 and not info.st_mode&0o077
+  assert all(actual[k]==created[k]for k in('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink'))
+  assert actual==ci10_sig(Path(record['path']).lstat())
+ return records
+
+def ci10_pending(records,context):
+ ci10_checkpoint(records,{'schema':1,'kind':'OPEMOS_NATIVE_POINTER_ACTION','action_id':context['action_id'],'status':'pending','effect':'NOT_ATTEMPTED','phases':[]})
+
+def ci10_append(record,raw):
+ assert record['confirmed_bytes']+len(raw)<=record['cap']
+ view=memoryview(raw)
+ while view:
+  n=os.pwrite(record['fd'],view,record['confirmed_bytes']);assert n>0
+  record['confirmed_bytes']+=n;view=view[n:]
+
+def ci10_finish(record,raw=None,kind='pointer-action'):
+ if raw is not None:
+  record['confirmed_bytes']=0;ci10_append(record,raw)
+ os.ftruncate(record['fd'],record['confirmed_bytes']);os.fsync(record['fd'])
+ before=os.fstat(record['fd']);assert ci10_sig(before)==ci10_sig(Path(record['path']).lstat())
+ readback=bytearray();offset=0
+ while block:=os.pread(record['fd'],min(65536,record['confirmed_bytes']+1-offset),offset):readback.extend(block);offset+=len(block)
+ assert len(readback)==record['confirmed_bytes']and ci10_sig(before)==ci10_sig(os.fstat(record['fd']))==ci10_sig(Path(record['path']).lstat())
+ return {'path':record['path'],'size':len(readback),'sha256':hashlib.sha256(readback).hexdigest(),'kind':kind,'identity':ci10_sig(before),'custody':'verified-prefix','full9_unchanged':True}
+
+def ci10_json_finish(record,value,kind):return ci10_finish(record,(json.dumps(value,sort_keys=True,allow_nan=False)+'\n').encode(),kind)
+
+def ci10_close_outputs(records):
+ errors=[]
+ for key,record in records.items():
+  try:os.close(record['fd'])
+  except OSError as error:errors.append(ci10_error(error,'close-output:'+key))
+ return errors
+
+def ci10_destination(context,actual):
+ admission=ci9_json(ci9_read(context['destination_admission_path'],context['destination_admission_sha256'],1048576))
+ assert admission['schema']==1 and admission['kind']=='OPEMOS_ADMITTED_POINTER_DESTINATION'
+ assert admission['identity']==context['identity']and admission['session']==context['session']and admission['clock']==context['clock']
+ assert admission['qmp']==actual and admission['admitted']is True
+ assert set(actual)=={'qmp_name','qemu_process','host_boot_id','socket_path','socket_identity','peer','disk','argv_sha256'}
+ assert actual['qmp_name']and Path(actual['socket_path']).is_absolute()and Path(actual['disk']['path']).is_absolute()and actual['disk']['read_only']is False
+ assert stat.S_ISSOCK(actual['socket_identity']['st_mode'])and actual['socket_identity']['st_uid']==os.getuid()
+ assert len(actual['argv_sha256'])==64
+ assert admission['app']=={key:context['app'][key]for key in('process','executable_sha256','root_window_id')}
+ assert actual['host_boot_id']==context['clock']['id']and actual['peer']=={'pid':actual['qemu_process']['pid'],'uid':os.getuid(),'gid':os.getgid()}
+ assert context['identity']['runtime_instance_id']==context['session']['runtime_instance_id']and context['session']['boot_id']
+ capture=ci9_json(ci9_read(context['before_capture_path'],context['before_capture_sha256'],1048576))
+ assert capture['capture_id']==context['before']['capture_id']and capture['frame_ref']==context['before']['ref']and capture['frame_sha256']==context['before_sha256']
+ assert capture['session']==context['session']and capture['clock']==context['before']['clock']and capture['tick']==context['before']['tick']and capture['acquired']is True
+ return {'observed':actual,'admission_ref':context['destination_admission_ref'],'admission_sha256':context['destination_admission_sha256']}
+
+def ci10_run_child(argv,records,*,input_data=None,seconds=60,pass_fds=()):
+ # One absolute finite budget includes identity read, IO, stop, wait and closure.
+ import selectors,signal,subprocess,time
+ deadline=time.monotonic()+seconds;work_deadline=deadline-5
+ life={'numeric_exit':None,'waited':False,'stdout_EOF':False,'stderr_EOF':False,'pipes_closed':False,'original_gone':'UNKNOWN','child_identity':'UNKNOWN','first_failure':None,'secondary_errors':[]}
+ life['stream_read_bytes']={'stdout':0,'stderr':0}
+ buffers={'stdout':bytearray(),'stderr':bytearray()};child=None;pidfd=None;selector=selectors.DefaultSelector();written=0
+ def fail(error,phase):
+  value=ci10_error(error,phase)
+  if life['first_failure']is None:life['first_failure']=value
+  else:life['secondary_errors'].append(value)
+ try:
+  child=subprocess.Popen(argv,stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,pass_fds=pass_fds)
+  life['pid']=child.pid
+  if hasattr(os,'pidfd_open'):pidfd=os.pidfd_open(child.pid)
+  raw=(Path('/proc')/str(child.pid)/'stat').read_text();start=int(raw[raw.rfind(')')+2:].split()[19]);life['child_identity']={'pid':child.pid,'start':start}
+  for label,stream in [('stdout',child.stdout),('stderr',child.stderr)]:
+   os.set_blocking(stream.fileno(),False);selector.register(stream,selectors.EVENT_READ,label)
+  if input_data is not None:
+   os.set_blocking(child.stdin.fileno(),False);selector.register(child.stdin,selectors.EVENT_WRITE,'stdin')
+  while selector.get_map():
+   remaining=work_deadline-time.monotonic()
+   if remaining<=0:raise subprocess.TimeoutExpired('owned-pointer-transport',seconds-5)
+   for key,_ in selector.select(min(remaining,.1)):
+    label=key.data
+    if label=='stdin':
+     if written<len(input_data):
+      try:written+=os.write(key.fd,input_data[written:written+65536])
+      except BlockingIOError:continue
+     if written==len(input_data):selector.unregister(key.fileobj);key.fileobj.close()
+    else:
+     try:block=os.read(key.fd,65536)
+     except BlockingIOError:continue
+     if not block:
+      life[label+'_EOF']=True;selector.unregister(key.fileobj);key.fileobj.close();continue
+     life['stream_read_bytes'][label]+=len(block)
+     record=records['sender_'+label+'_path']
+     if len(buffers[label])+len(block)>record['cap']:raise ValueError('bounded actual child stream overflow')
+     buffers[label].extend(block);ci10_append(record,block)
+  child.wait(timeout=max(.001,work_deadline-time.monotonic()));life['waited']=True
+ except BaseException as error:fail(error,'child-lifecycle')
+ finally:
+  if child is not None:
+   if child.poll()is None:
+    try:
+     if pidfd is not None and hasattr(signal,'pidfd_send_signal'):signal.pidfd_send_signal(pidfd,signal.SIGKILL)
+     else:
+      assert isinstance(life['child_identity'],dict)
+      raw=(Path('/proc')/str(child.pid)/'stat').read_text();assert int(raw[raw.rfind(')')+2:].split()[19])==life['child_identity']['start'];child.kill()
+     life['exact_original_stop_requested']=True
+    except BaseException as error:fail(error,'exact-child-stop')
+   try:child.wait(timeout=max(.001,deadline-time.monotonic()));life['waited']=True
+   except BaseException as error:fail(error,'exact-child-wait')
+   life['numeric_exit']=child.returncode
+   if life['waited']and type(child.returncode)is int:life['original_gone']=True
+   if type(child.returncode)is int and child.returncode!=0:
+    life['sender_failure']={'numeric_exit':child.returncode,'raw_diagnostics':'retained stdout/stderr; not replaced by generic assertion'}
+    if life['first_failure']is None:life['first_failure']={'type':'ChildNonzero','numeric_exit':child.returncode,'phase':'child-wait'}
+   # Drain only immediately available bytes within the SAME deadline; never an
+   # unbounded communicate/join after killing the exact root.
+   for label,stream in [('stdout',child.stdout),('stderr',child.stderr)]:
+    if stream is None or stream.closed:continue
+    try:
+     os.set_blocking(stream.fileno(),False)
+     while time.monotonic()<deadline:
+      try:block=os.read(stream.fileno(),65536)
+      except BlockingIOError:break
+      if not block:life[label+'_EOF']=True;break
+      life['stream_read_bytes'][label]+=len(block)
+      record=records['sender_'+label+'_path'];assert len(buffers[label])+len(block)<=record['cap']
+      buffers[label].extend(block);ci10_append(record,block)
+    except BaseException as error:fail(error,'drain:'+label)
+   streams=[x for x in(child.stdin,child.stdout,child.stderr)if hasattr(x,'close')]
+   for stream in streams:
+    try:stream.close()
+    except BaseException as error:fail(error,'close-pipe')
+   life['pipes_closed']=all(x.closed for x in streams)
+  try:selector.close()
+  except BaseException as error:fail(error,'close-selector')
+  if pidfd is not None:
+   try:os.close(pidfd)
+   except BaseException as error:fail(error,'close-pidfd')
+  life['raw']={}
+  for label in('stdout','stderr'):
+   try:life['raw'][label]=ci10_finish(records['sender_'+label+'_path'],kind='pointer-sender-'+label)
+   except BaseException as error:
+    fail(error,'persist-raw:'+label);life['raw'][label]={'custody':'UNKNOWN','confirmed_prefix_bytes':records['sender_'+label+'_path']['confirmed_bytes'],'path':records['sender_'+label+'_path']['path']}
+  life['raw_complete']={label:life[label+'_EOF']and life['stream_read_bytes'][label]==records['sender_'+label+'_path']['confirmed_bytes']for label in('stdout','stderr')}
+  life['stdin_bytes_confirmed']=written;life['deadline_expired']=time.monotonic()>deadline
+  if life['deadline_expired']:fail(subprocess.TimeoutExpired('owned-pointer-lifecycle',seconds),'absolute-deadline')
+ return life,bytes(buffers['stdout']),bytes(buffers['stderr'])
+
+def ci10_checkpoint(records,action):
+ record=records['action_result_path'];raw=(json.dumps(action,sort_keys=True,allow_nan=False)+'\n').encode();assert len(raw)<=record['cap']
+ # Whitespace padding preserves the preallocated quota AND valid pending JSON.
+ record['confirmed_bytes']=0;ci10_append(record,raw+b' '*(record['cap']-len(raw)));os.fsync(record['fd'])
+
+def ci10_begin_phase(action,records,request,sent):
+ row={'phase':('move','down','up')[len(action['phases'])],'clock':action['clock'],'sent_tick':sent,'returned_tick':None,'request':request,'response':{'UNKNOWN':True},'delivery':'UNKNOWN','write_state':'NOT_RETURNED'}
+ action['phases'].append(row);action['effect']='ATTEMPT_PREFIX_RETAINED_DELIVERY_UNKNOWN';ci10_checkpoint(records,action)
+ return row
+
+def ci10_phase_reply(row,response):
+ row.update(response=response,returned_tick=time.monotonic_ns(),delivery='MATCHED_REPLY')
+
+def ci9_prepare(context,x,y,source_sha,actual_destination,records):
+ ci10_check_outputs(context,records)
+ destination=ci10_destination(context,actual_destination)
+ actions=('chooser-open','chooser-confirm-exact-input','Build','virtualUSB-select-and-review','virtualUSB-Write-confirmation')
+ assert context['action']in actions and context['sequence']==actions.index(context['action'])+1
+ assert len(source_sha)==64 and len(context['action_id'])==32
+ boot=Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+ assert context['clock']=={'domain':'monotonic-ns','id':boot}
+ display=context['session']['display'];rect=context['target']['rect'];app=context['app']
+ assert app['process']==context['target']['app_process']and app['window_id']==context['target']['window_id']
+ assert context['target']['visible']is True and context['target']['enabled']is True
+ assert rect['x']<=x<rect['x']+rect['width']and rect['y']<=y<rect['y']+rect['height']
+ assert context['point']=={'x':x,'y':y}and 0<=x<display['width']and 0<=y<display['height']
+ # Context metadata is a reference, not a substitute for actual captured bytes.
+ raw=ci9_read(context['before_path'],context['before_sha256'])
+ assert raw[:8]==b'\x89PNG\r\n\x1a\n'
+ import struct
+ assert struct.unpack('>II',raw[16:24])==(display['width'],display['height'])
+ observed=ci9_json(ci9_read(context['target_observation_path'],context['target_observation_sha256'],1048576))
+ assert observed['app']==app and observed['target']==context['target']and observed['identity']==context['identity']and observed['session']==context['session']
+ assert observed['app_birth_rechecked']is True and observed['before_frame_ref']==context['before']['ref']
+ assert observed['capture_id']==context['before']['capture_id']and observed['delivery_clock']==context['clock']
+ assert context['before']['tick']<=observed['delivered_tick']<=time.monotonic_ns()
+ assert context['before']['clock']==context['clock']and context['before']['tick']<=time.monotonic_ns()
+ process=Path('/proc')/str(os.getpid());raw=(process/'stat').read_text();start=int(raw[raw.rfind(')')+2:].split()[19])
+ action={k:context[k]for k in('action','action_id','sequence','identity','session','app','target','point','clock','before','transition_ref','sender_lifecycle_ref','target_observation_ref')}
+ action['source_context']=context
+ action['actual_destination']=destination
+ action['output_reservations']={key:{name:record[name]for name in('path','cap','created_identity')}for key,record in records.items()}
+ action.update(schema=1,kind='OPEMOS_NATIVE_POINTER_ACTION',backend='QMP',button='left',click_count=1,sender={'source_sha256':source_sha,'process':{'pid':os.getpid(),'start':start},'host_boot_id':boot},phases=[],status='pending')
+ return action
+
+def transact(operation):
+    """One actual Robot mouse action in the already admitted normal VM."""
+    need(os.getuid()==os.geteuid()==1000 and operation['kind']=='mouse',
+         'ordinary normal queued mouse sender only')
+    context=operation['pointerContext'];root=ci10_root(context);binding=operation['binding']
+    need(Path(binding['run_directory'])==root and binding['nonce']==context['identity']['operation_nonce']
+         and binding['artifact_source']==context['identity']['source_commit'],
+         'actual current queue VM/source/nonce')
+    proc=process(binding);need((proc/'status').read_text().split('Uid:',1)[1].splitlines()[0].split()==['1000']*4,
+                               'uniform ordinary QEMU identity')
+    need(operation['sender_source_sha256']==context['sender_source_sha256'], 'exact admitted sender')
+    end=operation['deadline_monotonic'];need(type(end)in(int,float)and 0<end-time.monotonic()<=7200,
+                                           'original normal operation finite clock')
+    records=globals().get('CI10_RESERVATIONS');need(records is not None,'actual pre-effect reserved sender outputs')
+    q=None;stream=None;action=None;first=None;n=0
+    try:
+        path=Path(binding['qmp_socket']);socket_before=path.lstat()
+        q=connect_owned(str(path),binding['pid'],min(15,end-time.monotonic()))
+        stream=q.makefile('rwb',buffering=0)
+        def receive():
+            remaining=end-time.monotonic();need(remaining>0,'original pointer deadline')
+            q.settimeout(min(15,remaining));raw=stream.readline(1048577)
+            need(raw and len(raw)<=1048576,'bounded actual QMP reply');return ci9_json(raw)
+        def call(command,args=None):
+            nonlocal n
+            process(binding);need(time.monotonic()<end,'original deadline before QMP event')
+            n+=1;packet={'execute':command,'id':n}
+            if args is not None:packet['arguments']=args
+            sent=time.monotonic_ns();row=ci10_begin_phase(action,records,packet,sent)if action is not None else None
+            try:
+                remaining=end-time.monotonic();need(remaining>0,'original deadline before QMP write')
+                q.settimeout(min(15,remaining));wire=(json.dumps(packet)+'\r\n').encode();written=stream.write(wire)
+                if row is not None:row.update(write_state='WRITE_RETURNED',bytes_written=written)
+                need(written==len(wire),'complete actual QMP write')
+                while True:
+                    reply=receive()
+                    if reply.get('id')==n:
+                        if row is not None:ci10_phase_reply(row,reply)
+                        need(time.monotonic()<end and reply.get('return')is not None and 'error'not in reply,
+                             'actual successful finite matching QMP reply')
+                        return reply['return']
+            except BaseException as error:
+                if row is not None:row['transport_failure']=ci10_error(error,'actual-qmp-exchange');ci10_checkpoint(records,action)
+                raise
+        need('QMP'in receive(),'actual QMP greeting');call('qmp_capabilities')
+        need(call('query-name')['name']==binding['vm_name']and call('query-status')['status']=='running',
+             'same actual running admitted Ubuntu VM')
+        blocks=call('query-block');disks=[v for v in blocks if v.get('device')=='osdisk']
+        need(len(disks)==1 and disks[0]['inserted']['file']==str(root/'desktop-overlay.qcow2')
+             and disks[0]['inserted']['ro']is False,'current owned disposable guest disk')
+        actual={'qmp_name':binding['vm_name'],'qemu_process':{'pid':binding['pid'],'start':int(binding['start_ticks'])},
+                'host_boot_id':binding['host_boot_id'],'socket_path':str(path),'socket_identity':ci10_sig(socket_before),
+                'peer':{'pid':binding['pid'],'uid':os.getuid(),'gid':os.getgid()},
+                'disk':{'path':disks[0]['inserted']['file'],'read_only':False},
+                'argv_sha256':hashlib.sha256((proc/'cmdline').read_bytes()).hexdigest()}
+        need(ci10_sig(socket_before)==ci10_sig(path.lstat()),'same owned QMP socket epoch')
+        x,y=context['point']['x'],context['point']['y'];display=context['session']['display']
+        action=ci9_prepare(context,x,y,operation['sender_source_sha256'],actual,records)
+        ci10_checkpoint(records,action)
+        events=[[{'type':'abs','data':{'axis':'x','value':round(x*32767/(display['width']-1))}},
+                 {'type':'abs','data':{'axis':'y','value':round(y*32767/(display['height']-1))}}],
+                [{'type':'btn','data':{'button':'left','down':True}}],
+                [{'type':'btn','data':{'button':'left','down':False}}]]
+        for event in events:call('input-send-event',{'events':event})
+        action['status']='sent';return action
+    except BaseException as error:
+        first=error
+        if action is not None:action['status']='failed';action['first_failure']=ci10_error(error,'actual-pointer')
+        raise
+    finally:
+        secondary=[]
+        if action is not None:
+            try:ci10_json_finish(records['action_result_path'],action,'pointer-action')
+            except BaseException as error:secondary.append(ci10_error(error,'persist-action'))
+        for resource in(stream,q):
+            if resource is not None:
+                try:resource.close()
+                except BaseException as error:secondary.append(ci10_error(error,'close-qmp'))
+        if secondary:
+            os.write(2,(json.dumps({'secondary_errors':secondary})+'\n').encode())
+            if first is None:raise ValueError('Actual pointer output/socket closure failed')
 
 
 class Pipeline:

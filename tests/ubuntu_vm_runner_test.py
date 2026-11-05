@@ -46,6 +46,53 @@ def fixture_reap_receipt(child, row):
 
 
 class RunnerTest(unittest.TestCase):
+    def test_virtual_usb_robot_owned_sender_retains_actual_child_raw_and_nonzero(self):
+        import hashlib
+        spec=importlib.util.spec_from_file_location('actual_normal_ci10_sender',
+            Path(__file__).resolve().parents[1]/'scripts/omen_control/connection_control.py')
+        sender=importlib.util.module_from_spec(spec);spec.loader.exec_module(sender)
+        baseline=set(os.listdir('/proc/self/fd'))
+        with tempfile.TemporaryDirectory(prefix='normal-ci10-owned-child-')as directory:
+            root=Path(directory);root.chmod(0o700)
+            for numeric in(0,7):
+                lane=root/str(numeric);lane.mkdir(mode=0o700)
+                paths={name:(str(lane/name),65536)for name in sender.CI10_OUTPUTS}
+                records=sender.ci10_reserve_paths(paths,lane)
+                try:
+                    life,out,err=sender.ci10_run_child([sys.executable,'-I','-c',
+                        'import sys;print("actual-owned-sender");print("actual-stderr",file=sys.stderr);sys.exit('+str(numeric)+')'],
+                        records,seconds=10)
+                    self.assertEqual(life['numeric_exit'],numeric)
+                    for key in('waited','stdout_EOF','stderr_EOF','pipes_closed','original_gone'):
+                        self.assertIs(life[key],True,key)
+                    self.assertEqual(out,b'actual-owned-sender\n');self.assertEqual(err,b'actual-stderr\n')
+                    self.assertTrue(all(life['raw_complete'].values()))
+                    self.assertFalse(life['deadline_expired']);self.assertEqual(life['secondary_errors'],[])
+                    if numeric:self.assertEqual(life['first_failure']['type'],'ChildNonzero')
+                    else:self.assertIsNone(life['first_failure'])
+                    for label,raw in(('stdout',out),('stderr',err)):
+                        proof=life['raw'][label];self.assertEqual(proof['sha256'],hashlib.sha256(raw).hexdigest())
+                        self.assertEqual(Path(proof['path']).read_bytes(),raw)
+                        self.assertEqual(proof['identity'],sender.ci10_sig(Path(proof['path']).stat()))
+                finally:self.assertEqual(sender.ci10_close_outputs(records),[])
+        self.assertEqual(set(os.listdir('/proc/self/fd')),baseline)
+
+    def test_virtual_usb_native_observer_uses_exact_producer_elf_bound(self):
+        import hashlib
+        spec=importlib.util.spec_from_file_location('actual_native_descriptor_observer',
+            Path(__file__).resolve().parents[1]/'scripts/omen_control/observer_guest.py')
+        observer=importlib.util.module_from_spec(spec);spec.loader.exec_module(observer)
+        raw=Path('/proc/self/exe').read_bytes();expected={'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest()}
+        # The production diagnostic allowance stays unchanged. The normal
+        # pipeline uses its separately authenticated exact producer ELF role.
+        with patch.object(observer,'CAP',1):
+            with self.assertRaisesRegex(RuntimeError,'native executable size'):observer.proc_identity(os.getpid())
+            actual=observer.proc_identity(os.getpid(),expected)
+            self.assertEqual(actual['exe_sha256'],expected['sha256'])
+            for bad in(dict(expected,sha256='0'*64),dict(expected,bytes=len(raw)+1),
+                       dict(expected,bytes=1073741825)):
+                with self.subTest(bad=bad),self.assertRaises(RuntimeError):observer.proc_identity(os.getpid(),bad)
+
     def test_virtual_usb_candidate_medium_preserves_actual_package_companion_and_refuses_escape(self):
         import hashlib,io,stat,zipfile
         spec=importlib.util.spec_from_file_location('normal_ubuntu_candidate_medium',
