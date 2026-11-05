@@ -115,12 +115,20 @@ def heavy_custody(wrapper, lock_path='/run/user/1000/opemos-heavy.lock', owner_u
         st = os.fstat(fd); core = p.ident(st)
         p.need(stat.S_ISREG(st.st_mode) and st.st_uid == st.st_gid == owner_uid
                and st.st_nlink == 1 and st.st_size == 0, 'normal empty heavy lock owner/inode')
+        def snapshot(pid):
+            actor=p.process_snapshot(pid)
+            p.need(actor['uids'] in ([0]*4,[owner_uid]*4,[owner_uid,0,0,0]),
+                   'only actual normal caller/sudo UID ancestry')
+            # A normal UID cannot read a root sudo ancestor's executable.
+            # Only the actual source-bound Bash owner needs that identity.
+            candidate=actor['uids']==[owner_uid]*4 and len(actor['argv'])>1 and actor['argv'][1]==wrapper['path']
+            actor['exe']=os.readlink('/proc/'+str(pid)+'/exe') if candidate else None
+            if candidate:p.need(actor['exe']=='/usr/bin/bash','actual admitted Bash heavy executable')
+            return actor
         chain = []; pid = os.getpid()
         for _ in range(32):
-            actor = p.process_snapshot(pid); actor['exe'] = os.readlink('/proc/'+str(pid)+'/exe')
+            actor = snapshot(pid)
             chain.append(actor)
-            p.need(actor['uids'] in ([0]*4, [owner_uid]*4, [owner_uid,0,0,0]),
-                   'only actual normal caller/sudo UID ancestry')
             if actor['exe'] == '/usr/bin/bash' and len(actor['argv']) > 1 and actor['argv'][1] == wrapper['path']:
                 p.need(actor['uids'] == [owner_uid]*4, 'actual admitted Bash heavy owner'); break
             p.need(actor['ppid'] > 1 and actor['ppid'] != pid, 'heavy wrapper must be a current ancestor')
@@ -143,7 +151,7 @@ def heavy_custody(wrapper, lock_path='/run/user/1000/opemos-heavy.lock', owner_u
         p.need(all(p.ident(os.fstat(fd))[k] == p.ident(os.lstat(lock_path))[k] == core[k]
                    for k in p.CORE+('st_size',)), 'same held/named normal heavy inode')
         for actor in chain:
-            now=p.process_snapshot(actor['pid']); now['exe']=os.readlink('/proc/'+str(actor['pid'])+'/exe')
+            now=snapshot(actor['pid'])
             p.need(now==actor, 'heavy ancestor PID/start/UID/argv/exe/FD lifetime')
         p.need(held(wrapper,65536)==source, 'same installed heavy source after kernel proof')
         return {'sourcePin':wrapper,'lockCore':{k:core[k]for k in p.CORE+('st_size',)},

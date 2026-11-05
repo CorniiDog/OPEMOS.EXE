@@ -446,7 +446,7 @@ class RetainedMediaContract(unittest.TestCase):
 
     @unittest.skipUnless(os.geteuid()==0 and sys.platform=='linux','disposable Linux CI Root only')
     def test_actual_bash_ancestor_ofd_fence_without_forwarding_fd(self):
-        """Real kernel ancestry/OFD; fixture UID0/path are not normal UID1000 admission."""
+        """Actual kernel OFD and ordinary UID->root->ordinary UID ancestry."""
         import install_media_controller as installer
         with tempfile.TemporaryDirectory()as directory:
             root=Path(directory);wrapper=root/'heavy.sh';lock=root/'heavy.lock'
@@ -454,14 +454,14 @@ class RetainedMediaContract(unittest.TestCase):
             wrapper.chmod(0o555);ref=installer.pin(wrapper)
             code=('import sys,json,os;sys.path.insert(0,sys.argv[1]);'
                   'from run_current_media import heavy_custody;'
-                  'p=json.loads(sys.argv[2]);v=heavy_custody(p,sys.argv[3],0);'
+                  'p=json.loads(sys.argv[2]);v=heavy_custody(p,sys.argv[3],int(sys.argv[4]));'
                   'print(json.dumps(v));'
                   'p["sha256"]="0"*64;'
-                  '\ntry:heavy_custody(p,sys.argv[3],0)'
+                  '\ntry:heavy_custody(p,sys.argv[3],int(sys.argv[4]))'
                   '\nexcept Exception:pass'
                   '\nelse:raise AssertionError("wrong source hash passed")')
             command=['/usr/bin/bash',str(wrapper),str(lock),sys.executable,'-B','-c',code,
-                     str(SOURCE),json.dumps(ref),str(lock)]
+                     str(SOURCE),json.dumps(ref),str(lock),'0']
             result=subprocess.run(command,capture_output=True,timeout=15)
             self.assertEqual(result.returncode,0,result.stderr.decode())
             value=json.loads(result.stdout)
@@ -469,6 +469,25 @@ class RetainedMediaContract(unittest.TestCase):
             self.assertEqual(value['owner']['argv'][1],str(wrapper))
             self.assertEqual(value['sourcePin'],ref)
             self.assertEqual(value['OFD']['fd'],9)
+            # Use the existing sudo-enabled CI account; no trust/config edit.
+            import pwd
+            uid=int(os.environ['SUDO_UID']);self.assertGreater(uid,0)
+            user=pwd.getpwuid(uid).pw_name;gid=pwd.getpwuid(uid).pw_gid
+            root.chmod(0o755);os.chown(lock,uid,gid)
+            middle=('import subprocess,sys;raise SystemExit(subprocess.call('
+                    '["/usr/bin/sudo","-n","-u",sys.argv[1],sys.executable,"-B","-c",'
+                    'sys.argv[2],*sys.argv[3:]]))')
+            command=['/usr/bin/sudo','-n','-u',user,'--','/usr/bin/bash',str(wrapper),str(lock),
+                     '/usr/bin/sudo','-n',sys.executable,'-B','-c',middle,user,code,
+                     str(SOURCE),json.dumps(ref),str(lock),str(uid)]
+            result=subprocess.run(command,capture_output=True,timeout=15)
+            self.assertEqual(result.returncode,0,result.stderr.decode())
+            value=json.loads(result.stdout)
+            self.assertEqual(value['owner']['uids'],[uid]*4)
+            self.assertEqual(value['owner']['exe'],'/usr/bin/bash')
+            self.assertEqual(value['OFD']['fd'],9)
+            self.assertTrue(any(row['uids']==[0]*4 and row['exe']is None
+                                for row in value['ancestry']))
 
     def test_real_runner_assignment_survives_missing_optional_telemetry(self):
         """Production routing reader with explicit API data, not a method override."""
