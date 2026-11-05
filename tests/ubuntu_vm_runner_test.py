@@ -46,7 +46,7 @@ def fixture_reap_receipt(child, row):
 
 
 class RunnerTest(unittest.TestCase):
-    def test_real_file_backed_usb_descriptor_and_qemu_attachment_preserve_source(self):
+    def test_virtual_usb_real_file_descriptor_and_qemu_attachment_preserve_source(self):
         import fcntl
         with tempfile.TemporaryDirectory(prefix='opemos-virtual-usb-') as directory:
             root = Path(directory); root.chmod(0o700)
