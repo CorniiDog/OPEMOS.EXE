@@ -1466,8 +1466,9 @@ except peer.Refused as error:
                     pending_id='fixture-expired-e'+pending_nonce[:16]
                     expired['sudoPin']=installer.pin('/usr/bin/sudo')
                     expired['contextPath']=pending_paths['runtimeRoot']+'/context.json'
+                    expired_now=time.time()
                     expired.update(jobId=pending_id,nonce=pending_nonce,
-                        issuedUnix=time.time()-601,startBeforeUnix=time.time()-301)
+                        issuedUnix=expired_now-601,startBeforeUnix=expired_now-302)
                     expired['candidate'].update(jobId=pending_id,nonce=pending_nonce,
                         name='opemos-libvirt-'+pending_nonce,
                         run=pending_paths['ioRoot']+'/run',output=pending_paths['ioRoot']+'/output',
