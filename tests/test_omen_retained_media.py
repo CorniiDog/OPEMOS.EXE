@@ -1025,12 +1025,14 @@ except peer.Refused as error:
                     # state/phase; this context grants no lifecycle effect.
                     definition=implementation['sourceContractPin']if prior_version else installed['sourceContractPin']
                     original_request=copy.deepcopy(request)
+                    original_nonce=current_peer.SOURCE_PLACEMENT_NONCE
                     baseline=set(os.listdir('/proc/self/fd'))
                     with current_peer._original_readonly_subject(request,definition):
                         current_peer.validate_request(request)
                         changed=copy.deepcopy(request);changed['observer']['sha256']='0'*64
                         with self.assertRaises(Exception):current_peer.validate_request(changed)
                     self.assertIsNone(current_peer._CLOSED_SUBJECT)
+                    self.assertEqual(current_peer.SOURCE_PLACEMENT_NONCE,original_nonce)
                     self.assertEqual(request,original_request)
                     self.assertEqual(set(os.listdir('/proc/self/fd')),baseline)
                     import postqueue_issuer as issuer

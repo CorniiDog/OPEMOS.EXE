@@ -179,7 +179,8 @@ _CLOSED_SUBJECT=None
 
 @contextlib.contextmanager
 def _original_readonly_subject(request,definition_ref):
- global _CLOSED_SUBJECT
+ global _CLOSED_SUBJECT,SOURCE_PLACEMENT_NONCE
+ original_nonce=SOURCE_PLACEMENT_NONCE
  import source_contract
  from libvirt_native import held
  need(os.getuid()==0 and _CLOSED_SUBJECT is None,'one Root readonly original subject')
@@ -192,7 +193,7 @@ def _original_readonly_subject(request,definition_ref):
  try:
   yield
   need(held(ref,1048576)==raw,'original readonly subject remains exact')
- finally:_CLOSED_SUBJECT=None
+ finally:_CLOSED_SUBJECT=None;SOURCE_PLACEMENT_NONCE=original_nonce
 def observe_closed_subject(request,definition_ref,custody=None):
  with _original_readonly_subject(request,definition_ref):
   proof=observe(request,custody=custody);need(proof['phase']=='CLOSED'and proof['lease']['closed']is True and proof['lease']['restored']is True,'original subject accepted for actual CLOSED observation only');return proof
