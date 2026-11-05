@@ -465,7 +465,7 @@ class Run:
         self.loop = None
 
 
-def finish_failed_queue(parent_ref,current_profile):
+def finish_failed_queue(parent_ref,current_profile,expired_pending=False):
     """Original owning queue APIs, one failed target; never dispatch other work."""
     import fcntl
     p.need(os.getuid()==os.geteuid()==1000,'ordinary queue owner only')
@@ -488,7 +488,18 @@ def finish_failed_queue(parent_ref,current_profile):
             rows,pool=queue.fresh_pool_epoch(db,backend,'failed-prepared-completion')
             targets=[row for row in rows if row['id']==parent['jobId']];p.need(len(targets)==1,'exact existing target only');row=targets[0]
             from postqueue_issuer import expected_spec
-            p.need(row['state']=='running'and row['finished']is None and json.loads(row['spec'])==expected_spec(parent,parent_ref),'original unfinished exact approved spec, no rearm')
+            if not expired_pending:p.need(row['state']=='running'and row['finished']is None and json.loads(row['spec'])==expected_spec(parent,parent_ref),'original unfinished exact approved spec, no rearm')
+            if expired_pending:
+                p.need(row['state']=='pending'and json.loads(row['spec'])==expected_spec(parent,parent_ref),
+                       'only exact original pending target for expiry disposition')
+                result=queue.finish_expired_pending(db,backend,row['id'])
+                after=queue.diagnostic_ledger(db)
+                p.need(before_ledger['bindings']==after['bindings']and before_ledger['config']==after['config']
+                       and [r for r in before_ledger['rows']if r['id']!=row['id']]==
+                           [r for r in after['rows']if r['id']!=row['id']],
+                       'every other whole historical row/binding/config preserved')
+                return {'kind':'NORMAL_EXPIRED_PENDING_QUEUE_COMPLETION_V1','jobId':row['id'],
+                    'result':result,'otherRowsPreserved':len(after['rows'])-1,'dispatches':[]}
             with queue.ExpectedInvocation(backend,db,row)as guard:
                 state,evidence,empty=backend.inspect(row['unit']);guard.verify()
             p.need(state=='failed'and empty is True and evidence['InvocationID']==row['_poolBinding']['invocation'],'actual failed original invocation and complete current native closure')
@@ -706,7 +717,7 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--profile-pin-json', required=True)
     requests = ap.add_mutually_exclusive_group(required=True)
     requests.add_argument('--request-pin-json'); requests.add_argument('--request-stdin', action='store_true')
-    requests.add_argument('--observe-boot', action='store_true'); requests.add_argument('--complete-prepared-pin-json'); requests.add_argument('--finish-failed-parent-pin-json'); requests.add_argument('--complete-mount-pin-json'); requests.add_argument('--complete-failed-media-pin-json'); requests.add_argument('--complete-failed-context-pin-json'); requests.add_argument('--complete-closed-context-pin-json'); ap.add_argument('--recovery-nonce'); args = ap.parse_args()
+    requests.add_argument('--observe-boot', action='store_true'); requests.add_argument('--complete-prepared-pin-json'); requests.add_argument('--finish-failed-parent-pin-json'); requests.add_argument('--finish-expired-parent-pin-json'); requests.add_argument('--complete-mount-pin-json'); requests.add_argument('--complete-failed-media-pin-json'); requests.add_argument('--complete-failed-context-pin-json'); requests.add_argument('--complete-closed-context-pin-json'); ap.add_argument('--recovery-nonce'); args = ap.parse_args()
     profile_pin = json.loads(args.profile_pin_json)
     if args.complete_closed_context_pin_json:
         print(p.canon(complete_closed_media_context(profile_pin,json.loads(args.complete_closed_context_pin_json),args.recovery_nonce)).decode(),flush=True);return
@@ -714,11 +725,12 @@ def main():
         print(p.canon(complete_failed_context(profile_pin,json.loads(args.complete_failed_context_pin_json),args.recovery_nonce)).decode(),flush=True);return
     if args.complete_failed_media_pin_json:
         print(p.canon(complete_failed_media(profile_pin,json.loads(args.complete_failed_media_pin_json))).decode(),flush=True);return
-    if args.finish_failed_parent_pin_json or args.complete_mount_pin_json:
+    if args.finish_failed_parent_pin_json or args.finish_expired_parent_pin_json or args.complete_mount_pin_json:
         cfg=protected(profile_pin,0o444)
         contract=source_contract.validate(cfg['sourceRoles'],cfg['queuePrograms'],cfg['installedSourceContractPin'])
         p.need(contract['preparationRoles']['run_current_media']['path']==str(Path(__file__).absolute()),'actual reviewed completion entry')
-        result=finish_failed_queue(json.loads(args.finish_failed_parent_pin_json),cfg)if args.finish_failed_parent_pin_json else continue_closed_mount(json.loads(args.complete_mount_pin_json),cfg)
+        if args.finish_expired_parent_pin_json:result=finish_failed_queue(json.loads(args.finish_expired_parent_pin_json),cfg,expired_pending=True)
+        else:result=finish_failed_queue(json.loads(args.finish_failed_parent_pin_json),cfg)if args.finish_failed_parent_pin_json else continue_closed_mount(json.loads(args.complete_mount_pin_json),cfg)
         print(p.canon(result).decode(),flush=True);return
     if args.complete_prepared_pin_json:
         cfg=protected(profile_pin,0o444)

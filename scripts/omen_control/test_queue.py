@@ -3318,7 +3318,7 @@ def expired_pending_parent(row):
     entry=current[1]['sourceRoles']['runtime_entry']
     from libvirt_native import native_child
     started=time.monotonic()
-    capture=native_child(['sudo','-n','/usr/bin/python3','-B',entry['path'],
+    capture=native_child(['/usr/bin/sudo','-n','/usr/bin/python3','-B',entry['path'],
         '--observe-expired-pending-json',canonical(cfg)],time.time()+10,parent['sudoPin'])
     require(capture['numeric']==0 and not capture['stderr'],
             'Current Root pending observation refused: '+capture.get('stderr','')[:4096])
@@ -3858,7 +3858,7 @@ def readonly_observer_transaction(root, db, backend):
              # Original primary exception/traceback resumes; no finally masking.
 
 
-def worker(root, db, cfg, reconcile_failed_libvirt=None, _backend=None, retire_expired_pending=None):
+def worker(root, db, cfg, reconcile_failed_libvirt=None, _backend=None):
     with (root / "worker.lock").open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -3884,12 +3884,6 @@ def worker(root, db, cfg, reconcile_failed_libvirt=None, _backend=None, retire_e
                     result=reconcile_failed_libvirt_submission(root,db,backend,reconcile_failed_libvirt)
                 print(canonical(result),flush=True)
                 return 1  # the actual submitted job failed; reconciliation is not a pass
-            if retire_expired_pending is not None:
-                require(reconcile_failed_libvirt is None,'One exact normal disposition mode')
-                with readonly_observer_transaction(root,db,backend):
-                    result=finish_expired_pending(db,backend,retire_expired_pending)
-                print(canonical(result),flush=True)
-                return 0  # disposition succeeded; the job is blocked, never passed
             monitor_first=None;monitor_count=0
             diagnostic_only = bool(DIAGNOSTIC_TERMINAL_INPUTS)
             while True:
@@ -4169,7 +4163,6 @@ def main(argv=None):
     commands.add_parser("plan")
     status_parser=commands.add_parser("status");status_parser.add_argument("--job-id")
     run_parser=commands.add_parser("run");run_parser.add_argument("--collected-proof",type=Path);run_parser.add_argument("--collected-approval",type=Path);run_parser.add_argument("--diagnostic-proof",type=Path);run_parser.add_argument("--diagnostic-approval",type=Path);run_parser.add_argument("--reconcile-failed-libvirt",choices=tuple(FAILED_LIBVIRT_TERMINAL_TARGETS))
-    run_parser.add_argument("--retire-expired-pending")
     args = parser.parse_args(argv)
     if args.action=='run' and args.reconcile_failed_libvirt is not None:
         require(all(getattr(args,k)is None for k in('collected_proof','collected_approval','diagnostic_proof','diagnostic_approval')),
@@ -4183,10 +4176,6 @@ def main(argv=None):
         receipt=collected_read(rp,0,0o444)
         require(receipt['kind']==DIAGNOSTIC_KIND and receipt['jobIds']==list(DIAGNOSTIC_TARGETS),'exact two historical diagnostics only')
         for job in receipt['jobIds']:DIAGNOSTIC_TERMINAL_INPUTS[job]=(rp,ap)
-    if args.action=='run' and args.retire_expired_pending is not None:
-        require(args.reconcile_failed_libvirt is None and all(getattr(args,k)is None for k in
-            ('collected_proof','collected_approval','diagnostic_proof','diagnostic_approval')),
-            'Expired never-allocated pending disposition cannot combine authorities')
     root, db = connect(args.queue)
     if args.action == "init":
         cfg = {"cpu_ids": DEFAULT_CPUS, "memory_bytes": DEFAULT_RAM, "slice": "opemos-vm-pool.slice", "manager": "system"}
@@ -4245,7 +4234,7 @@ def main(argv=None):
         if args.diagnostic_proof is not None:
             try: return worker(root, db, cfg)
             finally: db.close()
-        try:return worker(root, db, cfg, args.reconcile_failed_libvirt, retire_expired_pending=args.retire_expired_pending)
+        try:return worker(root, db, cfg, args.reconcile_failed_libvirt)
         finally:db.close()
     return 0
 
