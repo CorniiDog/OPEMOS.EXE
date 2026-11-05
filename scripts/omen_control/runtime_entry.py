@@ -343,9 +343,12 @@ def observe_expired_pending(cfg):
    peer.need(sorted(os.listdir(files.fd))==['lock'],'pending runtime contains context/assignment/grant or unknown data')
    runtime_pin=files.parent_pin();fd=os.open('lock',os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=files.fd)
    try:
-    lock_pin=peer.ident(os.fstat(fd));peer.need(lock_pin['st_size']==0 and lock_pin==peer.ident(os.stat('lock',dir_fd=files.fd,follow_symlinks=False)),'unchanged empty normal Root lock')
+    lock_pin=peer.ident(os.fstat(fd));peer.need(lock_pin['st_size']==3 and os.read(fd,4)==b'{}\n' and not os.read(fd,1) and lock_pin==peer.ident(os.fstat(fd))==peer.ident(os.stat('lock',dir_fd=files.fd,follow_symlinks=False)),'unchanged normal Root lock bytes/full9')
    finally:os.close(fd)
    absent_lease();files.check();peer.need(sorted(os.listdir(files.fd))==['lock'],'no runtime publication before observation closes')
+ reader=peer.NativeOps()
+ try:peer.need(reader.domains()==[],'Actual domain inventory empty for expired pending disposition')
+ finally:reader.close()
  peer.need(issuer.protected(cfg['parentPin'],mode=0o444)==parent,'same original parent post-use')
  contract.validate(definition['sourceRoles'],definition['queuePrograms'],cfg['implementationDefinitionPin'])
  peer.need(before==set(os.listdir('/proc/self/fd')),'Root pending observer all owned descriptors closed')

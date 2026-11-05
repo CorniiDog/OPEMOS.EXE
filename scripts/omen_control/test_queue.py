@@ -3356,6 +3356,10 @@ def finish_expired_pending(db,backend,job):
             and pool['tasks']==[] and pool['unknownReservationsRetained']==[]
             and pool['lastKernelWholePoolPopulated']=='0',
             'Current complete all-UID empty pool; unknown actors retain pending target')
+        gpu=observe_gpu_group()
+        require(gpu['complete'] is True and gpu['gpuAvailable'] is True
+                and gpu['group']==NVIDIA_RESOURCE and gpu['allOwnedDescriptorsClosed'] is True
+                and gpu['effects']==[],'Current physical GPU group/holders must be free')
         history=terminal_history_store(db,terminal_pool_epoch(db,rows,pool),row,None)
         require(expired_pending_parent(row)==parent and diagnostic_ledger(db)==before,
                 'Original source/parent/whole canonical ledger unchanged')
@@ -3371,7 +3375,9 @@ def finish_expired_pending(db,backend,job):
             'reason':'Original finite Root parent expired before normal allocation',
             'originalParent':parent,'preservedPendingEpoch':history,
             'runtimeNeverAdmitted':True,'physicalLeaseEverCreated':False,
+            'leaseEverCreated':False,'leaseClosureInvented':False,
             'noVMOrGuestAcceptance':True,'reservationRetained':False,
+            'currentPhysicalGPUProof':gpu,
             'terminalLifecycle':{'phase':'CLOSED','intendedState':'blocked',
                 'reservationRetained':False,'automaticRetryAuthorized':False}}
         recent_boundary(final,time.monotonic())

@@ -1485,6 +1485,9 @@ except peer.Refused as error:
                                 'tasks':[],'unknownReservationsRetained':[],
                                 'lastKernelWholePoolPopulated':'0','completedMonotonic':time.monotonic(),
                                 'MODEL_ONLY':True}
+                    runtime_path=Path(pending_paths['runtimeRoot'])
+                    modeled_gpu={'complete':True,'gpuAvailable':True,'group':current_queue.NVIDIA_RESOURCE,
+                        'allOwnedDescriptorsClosed':True,'effects':[],'MODEL_ONLY':True}
                     try:
                         pending_spec=current_issuer.expected_spec(expired,expired_ref)
                         state=fixture/('pending-state-'+pending_nonce)
@@ -1495,7 +1498,9 @@ except peer.Refused as error:
                                     'memory_bytes':current_queue.DEFAULT_RAM,'slice':'opemos-vm-pool.slice','manager':'system'}),))
                             for i in range(257):
                                 with db:db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',
-                                    ('preserved-'+str(i),'{}','failed',None,None,1.0,2.0,None))
+                                    ('preserved-'+str(i),current_queue.canonical({'id':'preserved-'+str(i),
+                                        'cores':1,'memory':1024,'depends_on':[]}),
+                                     'failed',None,None,1.0,2.0,None))
                             current_queue.enqueue(db,[pending_spec])
                             before=current_queue.diagnostic_ledger(db)
                             pending_row=before['rows'][-1]
@@ -1523,7 +1528,11 @@ except peer.Refused as error:
                                     current_queue.finish_expired_pending(db,ModeledEmptyPool(),pending_id)
                             finally:
                                 with db:db.execute('DELETE FROM pool_unit_bindings WHERE job_id=?',(pending_id,))
-                            result=current_queue.finish_expired_pending(db,ModeledEmptyPool(),pending_id)
+                            with mock.patch.object(current_queue,'observe_gpu_group',return_value=dict(modeled_gpu,gpuAvailable=False)):
+                                with self.assertRaisesRegex(ValueError,'physical GPU group/holders'):
+                                    current_queue.finish_expired_pending(db,ModeledEmptyPool(),pending_id)
+                            with mock.patch.object(current_queue,'observe_gpu_group',return_value=modeled_gpu):
+                                result=current_queue.finish_expired_pending(db,ModeledEmptyPool(),pending_id)
                             self.assertTrue(result['runtimeNeverAdmitted'])
                             self.assertFalse(result['physicalLeaseEverCreated'])
                             self.assertFalse(result['reservationRetained'])
@@ -1535,6 +1544,10 @@ except peer.Refused as error:
                             self.assertEqual(after['config'],before['config'])
                             self.assertEqual(after['rows'][-1]['state'],'blocked')
                             self.assertIsNone(after['rows'][-1]['unit'])
+                            self.assertEqual(normal_entry.validate_expired_pending_terminal(after['rows'][-1],result),expired)
+                            for flag in ('leaseEverCreated','leaseClosureInvented','physicalLeaseEverCreated'):
+                                bad=copy.deepcopy(result);bad[flag]=True
+                                with self.assertRaises(Exception):normal_entry.validate_expired_pending_terminal(after['rows'][-1],bad)
                             with self.assertRaises(Exception):
                                 current_queue.finish_expired_pending(db,ModeledEmptyPool(),pending_id)
                         finally:db.close()

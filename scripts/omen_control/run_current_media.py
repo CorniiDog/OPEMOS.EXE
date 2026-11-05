@@ -290,6 +290,8 @@ class Run:
             result = json.loads(row['result']) if row['result'] else {}
             p.need(result.get('terminalLifecycle', {}).get('reservationRetained') is not True,
                    'no retained reservation, including failed jobs')
+            if result.get('kind')=='EXPIRED_NEVER_ALLOCATED_LIBVIRT_PENDING_TERMINAL':
+                validate_expired_pending_terminal(row,result)
             if json.loads(row['spec']).get('libvirt_domain') is not None:
                 p.need(result.get('terminalLifecycle', {}).get('phase') == 'CLOSED'
                        and result['terminalLifecycle']['reservationRetained'] is False,
@@ -509,10 +511,80 @@ def finish_failed_queue(parent_ref,current_profile):
     finally:os.close(fd)
 
 
-def continue_closed_mount(profile_ref):
+def validate_expired_pending_terminal(row,result):
+    """Strict historical category; CLOSED is logical, no physical lease invented."""
+    p.need(row['state']=='blocked' and row['finished'] is not None
+           and all(row[k] is None for k in('unit','cpus','started'))
+           and result['runtimeNeverAdmitted'] is True and result['reservationRetained'] is False
+           and result['leaseEverCreated'] is False and result['physicalLeaseEverCreated'] is False
+           and result['leaseClosureInvented'] is False and result['noVMOrGuestAcceptance'] is True
+           and result['terminalLifecycle']=={'phase':'CLOSED','intendedState':'blocked',
+               'reservationRetained':False,'automaticRetryAuthorized':False},
+           'exact never-allocated canonical terminal category, no physical closure projection')
+    ref=result['originalParent']['parentPin'];parent=protected(ref,0o444)
+    from postqueue_issuer import expected_spec
+    p.need(parent['jobId']==row['id'] and json.loads(row['spec'])==expected_spec(parent,ref)
+           and parent['nonce']==result['originalParent']['nonce']
+           and parent['bootID']==result['originalParent']['bootID']
+           and parent['startBeforeUnix']==result['originalParent']['startBeforeUnix']
+           and parent['installedSourceContractPin']==result['originalParent']['definitionPin'],
+           'whole original parent/spec/source binding of never-allocated terminal')
+    source_contract.validate(parent['sourceRoles'],parent['queuePrograms'],parent['installedSourceContractPin'])
+    return parent
+
+
+def continue_expired_pending_mount(cfg,current_profile):
+    """Only this expired never-allocated operation's still-owned RO mount."""
+    p.need(set(cfg)=={'kind','parentPin','originalProfilePin','recoveryNonce','issuedUnix','startBeforeUnix'}
+           and cfg['kind']=='ROOT_EXPIRED_PENDING_MOUNT_COMPLETION_V1','typed pending cleanup data only')
+    now=time.time()
+    p.need(cfg['issuedUnix']<=now<cfg['startBeforeUnix']<=cfg['issuedUnix']+300
+           and re.fullmatch('[0-9a-f]{32}',cfg['recoveryNonce']),'fresh finite cleanup purpose')
+    parent=protected(cfg['parentPin'],0o444);old=protected(cfg['originalProfilePin'],0o444)
+    contract=source_contract.validate(old['sourceRoles'],old['queuePrograms'],old['installedSourceContractPin'])
+    p.need(parent['sourceRoles']==old['sourceRoles'] and parent['queuePrograms']==old['queuePrograms']
+           and parent['installedSourceContractPin']==old['installedSourceContractPin'],
+           'same immutable original parent/profile/source data')
+    import runtime_entry
+    observation=runtime_entry.observe_expired_pending({'parentPin':cfg['parentPin'],
+        'implementationDefinitionPin':current_profile['installedSourceContractPin']})
+    c=parent['candidate'];paths=source_contract.parent_paths(parent)
+    source_contract.bind_scope(p,parent);p.SOURCE_PLACEMENT_PIN=parent['sourcePlacementPin']
+    observed=media.observe(c)
+    run=object.__new__(Run);run.profile=old;run.contract=contract;run.contract_pin=old['installedSourceContractPin'];run.c=c
+    run.request={'kind':'EXPIRED_PENDING_CLEANUP_ONLY','startBeforeUnix':cfg['startBeforeUnix'],'wholeDeadlineUnix':cfg['startBeforeUnix']}
+    run.root=Path(paths['operationRoot']);run.record_prefix='recovery-'+cfg['recoveryNonce']+'-'
+    run.placement_root=Path(paths['placementRoot']);run.mount=Path(paths['mountRoot']);run.io=Path(paths['ioRoot'])
+    run.loop=observed['loop']['path'];run.loop_fd=None;run.mounted=True;run.submitted=True
+    run.sequence=0;run.effects=[];run.last_job=None;run.diagnostic_errors=[]
+    run.heavy=heavy_custody(old['queuePrograms'][2]);run.native=native_module(old['nativeReadOnlyPin'])
+    try:
+        values,_,_=run.private_queue()
+        targets=[r for r in values['rows']if r['id']==parent['jobId']]
+        p.need(len(targets)==1,'one actual never-allocated canonical target')
+        result=json.loads(targets[0]['result'])
+        p.need(validate_expired_pending_terminal(targets[0],result)==parent
+               and result['originalParent']['parentPin']==cfg['parentPin']
+               and not any(x[0]==parent['jobId']for x in values['bindings']),
+               'actual exact target terminal and no invocation binding before cleanup')
+        run.loop_fd=os.open(run.loop,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+        media.loop_guard(run.loop_role());run.close_current_mount()
+        return {'kind':'NORMAL_EXPIRED_PENDING_MEDIA_MOUNT_COMPLETION_V1','jobId':parent['jobId'],
+            'originalParentPin':cfg['parentPin'],'currentRootObservation':observation,
+            'leaseEverCreated':False,'leaseClosureInvented':False,
+            'mountAbsent':not media.owned_mount(run.mount,observed['loop']['path']),
+            'backingUnchanged':True,'diagnosticErrors':run.diagnostic_errors,'VMOrGPUActivation':False}
+    finally:
+        if run.loop_fd is not None:os.close(run.loop_fd);run.loop_fd=None
+
+
+def continue_closed_mount(profile_ref,current_profile=None):
     """Continue ONLY unfinished own readonly loop cleanup after canonical release."""
     p.need(os.getuid()==os.geteuid()==0,'Root owned mount completion only')
     cfg=protected(profile_ref,0o400)
+    if cfg.get('kind')=='ROOT_EXPIRED_PENDING_MOUNT_COMPLETION_V1':
+        p.need(current_profile is not None,'authenticated current cleanup implementation')
+        return continue_expired_pending_mount(cfg,current_profile)
     p.need(set(cfg)=={'kind','contextPin','operationProfilePin','recoveryNonce','issuedUnix','startBeforeUnix'}and cfg['kind']=='ROOT_CLOSED_MEDIA_MOUNT_COMPLETION_V1','cleanup-only typed data, no VM request')
     now=time.time();p.need(type(cfg['issuedUnix'])in(int,float)and cfg['issuedUnix']<=now<cfg['startBeforeUnix']<=cfg['issuedUnix']+300 and re.fullmatch('[0-9a-f]{32}',cfg['recoveryNonce']),'finite new cleanup purpose, never old VM grant extension')
     context=protected(cfg['contextPin'],0o400);parent=protected(context['parentPin'],0o444);c=context['candidate']
@@ -646,7 +718,7 @@ def main():
         cfg=protected(profile_pin,0o444)
         contract=source_contract.validate(cfg['sourceRoles'],cfg['queuePrograms'],cfg['installedSourceContractPin'])
         p.need(contract['preparationRoles']['run_current_media']['path']==str(Path(__file__).absolute()),'actual reviewed completion entry')
-        result=finish_failed_queue(json.loads(args.finish_failed_parent_pin_json),cfg)if args.finish_failed_parent_pin_json else continue_closed_mount(json.loads(args.complete_mount_pin_json))
+        result=finish_failed_queue(json.loads(args.finish_failed_parent_pin_json),cfg)if args.finish_failed_parent_pin_json else continue_closed_mount(json.loads(args.complete_mount_pin_json),cfg)
         print(p.canon(result).decode(),flush=True);return
     if args.complete_prepared_pin_json:
         cfg=protected(profile_pin,0o444)
