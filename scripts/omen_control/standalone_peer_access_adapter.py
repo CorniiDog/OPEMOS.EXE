@@ -246,7 +246,7 @@ def verify_inputs(request,io,boot,include_context=True):
  io.placementRoot=placement_root(parent['candidate'])
  return {'implementationDefinitionPin':io.implementationPin,'implementationSource':implementationSource,'implementationRoles':None if not compat else io.implementationDefinition['sourceRoles'],'implementationAccessRaw':accessRaw,'implementationAccessPin':accessRef,'implementationPeerRaw':implRaw,'implementationPeerPin':implRef,'originalInputOnly':original,'parent':parent,'parentPin':parentRef,'parentRaw':parentRaw,'context':context,'contextPin':contextRef,'contextRaw':contextRaw,'source':source,'assignmentPin':assignmentRef,'assignmentRaw':None if assignment is None else canonical(assignment).encode(),'grantPin':grantRef,'grantRaw':None if grant is None else canonical(grant).encode()}
 
-def _bind_placement(peer,parent,parent_ref,context,verify_access):
+def _bind_placement(peer,parent,parent_ref,context,verify_access,implementation_definition=None):
  """Bind only the fresh protected same-source/same-scope metadata operand.
  Never changes the frozen peer's nonce, strict geometry or owner predicate.
  """
@@ -255,7 +255,12 @@ def _bind_placement(peer,parent,parent_ref,context,verify_access):
  peer.need(peer.SOURCE_PLACEMENT_NONCE==nonce and candidate['nonce']==nonce and __import__('queue_assignment').execution_job(candidate,parent)==parent['jobId'],'D23 unused scope only; D22 is consumed')
  peer.need(parent['RootIssued']is True and parent['kind']=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'and parent['bootID']==candidate['hostBoot']and parent_ref['path']==__import__('source_contract').parent_paths(parent)['parentPath'],'existing exact Root parent/boot/source scope')
  __import__('source_contract').validate(roles,parent['queuePrograms'],parent['installedSourceContractPin'])
- peer.need((roles['libvirt_peer']['sha256'],roles['libvirt_peer']['bytes'])in((PEER_SHA,PEER_BYTES),(ORIGINAL_PEER_SHA,ORIGINAL_PEER_BYTES))and (roles['libvirt_access']['sha256'],roles['libvirt_access']['bytes'])in((ACCESS_SHA,ACCESS_BYTES),(ORIGINAL_ACCESS_SHA,ORIGINAL_ACCESS_BYTES)),'frozen exact D23 peer and unchanged access bytes')
+ if implementation_definition is not None:
+  definition=__import__('source_contract').read_definition(implementation_definition)
+  __import__('source_contract').validate(definition['sourceRoles'],definition['queuePrograms'],implementation_definition)
+  peer.need(peer.__file__==definition['sourceRoles']['libvirt_peer']['path']and definition['sourceRoles']['libvirt_peer']['sha256']==PEER_SHA,'actual separately authenticated current placement implementation')
+  peer.need(roles['libvirt_peer']['sha256']in(CLOSED_SUBJECT_PEERS|{PEER_SHA:PEER_BYTES})and roles['libvirt_peer']['bytes']==(CLOSED_SUBJECT_PEERS|{PEER_SHA:PEER_BYTES})[roles['libvirt_peer']['sha256']]and (roles['libvirt_access']['sha256'],roles['libvirt_access']['bytes'])==(ACCESS_SHA,ACCESS_BYTES),'enrolled original subject peer/access pair remains data')
+ else:peer.need((roles['libvirt_peer']['sha256'],roles['libvirt_peer']['bytes'])in((PEER_SHA,PEER_BYTES),(ORIGINAL_PEER_SHA,ORIGINAL_PEER_BYTES))and (roles['libvirt_access']['sha256'],roles['libvirt_access']['bytes'])in((ACCESS_SHA,ACCESS_BYTES),(ORIGINAL_ACCESS_SHA,ORIGINAL_ACCESS_BYTES)),'frozen exact D23 peer and unchanged access bytes')
  for name,ref in roles.items():peer.need(ref['path']==str(Path(roles['libvirt_peer']['path']).parent/(name+'.py'))and str(Path(roles['libvirt_peer']['path']).parent)in(SOURCE_ROOT,ORIGINAL_SOURCE_ROOT)and ref['identity']['st_uid']==ref['identity']['st_gid']==0 and stat.S_IMODE(ref['identity']['st_mode'])==0o444 and ref['identity']['st_nlink']==1,'same immutable Root source12 namespace')
  ref=parent['sourcePlacementPin'];qr=parent['placementQualificationPin'];root=placement_root(candidate)
  if 'operationContext'in candidate:__import__('source_contract').bind_scope(peer,parent)
@@ -291,9 +296,9 @@ def bind_placement(peer,parent,parent_ref,context=None):
  from libvirt_access import verify_prepared
  return _bind_placement(peer,parent,parent_ref,context,verify_prepared)
 
-def bind_observer_placement(peer,parent,parent_ref,context):
+def bind_observer_placement(peer,parent,parent_ref,context,implementation_definition=None):
  from libvirt_access import prepared_lineage
- return _bind_placement(peer,parent,parent_ref,context,prepared_lineage)
+ return _bind_placement(peer,parent,parent_ref,context,prepared_lineage,implementation_definition)
 
 @contextlib.contextmanager
 def load_pair(v):
@@ -320,7 +325,7 @@ def run(request,io,boot):
    with contextlib.ExitStack()as custody:
     heldPlacement=custody.enter_context(io.hold_placement(v['parent']['sourcePlacementPin']));heldQualification=custody.enter_context(io.hold_placement(v['parent']['placementQualificationPin']))
     if io.implementationPin is None:peer.validate_request(request)
-    binding=bind_observer_placement(peer,v['parent'],v['parentPin'],v['context']);need(binding['placementPin']==heldPlacement['ref']and binding['qualificationPin']==heldQualification['ref'],'binding consumes the two retained exact placement pins')
+    binding=bind_observer_placement(peer,v['parent'],v['parentPin'],v['context'],io.implementationPin);need(binding['placementPin']==heldPlacement['ref']and binding['qualificationPin']==heldQualification['ref'],'binding consumes the two retained exact placement pins')
     parent=v['parent'];candidate=parent['candidate']
     def custody(phase,intent,reg,state,files):return access.verify_phase(candidate,parent['preparedAccessPin'],parent['preparedDiskPins'],phase,intent,reg,state,files)
     proof=peer.observe_closed_subject(request,io.implementationPin,custody=custody)if io.implementationPin is not None else peer.observe(request,custody=custody)
