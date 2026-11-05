@@ -697,6 +697,37 @@ print(json.dumps({'uid':os.getuid(),'result':value,'defaultGuardRefused':True,'w
         self.assertEqual(value['actionsInProgress'],1)
         self.assertTrue(value['runnerBusy'])
 
+    def test_actual_r1_abi_composition_keeps_b4_controller_independent_of_protected_main(self):
+        from unittest import mock
+        raw=(Path(__file__).parent/'fixtures/normal_probe_r1_f2db_workflow.py.fixture').read_bytes()
+        current=types.ModuleType('actual_r1_mixed_version_source');current.__file__='reviewed-actual-r1-composition'
+        exec(compile(raw,current.__file__,'exec'),current.__dict__)
+        calls=[];assigned=0
+        def api(endpoint):
+            calls.append(endpoint)
+            if endpoint.endswith('/branches/main'):
+                return {'protected':True,'commit':{'sha':'e'*40}}
+            if '/actions/runners?'in endpoint:
+                return {'runners':[{'id':21,'name':'opemos-omen-robot','status':'online','busy':False,
+                        'labels':[{'name':'opemos-omen-robot'}]}]}
+            if '/actions/workflows/omen-robot.yml/runs?'in endpoint:
+                return {'total_count':1,'workflow_runs':[{'id':7,'status':'in_progress',
+                         'path':'.github/workflows/omen-robot.yml@refs/heads/main'}]}
+            if '/actions/runs/7/jobs?'in endpoint:
+                return {'total_count':assigned,'jobs':[{'id':9,'run_id':7,'status':'in_progress',
+                    'labels':['opemos-omen-robot'],'runner_id':21}]if assigned else []}
+            if '/actions/runs?status=queued'in endpoint:return {'total_count':0}
+            if '/actions/variables/'in endpoint:raise RuntimeError('old heartbeat absent')
+            raise AssertionError('unrelated global frontier must never determine native assignment')
+        policy={'mainCommit':'b'*40,'queueSourceSHA256':'d'*64}
+        with mock.patch.object(current,'gh_json',side_effect=api):
+            value=current.current_github(policy)
+            self.assertTrue(value['networkReachable']);self.assertTrue(value['protectedMain'])
+            self.assertEqual(value['mainCommit'],'b'*40);self.assertEqual(value['protectedMainCommit'],'e'*40)
+            self.assertEqual(value['actionsInProgress'],0);self.assertFalse(value['heartbeatCurrent'])
+            assigned=1;self.assertEqual(current.current_github(policy)['actionsInProgress'],1)
+        self.assertEqual(calls.count('repos/CorniiDog/OPEMOS.EXE/actions/workflows/omen-robot.yml/runs?status=in_progress&per_page=100'),2)
+
     def test_runner_assignment_frontier_scopes_real_consumer_and_keeps_unknowns_final(self):
         calls=[]
         def api(endpoint):
