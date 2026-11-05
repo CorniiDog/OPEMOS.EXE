@@ -105,6 +105,13 @@ def bind_known_control_worker(known,verified,independent,qref,persist):
  p.need(verified['jobId']==known['jobId']and verified['unit']==known['unit']and verified['invocation']==known['invocation']and verified['rowSHA256']==known['rowSHA256'],'same exact known control and independently authenticated canonical worker')
  return worker
 
+def load_pool_queue(parent):
+ # This is the current implementation, distinct from immutable prior subjects.
+ # The shared loader authenticates the whole V2 graph and supplies the same
+ # definition operand consumed by historical_lease_provenance.
+ return __import__('queue_assignment').load_queue(parent['queuePrograms'][0],
+     implementation_definition=parent['installedSourceContractPin'])
+
 class NativeIssueOps:
  MODEL_ONLY=False
  def __init__(self,parent,root):self.parent=parent;self.root=root;self.calls=[]
@@ -157,7 +164,7 @@ class NativeIssueOps:
   self.check_prepared_disks(c,parent['preparedDiskPins'])
   from libvirt_access import verify_prepared
   verify_prepared(c,parent['preparedAccessPin'],parent['preparedDiskPins'])
-  queue=load(parent['queuePrograms'][0],'postqueue_pool_queue',1048576)
+  queue=load_pool_queue(parent)
   rows=[];bindings=dict(value['bindings'])
   for r in value['rows']:
    item=dict(r);item['_poolBinding']=json.loads(bindings[r['id']])if r['id']in bindings else None;rows.append(item)

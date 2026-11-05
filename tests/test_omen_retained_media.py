@@ -1326,8 +1326,22 @@ except peer.Refused as error:
                     self.assertTrue(captures[-1]['proof']['allOwnedDescriptorsClosed'])
                     # A second immutable controller deployment consumes the
                     # original request as DATA. No executable/source relabel.
-                    current_queue=queue_assignment.load_queue(implementation['queuePrograms'][0],
-                        implementation_definition=implementation['sourceContractPin'])
+                    # Actual postqueue caller loader -> same real Root historical
+                    # recovery consumer below. This previously lost its explicit
+                    # implementation definition during manual module loading.
+                    import postqueue_issuer as current_issuer
+                    postqueue_parent={'queuePrograms':implementation['queuePrograms'],
+                        'installedSourceContractPin':implementation['sourceContractPin']}
+                    current_queue=current_issuer.load_pool_queue(postqueue_parent)
+                    self.assertEqual(current_queue.currentImplementationDefinitionPin,implementation['sourceContractPin'])
+                    for fault in ('hash','owner','escape','queue-member'):
+                        wrong=copy.deepcopy(postqueue_parent)
+                        if fault=='hash':wrong['installedSourceContractPin']['sha256']='0'*64
+                        elif fault=='owner':wrong['installedSourceContractPin']['identity']['st_uid']=1000
+                        elif fault=='escape':wrong['installedSourceContractPin']['path']='/run/../tmp/installed-controller.json'
+                        else:wrong['queuePrograms'][0]['sha256']='0'*64
+                        with self.subTest(postqueueDefinition=fault),self.assertRaises(Exception):
+                            current_issuer.load_pool_queue(wrong)
                     combined_roots,combined_socket=storage_module.declared_metadata_roots(storagepin,nonce,declared_config,
                         storage_value,True,request,implementation_definition=implementation['sourceContractPin'])
                     self.assertTrue(set(implementation_layout.values()).issubset(combined_roots))
