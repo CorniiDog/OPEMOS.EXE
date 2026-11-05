@@ -77,6 +77,38 @@ def pending_dispatcher_scope(ref,actor,pids):
       'existing exact owned user heavy scope only')
  return scope.name
 
+def existing_heavy_ofd(N,C,ref):
+ # Reuse the existing Bash-held OFD model. No lock acquisition or mutation.
+ path=Path('/run/user/1000/opemos-heavy.lock');fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+ try:
+  st=os.fstat(fd);fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+  ident=lambda value:{k:getattr(value,k)for k in fields};initial=ident(st)
+  need(stat.S_ISREG(st.st_mode)and st.st_uid==st.st_gid==1000 and st.st_nlink==1 and st.st_size==0,
+       'existing ordinary empty UID1000 heavy lock')
+  parent=C.proc(ref['pid']);need(parent['start']==ref['start']and parent['uids']==[1000]*4
+       and len(parent['argv'])>1 and parent['argv'][1]==str(N.QUEUE/'heavy.sh').encode(),
+       'same actual source-bound Bash heavy wrapper')
+  records=[]
+  for pid in(ref['pid'],ref['worker']['pid']):
+   found=[];items=list((Path('/proc')/str(pid)/'fd').iterdir());need(len(items)<=16384,'finite heavy-owner descriptors')
+   for item in items:
+    try:
+     obj=item.stat()
+     if(obj.st_dev,obj.st_ino)!=(st.st_dev,st.st_ino):continue
+     for line in(Path('/proc')/str(pid)/'fdinfo'/item.name).read_text().splitlines():
+      if not line.startswith('lock:'):continue
+      row=line.split('lock:',1)[1].split()
+      if len(row)<8 or row[1]!='FLOCK'or row[3]!='WRITE':continue
+      major,minor,inode=row[5].split(':')
+      if(int(major,16),int(minor,16),int(inode))==(os.major(st.st_dev),os.minor(st.st_dev),st.st_ino):
+       found.append({'fd':int(item.name),'kernelOFDRecord':row})
+    except FileNotFoundError:continue
+   need(len(found)==1,'one real original heavy OFD in parent and worker');records.append({'pid':pid,**found[0]})
+  need(records[0]['kernelOFDRecord']==records[1]['kernelOFDRecord']and C.proc(ref['pid'])==parent
+       and initial==ident(os.fstat(fd))==ident(path.lstat()),'same original inherited heavy OFD/parent/named inode')
+  return {'path':str(path),'identity':initial,'OFDs':records}
+ finally:os.close(fd)
+
 def close_idle_pending_dispatcher(row,N,C,qraw,policy,state,parent_pin,end,transients):
  # A pending parent cannot make the old source worker exit naturally. Only
  # after its control job completed normally may the owning manager stop this
@@ -99,9 +131,10 @@ def close_idle_pending_dispatcher(row,N,C,qraw,policy,state,parent_pin,end,trans
       'no current assigned Worker or QEMU before owned worker retirement')
  group=Path('/sys/fs/cgroup')/actor['cgroup'].removeprefix('0::').lstrip('/')
  pids=sorted(int(v)for v in(group/'cgroup.procs').read_text().split())
- scope=pending_dispatcher_scope(ref,actor,pids)
+ scope=pending_dispatcher_scope(ref,actor,pids);heavy=existing_heavy_ofd(N,C,ref)
  need(snapshot(N,qraw,end,transients)==(rows,binds,cfg)and C.owning_dispatcher(row,policy,state)==ref
-      and C.proc(actor['pid'])==actor and sorted(int(v)for v in(group/'cgroup.procs').read_text().split())==pids,
+      and C.proc(actor['pid'])==actor and sorted(int(v)for v in(group/'cgroup.procs').read_text().split())==pids
+      and existing_heavy_ofd(N,C,ref)==heavy,
       'same complete ledger/current owned worker/source/manager before normal stop')
  import select
  lifetime=os.pidfd_open(actor['pid'],0)
@@ -115,7 +148,7 @@ def close_idle_pending_dispatcher(row,N,C,qraw,policy,state,parent_pin,end,trans
   need(time.monotonic()<end,'original dispatcher/worker closure remains unknown; never repeat stop');time.sleep(.1)
  need(snapshot(N,qraw,end,transients)==(rows,binds,cfg),'all canonical rows/bindings/config preserved by manager stop')
  return {'kind':'NORMAL_EXACT_IDLE_DISPATCHER_SCOPE_STOP_FOR_EXPIRED_PENDING',
-         'dispatcher':ref,'scope':scope,'pendingJob':pending[0]['id'],'parentPin':parent_pin,
+         'dispatcher':ref,'scope':scope,'originalHeavyOFD':heavy,'pendingJob':pending[0]['id'],'parentPin':parent_pin,
          'RootPendingObservation':proof,'canonicalRowsChanged':False,'VMOrGPUAction':False,
          'nativeHistoricalClosureClaimed':False,'normalManagerStopNumeric':result.returncode,
          'originalWorkerPIDFDOpenedAndClosed':True}
