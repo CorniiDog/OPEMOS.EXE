@@ -1704,7 +1704,7 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             mainCommit=policy['mainCommit'],protectedMainCommit=policy['mainCommit'],
             heartbeatCurrent=False,heartbeatNonce=None,
             networkReachable=True,protectedMain=True,queueKnown=True,workerLockFree=True,
-            runnerOnline=False,runnerBusy=False,actionsInProgress=0,sourceOwnerBusy=False,
+            runnerOnline=False,runnerBusy=False,actionsInProgress=0,actionsQueued=0,sourceOwnerBusy=False,
             otherActiveJobs=[],unknownReservations=[],guestActive=False,gpuLeaseActive=False)
         state=dict(kind='RUNNER21_AUTO_RECOVERY_STATE_V1',renewals=4,epochExpiresUnix=now+7*86400,
             inflight=nonce,lastOutcome={'action':'RECONCILE_CLOSED','nonce':nonce,
