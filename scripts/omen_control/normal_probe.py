@@ -280,6 +280,10 @@ def health_queue(source_raw,implementation_pin=None):
             else:sys.modules[name]=old
 
 def private_queue(source_raw,observer_capture=None,pool_capture=None,implementation_pin=None):
+    # normal_cycle.current_rows also uses this entry directly. Its existing
+    # authenticated policy must select the same observer as observe().
+    if implementation_pin is None:
+        implementation_pin=root_policy().get('healthImplementationDefinitionPin')
     state=QUEUE/'state'; names=['queue.sqlite3','queue.sqlite3-wal',
                                 'queue.sqlite3-shm','queue.sqlite3-journal']
     limits=[MAX_DB,8*1024*1024,1024*1024,8*1024*1024]
