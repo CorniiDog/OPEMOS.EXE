@@ -97,6 +97,7 @@ jobs:
         run: |
           python3 -m unittest discover -s tests -p 'test_vm_runtime_diagnostics.py' -v
           python3 -m unittest discover -s tests -p 'ubuntu_vm_runner_test.py' -k virtual_usb -v
+          python3 -m unittest discover -s tests -p 'linux_package_artifact.py' -v
 
       - name: Exercise Robot source adapter and real Unix client fault contracts
         run: python3 -m unittest discover -s tests -p 'test_omen*.py' -v
