@@ -46,6 +46,80 @@ def fixture_reap_receipt(child, row):
 
 
 class RunnerTest(unittest.TestCase):
+    def test_virtual_usb_native_sender_preserves_partial_qmp_and_rejects_foreign_target(self):
+        import copy,importlib.util
+        spec=importlib.util.spec_from_file_location('ubuntu_connection_control',
+            Path(__file__).resolve().parents[1]/'scripts/omen_control/connection_control.py')
+        control=importlib.util.module_from_spec(spec);spec.loader.exec_module(control)
+        nonce='a'*32;birth={'pid':731,'start_ticks':'241','inherited_nonce':nonce}
+        binding={'nonce':nonce,'artifact_source':'c'*40,'package_sha256':'d'*64}
+        cfg={'nonce':nonce,'source_commit':'c'*40,'package_sha256':'d'*64,'whole_seconds':60}
+        ready={'nonce':nonce,'process':birth,'app':{'pid':731,'window_id':412}}
+        native={'pid':731,'window_id':412,'enabled':True,'visible':True,'readOnlyObservation':True,
+                'rect':[30,40,100,24],'point':{'x':80,'y':52}}
+        events=[]
+        def send(command,args):
+            events.append((command,args))
+            if len(events)==2:raise TimeoutError('modeled lost QMP ACK after actual request')
+            return {}
+        q=SimpleNamespace(s=SimpleNamespace(settimeout=lambda n:None),call=send)
+        operation=control.Pipeline(binding,cfg,q,None,ready,Path('/modeled-admitted-private-runtime'))
+        operation.target=lambda *a,**k:{'value':copy.deepcopy(native)}
+        # Model external native/socket/frame facts explicitly. The production
+        # pointer sender records and checks its actual ordered event calls.
+        with patch.object(control,'process',return_value=None),patch.object(control,'frame',
+                return_value={'width':1280,'height':800}):
+            with self.assertRaises(TimeoutError):operation.click('Build','Build NVIDIA Image')
+            self.assertEqual(len(operation.actions),1)
+            self.assertEqual(len(operation.actions[0]['actualQMPInput']),2)
+            self.assertIsNone(operation.actions[0]['actualQMPInput'][1]['response'])
+            events.clear();bad=copy.deepcopy(native);bad['pid']=732
+            operation.target=lambda *a,**k:{'value':bad}
+            with self.assertRaisesRegex(RuntimeError,'native control process'):
+                operation.click('Build','Build NVIDIA Image')
+            self.assertEqual(events,[])
+            operation.target=lambda *a,**k:{'value':native};operation.end=time.monotonic()-1
+            with self.assertRaisesRegex(RuntimeError,'deadline before actual pointer'):
+                operation.click('Build','Build NVIDIA Image')
+            self.assertEqual(events,[])
+
+    def test_virtual_usb_readback_matches_guest_observed_image_without_second_host_copy(self):
+        import copy,hashlib,stat
+        nonce='b'*32;output='/home/guest/opemos-robot-'+nonce+'/built.img'
+        payload=b'completed guest image'*512
+        birth={'pid':713,'start_ticks':'123','inherited_nonce':nonce}
+        image={'path':output,'bytes':len(payload),'sha256':hashlib.sha256(payload).hexdigest(),
+               'identity':dict(st_dev=7,st_ino=45,st_mode=stat.S_IFREG|0o600,st_uid=1000,
+                   st_gid=1000,st_nlink=1,st_size=len(payload),st_mtime_ns=4,st_ctime_ns=4)}
+        witness={'kind':'NATIVE_OBSERVATION','request_kind':'FILE','nonce':nonce,
+                 'sequence':12,'clock_ns':12345,'process':birth,'value':image}
+        # Guest process/image facts are explicit model DATA. Actual host file,
+        # allocation, flush and every-byte comparison use the production path.
+        with tempfile.TemporaryDirectory(prefix='opemos-observed-usb-') as directory:
+            root=Path(directory);root.chmod(0o700)
+            with runner.virtual_usb_backing(root,1048576,0) as (backing,fd):
+                os.pwrite(fd,payload,0)
+                value=runner.virtual_usb_readback_observed(backing,fd,witness,birth,nonce,output)
+                self.assertEqual(value['readbackSHA256'],image['sha256'])
+                self.assertEqual(value['bytesRead'],1048576)
+                self.assertFalse(value['guestGUIOrBootAcceptanceClaimed'])
+                self.assertEqual(sorted(p.name for p in root.iterdir()),['virtual-usb.raw'])
+                for fault in ('nonce','process','path','extent','hash','owner'):
+                    bad=copy.deepcopy(witness)
+                    if fault=='nonce':bad['nonce']='c'*32
+                    elif fault=='process':bad['process']['start_ticks']='124'
+                    elif fault=='path':bad['value']['path']='/tmp/foreign.img'
+                    elif fault=='extent':bad['value']['bytes']+=512
+                    elif fault=='hash':bad['value']['sha256']='0'*64
+                    else:bad['value']['identity']['st_uid']=0
+                    with self.subTest(fault=fault),self.assertRaises(ValueError):
+                        runner.virtual_usb_readback_observed(backing,fd,bad,birth,nonce,output)
+                for offset in (0,len(payload)+31):
+                    os.pwrite(fd,b'x',offset)
+                    with self.subTest(offset=offset),self.assertRaises(ValueError):
+                        runner.virtual_usb_readback_observed(backing,fd,witness,birth,nonce,output)
+                    os.pwrite(fd,payload[:1] if offset==0 else b'\0',offset)
+
     def test_virtual_usb_native_target_uses_current_pid_window_and_real_geometry(self):
         spec=importlib.util.spec_from_file_location('ubuntu_native_observer',
             Path(__file__).resolve().parents[1]/'scripts/omen_control/observer_guest.py')

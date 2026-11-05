@@ -906,6 +906,61 @@ def virtual_usb_readback(backing, fd, image):
         os.close(source)
 
 
+def virtual_usb_readback_observed(backing, fd, observation, app_birth, nonce, output_path):
+    """Compare every USB byte with the same guest's completed-image witness.
+
+    The owning normal job authenticates the observer channel and QEMU closure.
+    The image remains inside its bounded guest COW; no second host image copy
+    is needed. This function grants no boot, GUI-write or guest-source trust.
+    """
+    fields = ('st_dev', 'st_ino', 'st_mode', 'st_uid', 'st_gid', 'st_nlink',
+              'st_size', 'st_mtime_ns', 'st_ctime_ns')
+    identity = lambda s: {name: getattr(s, name) for name in fields}
+    if (re.fullmatch('[0-9a-f]{32}', nonce or '') is None or
+            observation.get('kind') != 'NATIVE_OBSERVATION' or
+            observation.get('request_kind') != 'FILE' or observation.get('nonce') != nonce or
+            observation.get('process') != app_birth or app_birth.get('inherited_nonce') != nonce or
+            type(observation.get('sequence')) is not int or observation['sequence'] < 1 or
+            type(observation.get('clock_ns')) is not int or observation['clock_ns'] <= 0):
+        raise ValueError('same actual guest app/observer completed-image witness required')
+    image = observation['value']
+    path = Path(image['path'])
+    info = image['identity']
+    if (set(image) != {'path', 'bytes', 'sha256', 'identity'} or set(info) != set(fields) or
+            not path.is_absolute() or '..' in path.parts or
+            path != Path(output_path) or
+            not any(parent.name == 'opemos-robot-' + nonce for parent in path.parents) or
+            not stat.S_ISREG(info['st_mode']) or info['st_uid'] != 1000 or info['st_nlink'] != 1 or
+            info['st_mode'] & 0o022 or info['st_size'] != image['bytes'] or
+            type(image['bytes']) is not int or not 0 < image['bytes'] <= backing['capacityBytes'] or
+            image['bytes'] % 512 or re.fullmatch('[0-9a-f]{64}', image['sha256']) is None):
+        raise ValueError('actual owned guest output extent/hash/custody required')
+    virtual_usb_identity(backing, fd)
+    os.fsync(fd)
+    before = identity(os.fstat(fd));prefix = hashlib.sha256();whole = hashlib.sha256();offset = 0
+    while offset < backing['capacityBytes']:
+        count = min(1048576, backing['capacityBytes'] - offset)
+        block = os.pread(fd, count, offset)
+        if len(block) != count:
+            raise ValueError('short whole virtual USB readback')
+        whole.update(block)
+        extent = min(count, max(0, image['bytes'] - offset))
+        prefix.update(block[:extent])
+        if any(block[extent:]):
+            raise ValueError('fresh virtual USB tail differs')
+        offset += count
+    virtual_usb_identity(backing, fd)
+    if (prefix.hexdigest() != image['sha256'] or
+            before != identity(os.fstat(fd)) or before != identity(os.lstat(backing['path']))):
+        raise ValueError('USB bytes differ from actual guest image or backing epoch changed')
+    return {'kind': 'OWNED_REGULAR_FILE_VIRTUAL_USB_READBACK', 'path': backing['path'],
+            'bytesRead': offset, 'imageBytes': image['bytes'], 'readbackSHA256': prefix.hexdigest(),
+            'backingSHA256': whole.hexdigest(), 'identity': before, 'hostFlushCompleted': True,
+            'guestImageObservationSHA256': hashlib.sha256(json.dumps(observation, sort_keys=True,
+                separators=(',', ':'), allow_nan=False).encode()).hexdigest(),
+            'guestGUIOrBootAcceptanceClaimed': False}
+
+
 def windows_runtime_lock(root):
     refuse_windows_lease(root)
     path = Path(root) / '.lifecycle-lock'

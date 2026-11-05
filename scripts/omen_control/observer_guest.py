@@ -161,7 +161,7 @@ def accessible_descendants(root):
             if child is not None:pending.append((child,depth+1))
 
 
-def observed_control(desktop,window,label,roles,states,screen):
+def observed_control(desktop,window,label,roles,states,screen,probe=False):
     """Fresh PID/window-owned native target geometry, without AX/DOM activation."""
     require(type(label)is str and 0<len(label)<=512 and roles
             and set(roles)<={'push button','entry','text','check box','list item','menu item','combo box'},
@@ -192,8 +192,32 @@ def observed_control(desktop,window,label,roles,states,screen):
                 'pid':window['pid'],'window_id':window['window_id'],
                 'point':{'x':box.x+box.width//2,'y':box.y+box.height//2},
                 'enabled':True,'visible':True,'readOnlyObservation':True})
+    if probe and not matches:return {'available':False,'readOnlyObservation':True}
     require(len(matches)==1,'one genuine enabled PID/window-owned native control')
     return matches[0]
+
+
+def observed_names(desktop,window,states):
+    """Visible native names in the original app, never editable/secret values."""
+    count=desktop.get_child_count();require(type(count)is int and 0<=count<=4096,'bounded native desktop')
+    names=[]
+    for index in range(count):
+        app=desktop.get_child_at_index(index)
+        if app is None or app.get_process_id()!=window['pid']:continue
+        for node in accessible_descendants(app):
+            if node.get_process_id()!=window['pid']or node.get_role_name()in('password text','entry'):continue
+            state=node.get_state_set()
+            if not state.contains(states['visible'])or not state.contains(states['showing'])or state.contains(states['defunct']):continue
+            component=node.get_component_iface()
+            if component is None:continue
+            box=component.get_extents(states['screen']);wx,wy,ww,wh=window['rect']
+            if not(0<box.width and 0<box.height and wx<=box.x and wy<=box.y
+                    and box.x+box.width<=wx+ww and box.y+box.height<=wy+wh):continue
+            name=node.get_name()
+            require(type(name)is str and len(name)<=8192,'bounded native name')
+            if name and name not in names:names.append(name)
+            require(len(names)<=512 and sum(map(len,names))<=131072,'finite visible native names')
+    return {'names':names,'pid':window['pid'],'window_id':window['window_id'],'readOnlyObservation':True}
 
 
 def pipeline_requests(port,x,app,birth,nonce,config_path,config_sha):
@@ -268,8 +292,13 @@ def pipeline_requests(port,x,app,birth,nonce,config_path,config_sha):
         if kind=='CONTROL':
             window=next((w for w in owned if w['window_id']==request['window_id']),None)
             require(window is not None,'mapped original app or native transient window')
-            value=observed_control(desktop,window,request['label'],request['roles'],states,cfg['display'])
+            value=observed_control(desktop,window,request['label'],request['roles'],states,cfg['display'],
+                probe=request.get('probe')is True)
         elif kind=='WINDOWS':value={'windows':owned}
+        elif kind=='NAMES':
+            window=next((w for w in owned if w['window_id']==request['window_id']),None)
+            require(window is not None,'original mapped app/native transient for visible names')
+            value=observed_names(desktop,window,states)
         elif kind=='FILE':value=file_observation(request['role'])
         elif kind=='USB':
             matches=[]
