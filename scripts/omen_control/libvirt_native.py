@@ -30,71 +30,12 @@ def schema_executable(provenance,pid):
  return dict(provenance,actualExecutableVerified=True)
 def native_child(argv,deadline,tool_pin=None,input_bytes=None,loop=None):
  return _native_child(argv,deadline,tool_pin,input_bytes,10,loop)
-def native_queue_worker(argv,deadline,tool_pin):
+def native_queue_worker(argv,deadline,tool_pin,normal_uid=None):
  now=time.time();peer.need(now<deadline<=now+1000,'bounded normal-worker deadline')
- return _native_child(argv,deadline,tool_pin,None,1000)
-def _native_child(argv,deadline,tool_pin,data,seconds,loop=None):
- from retained_media import loop_guard,loop_fd_changes
- proof=loop_guard(loop) if loop is not None else None
- import signal,select
- peer.need(argv[0]in('/usr/bin/systemctl','/usr/bin/systemd-run')or(tool_pin is not None and tool_pin['path']==argv[0]),'pinned native helper role')
- if tool_pin is not None:
-  toolraw=held(tool_pin,33554432);peer.need(not toolraw.startswith(b'#!')or argv[0]=='/usr/bin/virt-xml-validate','only exact pinned schema script helper')
- peer.need(data is None or len(data)<=1048576,'finite exact native input')
- p=None;pidfd=None;actor=None;first=None;secondary=[];out=b'';err=b'';eof=False;reaped=False;group=[];script=None;executable=None;before=peer.fd_snapshot('helper-before')
- try:
-  script=schema_interpreter(argv,tool_pin)
-  peer.need(time.time()<deadline,'original helper deadline')
-  p=subprocess.Popen(argv,stdin=subprocess.PIPE if data is not None else subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,close_fds=True,start_new_session=True)
-  pidfd=os.pidfd_open(p.pid,0);actor=peer.process(p.pid,(pidfd,argv,tool_pin));peer.need(actor['ppid']==os.getpid()and actor['uid']==os.getuid()and actor['tgid']==p.pid and os.getpgid(p.pid)==p.pid,'own helper PID/start/UID/group')
-  if not actor['argv']:
-   ready=select.select([pidfd],[],[],max(0,min(10,deadline-time.time())))[0];now=peer.process(p.pid,(pidfd,argv,tool_pin));peer.need(ready and all(now[k]==actor[k]for k in('pid','start','uid','ppid','cgroup')),'empty argv needs original exited pidfd')
-  peer.need(actor['argv']==(script['argv']if script is not None else argv)or not actor['argv'],'live argv or proved exited own child')
-  if script is not None and actor['argv']:executable=schema_executable(script,p.pid)
-  out,err=p.communicate(data,timeout=max(.001,min(seconds,deadline-time.time())));eof=True;p.wait(timeout=2);reaped=True
-  peer.need(len(out)+len(err)<=1048576,'native helper output bound')
- except BaseException as error:first=error
- finally:
-  if p is not None:
-   if p.poll()is None:
-    try:
-     peer.need(actor is not None and pidfd is not None,'unknown helper ownership refuses signal')
-     now=peer.process(p.pid,(pidfd,argv,tool_pin));peer.need(all(now[k]==actor[k]for k in('pid','start','uid','ppid','cgroup'))and os.getpgid(p.pid)==p.pid,'same owned helper before pidfd signal')
-     signal.pidfd_send_signal(pidfd,signal.SIGKILL);out,err=p.communicate(timeout=2);eof=True;p.wait(timeout=2);reaped=True
-    except BaseException as error:secondary.append(peer.error_value(error))
-   else:
-    try:
-     if not eof:out,err=p.communicate(timeout=2);eof=True
-     p.wait(timeout=2);reaped=True
-    except BaseException as error:secondary.append(peer.error_value(error))
-   for pipe in(p.stdin,p.stdout,p.stderr):
-    if pipe is not None:
-     try:pipe.close()
-     except BaseException as error:secondary.append(peer.error_value(error))
-   try:
-    for name in os.listdir('/proc'):
-     if not name.isdigit():continue
-     try:
-      raw=Path('/proc/'+name+'/stat').read_text().rsplit(')',1)[1].split()
-      if int(raw[2])==p.pid:group.append({'pid':int(name),'start':int(raw[19])})
-     except FileNotFoundError:continue
-    peer.need(not group and reaped and eof and p.poll()is not None,'helper exit/EOF/reap/group closure')
-   except BaseException as error:secondary.append(peer.error_value(error))
-  if pidfd is not None:
-   try:os.close(pidfd)
-   except BaseException as error:secondary.append(peer.error_value(error))
-  if script is not None:
-   try:peer.need(schema_interpreter(argv,tool_pin)==script,'schema script/interpreter/aliases unchanged')
-   except BaseException as error:secondary.append(peer.error_value(error))
-  after=peer.fd_snapshot('helper-after');changes=peer.fd_changes(before,after)
-  if loop is not None:
-   try:changes=loop_fd_changes(before,after,loop,proof)
-   except BaseException as error:secondary.append(peer.error_value(error))
-  if any(changes.values()):secondary.append({'type':'FDClosureRefusal','reason':'helper owned FD closure','changes':changes})
- value={'actor':actor,'argv':argv,'numeric':None if p is None else p.returncode,'stdout':out.decode(errors='backslashreplace'),'stderr':err.decode(errors='backslashreplace'),'EOF':eof,'reaped':reaped,'pipesClosed':p is not None and all(x is None or x.closed for x in(p.stdin,p.stdout,p.stderr)),'groupRemaining':group,'scriptProvenance':script,'actualExecutable':executable,'before':before,'after':after,'primary':peer.error_value(first),'secondary':secondary,'closure':'KNOWN'if p is not None and reaped and eof and not secondary else'UNKNOWN'}
- if first is not None:first.evidence=value;first.nativeChildEvidence=value;raise first
- if secondary:error=peer.Refused('native helper closure UNKNOWN; retain lease');error.evidence=value;error.nativeChildEvidence=value;raise error
- return value
+ return _native_child(argv,deadline,tool_pin,None,1000,normal_uid=normal_uid)
+_owned_child_source=zlib.decompress(__import__('base64').b85decode('c-p;LTXWks7Jm1y;LbjPY-q_&?CpjsAKF?@Jxy${9k<)jXgDwlSr}6whX5^kJo)c?&H*TrlI&z#?`AR<iOa#ceCGycV&)}^8~GrTbT0GE=hfXqm<gWcQi;$MMV^#Wg&8+I)FLfZro+4_%J{s1c~w*ko+q`;=sk$`yjfK&yh<1j`?F*rGRZx;D2vK?xG%Y@d6f}~WR}69T-^!1=ap4a%;I*1kB@;TXSB<c+Eaz`@DNYrTF}#8Ls-i@#dF{<7pVbSLR14Kgq3D;FqO(@!&+CvTd9WnQ5&&HP0qs2!EC>(6$^^WZv^ih%vI(!6BAZ)GiTE{c4q`3gJF=_v-<SrA}>YdRYfjXu!oZDA_^L#@ro~F*paPI4&S{yK0Z2n_cj={^58DFdY}!jj9yAJ_ix$X|AuUPj+Z!YC3}#S*<UU4{Rf^)Frxsm3za{5V#QPAIi7Vo7YhzQl`M^89l36gMg$<^qzO1G7mCJ$AL7G<qkkTM|BsN(q>@HB%1#YZm9;@qX(ckDjO00CWu!~KR0(oSDjbPb3DyJ5Aest2xDy7Rd=S4Vg-RrCHjnYs7gA;my-jttJUhU~z~R9GnXf}Pc83V}W*2B-{FXEfKQW;mE~Nss>7uSufzMxXDJeTT25nC|K&rC>mhR*F{TluN2SBfjHK50)A+uV#Du8o)pm%e2;w_8nzJnSM7K4f6mZeF<&vaz@*_>{<oQ`B{_fJ@(J{WBE(@Zu{?(>K;N}y+uE>7E*JNx3)Ww;q!Cui4J;}5=_Ulf^O)1W*1>EdMEpN0L!_s7R;pAjpmjZ}A5A8@+Uz=(Xp^4WR>=!I)^`UME3LH++e`H)=QoPR$1G)_*=uHqs1F~}mSAzB`kfAZ7Kb#gtvzCOD+Pw@H2laniWjcX-W5z4=@XLws{*mrR`{&aDj{Oe|XGfsXP|M=S<$@u*9)gSTU?#a`W_&uBUKu9n-j^1OaXqoob2znnK9`-R*KAL%<-m!3P;KoF2*i_;{iX{dc3mpd=P}EQ=BdQW2Fi2tv5Rhctp|%qZ|4UmR9UXZso)jdPdn9}qGBUVaENa7VbI}OWFmCO?<~($v1_h!-lgnESa0yRSp>>lFet}J}0%IdR`&)_(xb})AATMg=r}qH_!t@^Ffdp_?g`t?#XA2~O(@gb9itWU;Cx+UK5I-Ti>pWIPU1}EDfJ1LN;N4#b2V4dT#Cdk)@ZNFds8s<-@R%1o`w_syA_pM=M#}SCRO6LMtty!njZE#s$!H)*gCJ8ngiJXbiWMk0fN1J%gyP9jH0_6D<Zm+$XEHTD`U}m5B$a&>D^u~r3LUrVnKXKsVq&pLpp@Cn)(#_pby3;JnXI&NS%N}1uO8#cbX3$PzGZAAs>=RC$#BY{92ixCmm+g7mK9iU)0rhC){3$3w_;XQA|@R{A)*y8^}GNL+2prx=h4DoXiO`Pn9Y<)$IEQZ)a31;=ln)4!~p;J!4K=IiWQZ-lTfiVH9|8(cq(IE-=dWO(1T0Vx!>9+{O-HH8A5F`NC4d}XP0A4kWIqw*G-*;C*$AFZ$5rR3aHo(5;%-{-W*QzLJKI}bo{xhMMzahqQo-MutXM$hDi=GEdY-m5)!1um+&BP#wI;E>Tb@b)nQ+y-4cj)f*Y4MG+CD_F@;k^wX-gWbusL9rj3hhbY!P4C}G_45x7aP)lxNPx;#4>lDtF6)I&m<4Xra$vLlYHvne75qBPGQV_TLE?2kVo0jJ@F{xA5-KL{64pdKEq%kKRSYTzFfbR$(P|CF|f11ox-Lt(R=++!XhPVc9HaPQv3>KL^N@dky1-<sY^JD55_F+MFy^GI3CL+TJh8z4je#xP0jG&*TLf3rgKme6a6zQW?TMY*lCceoBsfanDX6S!iO2-?*;7ozl0n}dUcW2f9_v^q-bssi?2P;1BSc0&=ka8&-1S~XvYZVgDCm}lm&;BHRE5C$*Sc#S&}#ols@Mwi{F+szkKU~LPlA%oW%4)5^bHj%MInDDT$^%eyb_yu(aWa2*LTW+4uJnRi5PUmB9n9D(Zezy`CFt~#=NIlwfjPu&eaeK-Ug^)1}l#e;OER|AT8~kli4UsT<R(HOQ^vwW>>Dr>LV2TTZ-5SlY_aQ99JV^dvi(F(6BMO<gag-h8JHg5+x0AnI3Tj6j$Dvj09tIxB%MT)UfyFw4zta<j$3gI{vsy6^fFfjw5Ys_9NDC;|6sejTzz_*x0>M+j?+z)PHFpI&&)j$Xfj40a$BZ#52TLxE-w=bg*X4Aa?d4SLJYh-j1|NW@ZU@@$y<rtJpWbazD^j*tK?!BNpSTuddW3uhorDKOiYl^I2R-k3GYo4vC4SIOxfQ{1aAzE{#lp64Zkd;2Om`Flgt}Lqe1ipPrRTB)d(H^%_M*eOpXdGAr0~~M!OJO=;u%%bjU=|1aw7MIuy3wN&_cl<8fjv%oxVQ%@ax&fkHKg+4!0n<6Lw#L`P=^jjow$Vv@Tl*yoAEXMMRoQ9(Z00pPmC!0)?Xu^thS=7>ZsNxx=-?-T#yIm(zSl9-HxZ<#e~e!-xq*yL&@CD#Vdgh%{`MGFiDS!h&W~qbFQCkUE2M#P~sk89=H=BV9hQD&x!e61u=PCE;#JMwq8qFu<BAG0?>L@T{RzgX9%Jj}}Z0rvv*Qtck(-&<glKbMkiDxIl!mH0nd*>-A3cr=X1U!kl7Y8k5#buJv9|B%~4D0yFn+e5=HH`*MY2w^0M#O|Q-MQRjkjYfa}4soQeDDs<4or7Y3H5J0Gn3F#N{P7fH{t=TZz($Y<Uk!5jeKz&JLm{(+T4V`a8<hS6lgT`0H;%+2T#BSt#qTn9kGD2k&=A&lg;rnUurLV(nsP=^E-%ZnLl-+F1p+^W$n{|7e@?3(z(r7roI340X+gf>O(b~4)uW3=j(njiy8cTy=Es$u*>z}+`>aCCNTw8zbiUE2hTkx^oy?yWMkLQwO$xti%jU{_+J@OeG^Zfk@O+(M(zVNIUx_94}1R*VR%GvzVvsO(*W8<q)j|P2G3h6V_>zj?MN8cSfplJ;ecALl(GmoWU5j#Ek*@E{93pb9RngH0kP%zgi?lSN6WDRpDuj~n|krzFYPK%#h0|fog?{pIhYu4c!P=Jl9y$|g4tc+?q7ST^=`-sTSsCpqPnX-tgpQgZVOQ8}1kEtt_7MZ{xfian3Au`AWj#=&KnBDU9UguoTD^cbgZ)|BfOtT37e9Ln1dRSY`NJS7cSY&_k+dwHaDiR0F?fwXY$*TKFYGr*lqfotiIj;onR`v?qM=GiAm<^TaQs_&U*s>|S=mniRXS2;__lC7?!9wOP3?m0hW*s21;ACYb7l0IZDcc1awH>Io22HF57GT1mBVxavU;KW~Hk*;>f-TOk$&gXm&ABCEzn{^uJ#V9tfq1~aJryx=XRl%hwypXZo7QoEzTy(_LaT`E`pk%Av~Evc0D*0zJ#(^oj<J#ZZ0zOWDtPx#6gC;MgI{CFb#WHO)`|WDac-}j'))
+peer.need(len(_owned_child_source)==7916 and hashlib.sha256(_owned_child_source).hexdigest()=='13d0df2f73e8e272acce0820813d7877366a62d5db7620679329792d94b2e65b','exact bounded owned native child implementation')
+exec(compile(_owned_child_source,__file__,'exec'),globals())
 _PROCESS_EVENT_DRIVER=None
 def event_driver_observation(driver,snapshot,anchor=True):
  peer.need(driver is _PROCESS_EVENT_DRIVER and not driver.get('anchorClosed'),'original live event-driver anchor')

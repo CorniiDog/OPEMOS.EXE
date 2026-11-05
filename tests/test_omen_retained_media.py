@@ -485,6 +485,42 @@ class RetainedMediaContract(unittest.TestCase):
         self.assertIn('deadline',str(expired.exception))
         bad=copy.deepcopy(ref);bad['sha256']='0'*64
         with self.assertRaises(Exception):native.native_queue_worker(command,time.time()+15,bad)
+        if os.geteuid()==0:
+            # Real Root Popen drops to the normal UID in the owned PID itself.
+            # The payload models waiting worker logic, never VM admission.
+            root=Path('/run/opemos-native-worker-fixture-'+uuid.uuid4().hex)
+            root.mkdir(mode=0o755);payload=root/'worker.py'
+            payload.write_text('import os,time,sys\nprint(os.getuid(),os.geteuid(),flush=True)\ntime.sleep(float(sys.argv[1]))\n')
+            payload.chmod(0o444)
+            try:
+                envpin=installer.pin('/usr/bin/env');sudo=installer.pin('/usr/bin/sudo')
+                sourcepin=installer.pin(payload)
+                prefix=['/usr/bin/sudo','-n','-u','connor','/usr/bin/env',
+                    'XDG_RUNTIME_DIR=/run/user/1000','DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus',
+                    'OPEMOS_QUEUE_HEAVY_ENTRY=1','OPEMOS_QUEUE_HEAVY_FD=9','/usr/bin/python3',str(payload)]
+                identity={'envPin':envpin,'sourcePin':sourcepin}
+                from unittest import mock
+                original_groups=native.os.getgrouplist
+                native.os.getgrouplist=lambda user,gid:[1000]  # modeled CI account mapping; real setuid/exec/PIDFD below
+                baseline=set(os.listdir('/proc/self/fd'))
+                value=native.native_queue_worker(prefix+['0.1'],time.time()+3,sudo,normal_uid=identity)
+                self.assertEqual(value['actor']['uid'],1000)
+                self.assertEqual(value['stdout'].strip(),'1000 1000')
+                self.assertEqual(value['closure'],'KNOWN')
+                with self.assertRaises(subprocess.TimeoutExpired)as deadline:
+                    native.native_queue_worker(prefix+['30'],time.time()+2,sudo,normal_uid=identity)
+                value=deadline.exception.nativeChildEvidence
+                self.assertEqual(value['actor']['uid'],1000)
+                self.assertTrue(value['EOF']and value['reaped']and value['pipesClosed'])
+                self.assertEqual(value['groupRemaining'],[])
+                self.assertEqual(value['closure'],'KNOWN')
+                self.assertFalse(Path('/proc/'+str(value['actor']['pid'])).exists())
+                wrong=copy.deepcopy(identity);wrong['sourcePin']['sha256']='0'*64
+                with self.assertRaises(Exception):native.native_queue_worker(prefix+['30'],time.time()+2,sudo,normal_uid=wrong)
+                self.assertEqual(set(os.listdir('/proc/self/fd')),baseline)
+            finally:
+                if 'original_groups'in locals():native.os.getgrouplist=original_groups
+                shutil.rmtree(root)
 
     @unittest.skipUnless(os.geteuid()==0 and sys.platform=='linux','disposable Linux CI Root only')
     def test_historical_provenance_consumes_complete_over_256_rows_and_bindings(self):
@@ -1032,6 +1068,43 @@ except peer.Refused as error:
                     full=active_peer.historical_lease_provenance(str(lease_root),[history_row],history_binding,current_queue,boot)
                     self.assertEqual(full['queueRequestSHA256'],hashlib.sha256(active_peer.canon(request)).hexdigest())
                     self.assertIsNone(full['historicalQMPClosed'])
+                    # SAME actual producer -> Root GPU inventory -> choose.
+                    # PCI topology/boot files are modeled, immutable Root records,
+                    # source loading, locks and complete recovery validation are real.
+                    from unittest import mock
+                    gpu={"__name__":"fixture_gpu_inventory"}
+                    exec(compile(current_queue.GPU_GROUP_OBSERVER_SOURCE,'<actual-gpu-source>','exec'),gpu)
+                    modeled=fixture/'modeled-gpu-machine';sysroot=modeled/'sys';procroot=modeled/'proc'
+                    group=sysroot/'kernel/iommu_groups/1/devices';group.mkdir(parents=True)
+                    for device in gpu['MEMBERS']:(group/device).mkdir()
+                    for device,identifier in [('0000:01:00.0','0x1f15'),('0000:01:00.1','0x10f9'),
+                                              ('0000:01:00.2','0x1ada'),('0000:01:00.3','0x1adb')]:
+                        base=sysroot/'bus/pci/devices'/device;base.mkdir(parents=True)
+                        (base/'vendor').write_text('0x10de\n');(base/'device').write_text(identifier+'\n')
+                    bootfile=procroot/'sys/kernel/random/boot_id';bootfile.parent.mkdir(parents=True);bootfile.write_text(boot)
+                    actorfile=procroot/str(os.getpid())/'stat';actorfile.parent.mkdir(parents=True)
+                    actorfile.write_text(Path('/proc/self/stat').read_text())
+                    baseline=set(os.listdir('/proc/self/fd'))
+                    with mock.patch.object(sys,'argv',['gpu',current_queue.GPU_GROUP_OBSERVER_SHA256]):
+                        proof=gpu['observe']('/run',str(sysroot),str(procroot),implementation_definition=implementation['sourceContractPin'])
+                    current_queue.validate_gpu_group_observation(proof,proof['startedMonotonic'])
+                    self.assertTrue(proof['gpuAvailable']and proof['allOwnedDescriptorsClosed'])
+                    pending=dict(row,state='pending',cpus=None,unit=None,started=None,finished=None,result=None)
+                    cfg={'cpu_ids':list(range(10)),'memory_bytes':32*1024**3}
+                    with mock.patch.object(current_queue,'observe_gpu_group',return_value=proof), \
+                         mock.patch.object(current_queue,'nvidia_wait_reason',return_value=None):
+                        selected,blocked=current_queue.choose([pending],cfg)
+                    self.assertEqual([x[0]['id']for x in selected],[pending['id']]);self.assertEqual(blocked,[])
+                    for fault in ('hash','owner','escape','missing'):
+                        wrong=copy.deepcopy(implementation['sourceContractPin'])
+                        if fault=='hash':wrong['sha256']='0'*64
+                        elif fault=='owner':wrong['identity']['st_uid']=1000
+                        elif fault=='escape':wrong['path']='/run/../tmp/installed-controller.json'
+                        else:wrong=None
+                        with self.subTest(gpuImplementation=fault),self.assertRaises(Exception):
+                            gpu['observe']('/run',str(sysroot),str(procroot),implementation_definition=wrong)
+                    self.assertEqual(set(os.listdir('/proc/self/fd')),baseline)
+                    shutil.rmtree(modeled)
                     with active_peer.RootFiles(history_root)as journals,journals.lock():
                         self.assertTrue(active_peer._complete_historical_libvirt_closed(historical,request,journals))
                         self.assertEqual(details['secondary'],classification['result']['secondary'])

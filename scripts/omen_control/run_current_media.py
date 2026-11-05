@@ -238,7 +238,7 @@ class Run:
         self.heavy_guard()
         try:
             end=min(deadline,time.time()+seconds)
-            result = native_queue_worker(argv,end,ref) if worker else native_child(argv,end,ref,loop=self.loop_role())
+            result = native_queue_worker(argv,end,ref,normal_uid={'envPin':self.profile['nativeTools']['/usr/bin/env'],'sourcePin':self.profile['queuePrograms'][0]}) if worker else native_child(argv,end,ref,loop=self.loop_role())
         except BaseException as error:
             value=getattr(error,'nativeChildEvidence',getattr(error,'evidence',None))
             if value is not None:self.diagnostic('native-'+Path(argv[0]).name+'-FIRST',value)
