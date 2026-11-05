@@ -930,6 +930,13 @@ print(json.dumps({'uid':os.getuid(),'result':value,'defaultGuardRefused':True,'w
                 '--recovery-nonce',uuid.uuid4().hex],capture_output=True,timeout=15,preexec_fn=deny_connect)
             self.assertNotEqual(refused_closed.returncode,0)
             self.assertIn('original actual closed runtime context data',refused_closed.stderr.decode())
+            refused_pending=subprocess.run(['/usr/bin/python3','-I','-B',str(source_root/'run_current_media.py'),
+                '--profile-pin-json',json.dumps(installed['operationProfilePin']),
+                '--complete-expired-pending-parent-json',json.dumps({'parentPin':invalid_recovery,
+                    'originalProfilePin':installed['operationProfilePin'],'recoveryNonce':uuid.uuid4().hex})],
+                capture_output=True,timeout=15,preexec_fn=deny_connect)
+            self.assertNotEqual(refused_pending.returncode,0)
+            self.assertIn('original finite pending parent',refused_pending.stderr.decode())
 
             self.assertFalse(os.path.lexists('/run/opemos-vfio-'+nonce))
             parent_ref=installer.put(public_parent,installer.canon(parent),0o444)

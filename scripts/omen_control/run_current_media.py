@@ -544,6 +544,32 @@ def validate_expired_pending_terminal(row,result):
     return parent
 
 
+def complete_expired_pending_parent(profile_ref,data):
+    """Existing installed entry creates finite cleanup DATA, never a VM grant."""
+    p.need(os.getuid()==os.geteuid()==0 and set(data)=={'parentPin','originalProfilePin','recoveryNonce'},
+           'exact pending cleanup operands')
+    current=protected(profile_ref,0o444)
+    contract=source_contract.validate(current['sourceRoles'],current['queuePrograms'],current['installedSourceContractPin'])
+    p.need(contract['preparationRoles']['run_current_media']['path']==str(Path(__file__).absolute()),
+           'actual reviewed current pending cleanup entry')
+    parent=protected(data['parentPin'],0o444)
+    p.need(parent.get('kind')=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'and parent.get('RootIssued')is True,
+           'original finite pending parent, never a fabricated context')
+    p.need(re.fullmatch('[0-9a-f]{32}',data['recoveryNonce']),'fresh pending cleanup identity')
+    old=protected(data['originalProfilePin'],0o444)
+    source_contract.validate(old['sourceRoles'],old['queuePrograms'],old['installedSourceContractPin'])
+    p.need(parent['installedSourceContractPin']==old['installedSourceContractPin']
+           and parent['sourceRoles']==old['sourceRoles']and parent['queuePrograms']==old['queuePrograms'],
+           'same immutable original pending parent/profile/source')
+    paths=source_contract.parent_paths(parent);now=time.time()
+    cfg={'kind':'ROOT_EXPIRED_PENDING_MOUNT_COMPLETION_V1',**data,
+         'issuedUnix':now,'startBeforeUnix':now+299}
+    with p.RootFiles(paths['operationRoot'])as files,files.lock(True,time.monotonic()+5):
+        ref=producer.put(files,'recovery-'+data['recoveryNonce']+'-pending-cleanup.json',cfg)
+    result=continue_expired_pending_mount(cfg,current);result['cleanupInputPin']=ref
+    return result
+
+
 def continue_expired_pending_mount(cfg,current_profile):
     """Only this expired never-allocated operation's still-owned RO mount."""
     p.need(set(cfg)=={'kind','parentPin','originalProfilePin','recoveryNonce','issuedUnix','startBeforeUnix'}
@@ -717,8 +743,10 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--profile-pin-json', required=True)
     requests = ap.add_mutually_exclusive_group(required=True)
     requests.add_argument('--request-pin-json'); requests.add_argument('--request-stdin', action='store_true')
-    requests.add_argument('--observe-boot', action='store_true'); requests.add_argument('--complete-prepared-pin-json'); requests.add_argument('--finish-failed-parent-pin-json'); requests.add_argument('--finish-expired-parent-pin-json'); requests.add_argument('--complete-mount-pin-json'); requests.add_argument('--complete-failed-media-pin-json'); requests.add_argument('--complete-failed-context-pin-json'); requests.add_argument('--complete-closed-context-pin-json'); ap.add_argument('--recovery-nonce'); args = ap.parse_args()
+    requests.add_argument('--observe-boot', action='store_true'); requests.add_argument('--complete-prepared-pin-json'); requests.add_argument('--finish-failed-parent-pin-json'); requests.add_argument('--finish-expired-parent-pin-json'); requests.add_argument('--complete-mount-pin-json'); requests.add_argument('--complete-failed-media-pin-json'); requests.add_argument('--complete-failed-context-pin-json'); requests.add_argument('--complete-closed-context-pin-json'); requests.add_argument('--complete-expired-pending-parent-json'); ap.add_argument('--recovery-nonce'); args = ap.parse_args()
     profile_pin = json.loads(args.profile_pin_json)
+    if args.complete_expired_pending_parent_json:
+        print(p.canon(complete_expired_pending_parent(profile_pin,json.loads(args.complete_expired_pending_parent_json))).decode(),flush=True);return
     if args.complete_closed_context_pin_json:
         print(p.canon(complete_closed_media_context(profile_pin,json.loads(args.complete_closed_context_pin_json),args.recovery_nonce)).decode(),flush=True);return
     if args.complete_failed_context_pin_json:
