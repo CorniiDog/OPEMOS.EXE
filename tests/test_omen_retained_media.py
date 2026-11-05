@@ -487,6 +487,43 @@ class RetainedMediaContract(unittest.TestCase):
         with self.assertRaises(Exception):native.native_queue_worker(command,time.time()+15,bad)
 
     @unittest.skipUnless(os.geteuid()==0 and sys.platform=='linux','disposable Linux CI Root only')
+    def test_real_unprivileged_owned_sudo_monitor_keeps_uniform_payload_and_default_guard(self):
+        """Real sudo/PIDFD/EOF lifecycle; no VM or host configuration effects."""
+        import pwd
+        user=os.environ.get('SUDO_USER','')
+        self.assertTrue(user and pwd.getpwnam(user).pw_uid>0,'existing CI sudo-enabled account')
+        source=str(SOURCE)
+        code='''import sys,os,json,time,copy
+sys.path.insert(0,sys.argv[1])
+import libvirt_native as native,libvirt_peer as peer,install_media_controller as installer
+original=peer.process;default_refused=[];wrong_pin_refused=[]
+def observe(pid,owned_sudo=None):
+ if owned_sudo is not None:
+  try:original(pid)
+  except peer.Refused as error:default_refused.append(str(error))
+  else:raise AssertionError('real mixed UID sudo monitor not observed')
+  handle,argv,pin=owned_sudo;bad=copy.deepcopy(pin);bad['sha256']='0'*64
+  try:original(pid,(handle,argv,bad))
+  except peer.Refused:wrong_pin_refused.append(True)
+  else:raise AssertionError('wrong sudo source accepted')
+ return original(pid,owned_sudo)
+peer.process=observe
+argv=['/usr/bin/sudo','-n',sys.executable,'-I','-B','-c','import os,time;time.sleep(.5);print(os.getuid(),os.geteuid())']
+value=native.native_child(argv,time.time()+10,installer.pin(argv[0]))
+assert value['numeric']==0 and value['stdout'].strip()=='0 0'
+assert default_refused and wrong_pin_refused
+assert value['actor']['ownedSudoMonitor']['uidVector']==[os.getuid(),0,0,0]
+assert value['EOF'] and value['reaped'] and value['pipesClosed'] and value['closure']=='KNOWN' and not value['groupRemaining']
+print(json.dumps({'uid':os.getuid(),'result':value,'defaultGuardRefused':True,'wrongSourceRefused':True}))
+'''
+        result=subprocess.run(['/usr/bin/sudo','-n','-u',user,'--',sys.executable,'-I','-B','-c',code,source],
+                              capture_output=True,text=True,timeout=20)
+        self.assertEqual(result.returncode,0,result.stderr)
+        value=json.loads(result.stdout)
+        self.assertEqual(value['uid'],pwd.getpwnam(user).pw_uid)
+        self.assertTrue(value['defaultGuardRefused']and value['wrongSourceRefused'])
+
+    @unittest.skipUnless(os.geteuid()==0 and sys.platform=='linux','disposable Linux CI Root only')
     def test_real_geometry_not_optional_sink_is_authority(self):
         """Sparse geometry fixture only, not F9AA content/native-media acceptance."""
         import libvirt_peer as peer

@@ -10,7 +10,7 @@ def canon(v):return json.dumps(v,sort_keys=True,separators=(',',':'),allow_nan=F
 def ident(s):return{k:getattr(s,k)for k in FIELDS}
 def core(s):return{k:getattr(s,k)for k in CORE}
 def same(ref,raw,st):return len(raw)==ref['bytes'] and hashlib.sha256(raw).hexdigest()==ref['sha256'] and ident(st)==ref['identity']
-def process(pid):
+def process(pid,owned_sudo=None):
  need(type(pid)is int and pid>0,'positive PID');p='/proc/'+str(pid)
  fd=os.open(p,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
  def read(n,cap=65536):
@@ -23,8 +23,26 @@ def process(pid):
  try:
   before=read('stat');parts=before.decode().rsplit(')',1)[1].split();status=read('status').decode();cg=read('cgroup').decode().strip();argv=read('cmdline').split(b'\0');argv=argv[:-1]if argv and argv[-1]==b''else argv
   ids=[x for x in status.splitlines()if x.startswith('Uid:')];tg=[x for x in status.splitlines()if x.startswith('Tgid:')]
-  need(len(ids)==len(tg)==1 and len(set(map(int,ids[0].split()[1:])))==1,'stable one UID/TGID');need(cg.startswith('0::/')and '\n'not in cg,'one unified cgroup')
+  need(len(ids)==len(tg)==1,'stable one UID/TGID');uids=list(map(int,ids[0].split()[1:]));sudo_proof=None
+  if len(set(uids))!=1:
+   need(owned_sudo is not None and len(owned_sudo)==3 and os.getuid()>0 and uids==[os.getuid(),0,0,0],'stable one UID/TGID')
+   handle,command,pin=owned_sudo;need(pin is not None and command[0]==pin['path']=='/usr/bin/sudo'and pin['identity']['st_uid']==pin['identity']['st_gid']==0 and stat.S_IMODE(pin['identity']['st_mode'])==0o4755,'owned pinned sudo role')
+   need(int(parts[1])==os.getpid()and int(tg[0].split()[1])==pid and os.getpgid(pid)==pid and cg==Path('/proc/self/cgroup').read_text().strip(),'own sudo parent/group/cgroup')
+   info=Path('/proc/self/fdinfo/'+str(handle)).read_text();need(('Pid:\t'+str(pid))in info.splitlines(),'original owned sudo pidfd')
+   if argv:
+    need([os.fsdecode(x)for x in argv]==command,'own sudo argv');e=os.open(pin['path'],os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    try:
+     st=os.fstat(e);raw=b''
+     while b:=os.read(e,65536):raw+=b;need(len(raw)<=33554432,'sudo executable bound')
+     need(same(pin,raw,st)and ident(st)==ident(os.fstat(e))==ident(os.lstat(pin['path'])),'held named sudo executable/full9/SHA')
+    finally:os.close(e)
+   else:
+    import select
+    need(select.select([handle],[],[],0)[0],'empty sudo argv needs original exited pidfd')
+   need(next(x for x in read('status').decode().splitlines()if x.startswith('Uid:'))==ids[0],'same sudo UID vector');sudo_proof={'uidVector':uids,'sudoSHA256':pin['sha256'],'ownedPidfd':True}
+  need(len(uids)==4 and cg.startswith('0::/')and '\n'not in cg,'one unified cgroup')
   v={'pid':pid,'start':int(parts[19]),'uid':int(ids[0].split()[1]),'tgid':int(tg[0].split()[1]),'ppid':int(parts[1]),'cgroup':cg[3:],'argv':[os.fsdecode(x)for x in argv]};need(read('stat').decode().rsplit(')',1)[1].split()[19]==str(v['start'])and Path(p).is_dir(),'original proc start remained present')
+  if sudo_proof is not None:v['ownedSudoMonitor']=sudo_proof
   return v
  finally:os.close(fd)
 def record_run_check(proof,event):

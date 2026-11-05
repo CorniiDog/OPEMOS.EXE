@@ -33,25 +33,25 @@ def native_child(argv,deadline,tool_pin=None,input_bytes=None,loop=None):
 def native_queue_worker(argv,deadline,tool_pin):
  now=time.time();peer.need(now<deadline<=now+1000,'bounded normal-worker deadline')
  return _native_child(argv,deadline,tool_pin,None,1000)
-def _native_child(argv,deadline,tool_pin,input_bytes,transport_seconds,loop=None):
+def _native_child(argv,deadline,tool_pin,data,seconds,loop=None):
  from retained_media import loop_guard,loop_fd_changes
  proof=loop_guard(loop) if loop is not None else None
  import signal,select
  peer.need(argv[0]in('/usr/bin/systemctl','/usr/bin/systemd-run')or(tool_pin is not None and tool_pin['path']==argv[0]),'pinned native helper role')
  if tool_pin is not None:
   toolraw=held(tool_pin,33554432);peer.need(not toolraw.startswith(b'#!')or argv[0]=='/usr/bin/virt-xml-validate','only exact pinned schema script helper')
- peer.need(input_bytes is None or len(input_bytes)<=1048576,'finite exact native input')
+ peer.need(data is None or len(data)<=1048576,'finite exact native input')
  p=None;pidfd=None;actor=None;first=None;secondary=[];out=b'';err=b'';eof=False;reaped=False;group=[];script=None;executable=None;before=peer.fd_snapshot('helper-before')
  try:
   script=schema_interpreter(argv,tool_pin)
   peer.need(time.time()<deadline,'original helper deadline')
-  p=subprocess.Popen(argv,stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,close_fds=True,start_new_session=True)
-  pidfd=os.pidfd_open(p.pid,0);actor=peer.process(p.pid);peer.need(actor['ppid']==os.getpid()and actor['uid']==os.getuid()and actor['tgid']==p.pid and os.getpgid(p.pid)==p.pid,'own helper PID/start/UID/group')
+  p=subprocess.Popen(argv,stdin=subprocess.PIPE if data is not None else subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,close_fds=True,start_new_session=True)
+  pidfd=os.pidfd_open(p.pid,0);actor=peer.process(p.pid,(pidfd,argv,tool_pin));peer.need(actor['ppid']==os.getpid()and actor['uid']==os.getuid()and actor['tgid']==p.pid and os.getpgid(p.pid)==p.pid,'own helper PID/start/UID/group')
   if not actor['argv']:
-   ready=select.select([pidfd],[],[],max(0,min(10,deadline-time.time())))[0];now=peer.process(p.pid);peer.need(ready and all(now[k]==actor[k]for k in('pid','start','uid','ppid','cgroup')),'empty argv needs original exited pidfd')
+   ready=select.select([pidfd],[],[],max(0,min(10,deadline-time.time())))[0];now=peer.process(p.pid,(pidfd,argv,tool_pin));peer.need(ready and all(now[k]==actor[k]for k in('pid','start','uid','ppid','cgroup')),'empty argv needs original exited pidfd')
   peer.need(actor['argv']==(script['argv']if script is not None else argv)or not actor['argv'],'live argv or proved exited own child')
   if script is not None and actor['argv']:executable=schema_executable(script,p.pid)
-  out,err=p.communicate(input_bytes,timeout=max(.001,min(transport_seconds,deadline-time.time())));eof=True;p.wait(timeout=2);reaped=True
+  out,err=p.communicate(data,timeout=max(.001,min(seconds,deadline-time.time())));eof=True;p.wait(timeout=2);reaped=True
   peer.need(len(out)+len(err)<=1048576,'native helper output bound')
  except BaseException as error:first=error
  finally:
@@ -59,7 +59,7 @@ def _native_child(argv,deadline,tool_pin,input_bytes,transport_seconds,loop=None
    if p.poll()is None:
     try:
      peer.need(actor is not None and pidfd is not None,'unknown helper ownership refuses signal')
-     now=peer.process(p.pid);peer.need(all(now[k]==actor[k]for k in('pid','start','uid','ppid','cgroup'))and os.getpgid(p.pid)==p.pid,'same owned helper before pidfd signal')
+     now=peer.process(p.pid,(pidfd,argv,tool_pin));peer.need(all(now[k]==actor[k]for k in('pid','start','uid','ppid','cgroup'))and os.getpgid(p.pid)==p.pid,'same owned helper before pidfd signal')
      signal.pidfd_send_signal(pidfd,signal.SIGKILL);out,err=p.communicate(timeout=2);eof=True;p.wait(timeout=2);reaped=True
     except BaseException as error:secondary.append(peer.error_value(error))
    else:
