@@ -95,14 +95,22 @@ def run(action,nonce,policy_sha,probe_sha):
         dispatcher_nonce=remote.get('dispatcherNonce')
         need(dispatcher_nonce==nonce,'same actual ordinary dispatcher operation nonce')
         deadline=time.monotonic()+180
+        status_transitions=[]
         while time.monotonic()<deadline:
-            latest=cp.observe();c=latest['control']
+            try:latest=cp.observe()
+            except cp.IdleRunnerStatusTransition as transition:
+                status_transitions.append({'before':transition.before,'after':transition.after})
+                remaining=deadline-time.monotonic()
+                need(remaining>0,'original control-readback deadline after idle transition')
+                time.sleep(min(3,remaining));continue
+            need(time.monotonic()<deadline,'original control-readback deadline after fresh probe')
+            c=latest['control']
             if (c['jobId']==job and c['state']=='running' and
                 latest['runnerOnline'] and c['listenerAlive'] and
                 c['controllerAlive'] and c['workerAlive']):
                 break
             time.sleep(3)
-        else:raise RuntimeError('new existing Runner21 control not live within bounded current observation')
+        else:raise RuntimeError('new existing Runner21 control not live within bounded current observation; idleTransitions='+json.dumps(status_transitions,sort_keys=True))
     else:
         latest=initial;job=initial['control']['jobId']
         dispatcher_nonce=state['lastOutcome'].get('dispatcherNonce') or job.removeprefix('root-github-robot-control-')

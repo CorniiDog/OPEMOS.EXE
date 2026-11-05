@@ -1860,13 +1860,17 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             normalCycleSHA256=cycle.sha(b'cycle'),normalProbeSHA256=cycle.sha(b'normal-probe'),
             sshConfigSHA256=cycle.sha(b'ssh'),normalTemplateSHA256=cycle.sha(b'template'))
         raw=cycle.enc(policy);nonce='f'*32;state['inflight']=nonce
-        for remaining,fault in ((1000,None),(20000,None),(1000,'binding'),(-1,None)):
+        for remaining,fault in ((1000,None),(20000,None),(1000,'binding'),(-1,None),(1000,'transition')):
             initial['control']['leaseExpiresUnix']=int(time.time())+remaining
             live=copy.deepcopy(initial);live['runnerOnline']=True
             live['control'].update(state='running',terminalLifecycle=None,reservationRetained=True,
                 **{k:True for k in ('listenerAlive','controllerAlive','workerAlive','ownUnitBound')})
             if fault:live['control']['ownUnitBound']=False
-            probe=types.SimpleNamespace(observe=mock.Mock(side_effect=[initial,live]))
+            ps=importlib.util.spec_from_file_location('fixture_controller_probe',SOURCE/'controller_probe.py')
+            pm=importlib.util.module_from_spec(ps);ps.loader.exec_module(pm)
+            cuts=[initial,live]
+            if fault=='transition':cuts=[initial,pm.IdleRunnerStatusTransition(initial,live),live]
+            probe=types.SimpleNamespace(observe=mock.Mock(side_effect=cuts),IdleRunnerStatusTransition=pm.IdleRunnerStatusTransition)
             heartbeat=types.SimpleNamespace(state_from_current=mock.Mock(return_value={}),
                 publish_once=mock.Mock(return_value={'readbackCurrent':True}))
             trigger=types.SimpleNamespace(validate_policy=lambda p,n:p,strict=json.loads,
@@ -1882,8 +1886,9 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                                          'reviewed_current_heartbeat':heartbeat}[name]
             with self.subTest(remaining=remaining,fault=fault),mock.patch.object(cycle,'held',side_effect=held), \
                  mock.patch.object(cycle,'module',side_effect=module), \
-                 mock.patch.object(cycle.subprocess,'run',return_value=types.SimpleNamespace(returncode=0,stderr=b'',stdout=cycle.enc(remote))):
-                if remaining<=0 or fault:
+                 mock.patch.object(cycle.time,'sleep'), \
+                 mock.patch.object(cycle.subprocess,'run',return_value=types.SimpleNamespace(returncode=0,stderr=b'',stdout=cycle.enc(remote)))as dispatched:
+                if remaining<=0 or fault=='binding':
                     with self.assertRaisesRegex(RuntimeError,'native-only resumed control acknowledgement'):
                         cycle.run('RESUME_PENDING',nonce,cycle.sha(raw),'0'*64)
                     heartbeat.publish_once.assert_not_called()
@@ -1894,6 +1899,8 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                     self.assertEqual(value['heartbeatReadbackCurrent'],not due)
                     self.assertEqual(value['newOrExistingJobRoutable'],not due)
                     self.assertEqual(heartbeat.publish_once.call_count,0 if due else 1)
+                    dispatched.assert_called_once()
+                    if fault=='transition':self.assertEqual(probe.observe.call_count,3)
 
     def test_actual_recovery_native_ack_requires_fresh_process_bound_control_and_next_renewal(self):
         from unittest import mock
@@ -2007,6 +2014,85 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                 else:bad['closure']['normalDispatchers'][0]['queueSourceSHA256']='0'*64
                 with self.subTest(fault=fault),self.assertRaises(RuntimeError):
                     r.validate_materialized_renewal(bad,policy,state,probe,time.time(),pending=True)
+
+    def test_controller_probe_distinguishes_only_idle_runner_status_transition(self):
+        import importlib.util
+        ps=importlib.util.spec_from_file_location('fixture_stable_controller_probe',SOURCE/'controller_probe.py')
+        cp=importlib.util.module_from_spec(ps);ps.loader.exec_module(cp)
+        before=dict(networkReachable=True,protectedMain=True,mainCommit='a'*40,protectedMainCommit='b'*40,
+                    runnerBusy=False,runnerOnline=False,actionsInProgress=0,actionsQueued=0,heartbeatCurrent=False)
+        after=dict(before,runnerOnline=True)
+        with self.assertRaises(cp.IdleRunnerStatusTransition)as caught:cp.require_stable_github(before,after)
+        self.assertFalse(caught.exception.before['runnerOnline']);self.assertTrue(caught.exception.after['runnerOnline'])
+        cp.require_stable_github(before,dict(before,heartbeatCurrent=True))
+        for key,value in [('mainCommit','c'*40),('runnerBusy',True),('actionsInProgress',1),('actionsQueued',1)]:
+            with self.subTest(key=key),self.assertRaisesRegex(RuntimeError,key):
+                cp.require_stable_github(before,dict(after,**{key:value}))
+
+    @unittest.skipUnless(os.geteuid()==0,'actual Root-owned pending acknowledgement input')
+    def test_retained_running_resume_reconciles_actual_subject_worker_and_heavy_proof_once(self):
+        from unittest import mock
+        import time
+        _,r=self.modules();policy,state,probe,proof,expected=self.pending(r)
+        policy.update(renewLeadSeconds=19000,normalCycleSHA256='7'*64)
+        probe['control']['leaseExpiresUnix']=int(time.time())+1000
+        proof['fixed']['value']['expiresAt']=probe['control']['leaseExpiresUnix']
+        original_pending=copy.deepcopy(proof);materialized_nonce=state['inflight'];resume='d'*32
+        pending_record={'kind':'ROOT_NORMAL_MATERIALIZED_PENDING_RECONCILIATION','before':copy.deepcopy(state),
+            'provenance':original_pending,'queueMutation':False,'successorCreated':False,'heartbeatPublished':False}
+        raw=r.canonical(pending_record);audit_sha=r.sha(raw)
+        state.update(inflight=resume,completedCycles=5,totalCycles=258,
+            lastOutcome={'action':'RESUME_PENDING','nonce':resume,'controlJobId':probe['control']['jobId'],
+                         'numeric':1,'reaped':True,'stderrSHA256':'f'*64})
+        before=copy.deepcopy(state);probe['runnerOnline']=True;probe['workerLockFree']=False
+        probe['control'].update(state='running',terminalLifecycle=None,reservationRetained=True,
+            **{k:True for k in('listenerAlive','controllerAlive','workerAlive','ownUnitBound')})
+        unit='opemos-testq-modeled-current.service';proof['kind']='NORMAL_MATERIALIZED_RENEWAL_PROVENANCE_V1'
+        proof['currentRow'].update(state='running',unit=unit,started=time.time()-1)
+        proof['currentStatus']=copy.deepcopy(probe['control'])
+        proof['currentBinding']={'job_id':probe['control']['jobId'],'unit':unit,'invocation':'e'*32}
+        proof['currentManager']={'InvocationID':'e'*32,'ActiveState':'active','MainPID':'11','ControlGroup':'/modeled-current'}
+        proof['currentActors']=[{'pid':11}]
+        q='/home/connor/.local/state/opemos-test-queue-r2';outer='opemos-root-robot-dispatcher-'+resume+'.service'
+        leader={'pid':22,'start':41,'uids':[1000]*4,'cgroup':'0::/user/'+outer,'argv':['/bin/bash',q+'/heavy.sh'],'ppid':1}
+        worker={'pid':23,'start':42,'uids':[1000]*4,'cgroup':'0::/user.slice/user-1000.slice/user@1000.service/opemos.slice/opemos-heavy.slice/run-r'+'0'*32+'.scope',
+                'argv':['/usr/bin/python3',q+'/test_queue.py','--queue',q+'/state','run'],'ppid':22}
+        lock={'st_mode':0o100664,'st_uid':1000,'st_gid':1000,'st_nlink':1}
+        locks=['lock: 1: FLOCK ADVISORY WRITE 21 00:1:2 0 EOF']
+        proof['resumedPending']={'operationNonce':resume,'auditSHA256':audit_sha,'normalCycleSHA256':policy['normalCycleSHA256'],
+            'dispatcher':{'kind':'NORMAL_CONTROL_DISPATCHER_IDENTITY_V1','jobId':probe['control']['jobId'],'nonce':resume,
+                'unit':outer,'queueSourceSHA256':policy['queueSourceSHA256'],'invocation':'c'*32,'pid':22,'start':41},
+            'manager':{'LoadState':'loaded','ActiveState':'active','MainPID':'22','InvocationID':'c'*32,'ControlGroup':'/user/'+outer,'ExecStart':q+'/queue.sh'},
+            'workerCustody':{'lockPath':q+'/state/worker.lock','lockIdentity':lock,'holders':[{'fd':6,'locks':locks}],
+                'leader':leader,'worker':worker,'heavyPath':'/run/user/1000/opemos-heavy.lock','heavyIdentity':lock,
+                'parentHeavyLocks':locks,'workerHeavyLocks':locks}}
+        frame={'reaped':True,'numeric':0,'eof':{'stdout':True,'stderr':True},'first':None,'stdout':r.canonical(probe),'stderr':b''}
+        with tempfile.TemporaryDirectory()as directory,mock.patch.object(r,'ROOT',Path(directory)), \
+             mock.patch.object(r,'load_code',return_value=b'modeled authenticated current observer'), \
+             mock.patch.object(r,'start_held_python',return_value=object()),mock.patch.object(r,'capture',return_value=frame), \
+             mock.patch.object(r,'validate_probe'),mock.patch.object(r,'materialized_renewal_provenance',return_value=proof)as observed, \
+             mock.patch.object(r,'write_state')as saved:
+            path=Path(directory)/('materialized-pending-'+materialized_nonce+'-'+audit_sha[:16]+'.json')
+            fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600);os.write(fd,raw);os.close(fd)
+            subject=r.resumed_pending_subject(state,probe)
+            r.validate_materialized_renewal(proof,policy,state,probe,time.time(),subject=subject)
+            for fault in('operation','parent','heavy','worker-lock','invocation'):
+                bad=copy.deepcopy(proof);v=bad['resumedPending']
+                if fault=='operation':v['operationNonce']='0'*32
+                elif fault=='parent':v['workerCustody']['worker']['ppid']=99
+                elif fault=='heavy':v['workerCustody']['workerHeavyLocks']=[]
+                elif fault=='worker-lock':v['workerCustody']['holders']=[]
+                else:v['manager']['InvocationID']='0'*32
+                with self.subTest(fault=fault),self.assertRaises(RuntimeError):
+                    r.validate_materialized_renewal(bad,policy,state,probe,time.time(),subject=subject)
+            value=r.run_cycle(policy,state,int(time.time()))
+            self.assertEqual(value['decision'],'RECONCILED_RUNNING_RESUME_PENDING')
+            self.assertFalse(value['heartbeatPublished']);self.assertIsNone(state['inflight'])
+            self.assertEqual(state['lastOutcome']['originalOutcome'],before['lastOutcome'])
+            self.assertEqual(state['lastOutcome']['dispatcherNonce'],resume)
+            self.assertEqual(state['lastOutcome']['phase'],'RUNNING_RENEWAL_DUE')
+            self.assertEqual(observed.call_count,1);saved.assert_called_once()
+            self.assertEqual(len(list(Path(directory).glob('resumed-existing-*.json'))),1)
 
 
 if __name__ == '__main__': unittest.main()
