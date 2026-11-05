@@ -46,6 +46,42 @@ def fixture_reap_receipt(child, row):
 
 
 class RunnerTest(unittest.TestCase):
+    def test_virtual_usb_native_target_uses_current_pid_window_and_real_geometry(self):
+        spec=importlib.util.spec_from_file_location('ubuntu_native_observer',
+            Path(__file__).resolve().parents[1]/'scripts/omen_control/observer_guest.py')
+        observer=importlib.util.module_from_spec(spec);spec.loader.exec_module(observer)
+        states={x:x for x in('enabled','sensitive','visible','showing','defunct','screen')}
+        class Node:
+            def __init__(self,name='',pid=731,role='push button',children=(),rect=(30,40,100,24)):
+                self.name=name;self.pid=pid;self.role=role;self.children=list(children)
+                self.rect=rect;self.flags={'enabled','sensitive','visible','showing'}
+            def get_name(self):return self.name
+            def get_process_id(self):return self.pid
+            def get_role_name(self):return self.role
+            def get_child_count(self):return len(self.children)
+            def get_child_at_index(self,index):return self.children[index]
+            def get_state_set(self):return SimpleNamespace(contains=lambda flag:flag in self.flags)
+            def get_component_iface(self):return SimpleNamespace(get_extents=lambda kind:
+                SimpleNamespace(x=self.rect[0],y=self.rect[1],width=self.rect[2],height=self.rect[3]))
+            def do_action(self,*args):raise AssertionError('Observation must never activate native controls')
+        target=Node('Build NVIDIA Image');app=Node(children=[target]);desktop=Node(children=[app])
+        window={'pid':731,'window_id':481,'rect':[0,0,900,700]}
+        actual=observer.observed_control(desktop,window,'Build NVIDIA Image',['push button'],states,[1280,800])
+        self.assertEqual(actual['point'],{'x':80,'y':52})
+        self.assertEqual(actual['rect'],[30,40,100,24]);self.assertTrue(actual['readOnlyObservation'])
+        for fault in('foreign-pid','disabled','hidden','defunct','outside','duplicate','role'):
+            target.pid=731;target.role='push button';target.rect=(30,40,100,24)
+            target.flags={'enabled','sensitive','visible','showing'};app.children=[target]
+            if fault=='foreign-pid':target.pid=732
+            elif fault=='disabled':target.flags.remove('enabled')
+            elif fault=='hidden':target.flags.remove('showing')
+            elif fault=='defunct':target.flags.add('defunct')
+            elif fault=='outside':target.rect=(850,40,100,24)
+            elif fault=='duplicate':app.children.append(Node('Build NVIDIA Image'))
+            else:target.role='entry'
+            with self.subTest(fault=fault),self.assertRaises(RuntimeError):
+                observer.observed_control(desktop,window,'Build NVIDIA Image',['push button'],states,[1280,800])
+
     def test_virtual_usb_real_file_descriptor_and_qemu_attachment_preserve_source(self):
         import fcntl
         with tempfile.TemporaryDirectory(prefix='opemos-virtual-usb-') as directory:
