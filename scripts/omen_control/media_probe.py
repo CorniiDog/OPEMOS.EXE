@@ -28,7 +28,7 @@ def read(ref):
 
 def github(p,m):
     runners=m.gh_json('repos/CorniiDog/OPEMOS.EXE/actions/runners?per_page=100')
-    active=m.gh_json('repos/CorniiDog/OPEMOS.EXE/actions/runs?status=in_progress&per_page=100')
+    active=m.runner21_active_runs(m.gh_json)
     selected=[r for r in runners['runners']if r['id']==21]
     if len(selected)!=1 or selected[0]['name']!='opemos-omen-robot' or 'opemos-omen-robot'not in {x['name']for x in selected[0]['labels']}:
         raise RuntimeError('exact existing registered Runner21')

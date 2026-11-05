@@ -675,7 +675,7 @@ print(json.dumps({'uid':os.getuid(),'result':value,'defaultGuardRefused':True,'w
                 return {'runners':[{'id':21,'name':'opemos-omen-robot',
                                     'labels':[{'name':'opemos-omen-robot'}],
                                     'busy':busy,'status':'online'}]}
-            if '/actions/runs?status=in_progress' in endpoint:
+            if '/actions/workflows/omen-robot.yml/runs?status=in_progress' in endpoint:
                 return {'total_count':1,'workflow_runs':[{'id':7,'status':'in_progress',
                          'path':'.github/workflows/omen-robot.yml'}]}
             if '/actions/runs/7/jobs?' in endpoint:
@@ -683,7 +683,8 @@ print(json.dumps({'uid':os.getuid(),'result':value,'defaultGuardRefused':True,'w
                     {'id':9,'run_id':7,'status':'in_progress','labels':['opemos-omen-robot'],
                      'runner_id':21}] if assigned else []}
             raise RuntimeError('optional endpoint unavailable')
-        client=types.SimpleNamespace(gh_json=api,runner21_assigned_jobs=normal_probe.runner21_assigned_jobs)
+        client=types.SimpleNamespace(gh_json=api,runner21_active_runs=normal_probe.runner21_active_runs,
+                                    runner21_assigned_jobs=normal_probe.runner21_assigned_jobs)
         policy={'mainCommit':'a'*40,'queueSourceSHA256':'b'*64}
         value=media_probe.github(policy,client)
         self.assertIsNone(value['protectedMain'])
@@ -695,6 +696,34 @@ print(json.dumps({'uid':os.getuid(),'result':value,'defaultGuardRefused':True,'w
         value=media_probe.github(policy,client)
         self.assertEqual(value['actionsInProgress'],1)
         self.assertTrue(value['runnerBusy'])
+
+    def test_runner_assignment_frontier_scopes_real_consumer_and_keeps_unknowns_final(self):
+        calls=[]
+        def api(endpoint):
+            calls.append(endpoint)
+            if '/actions/workflows/omen-robot.yml/runs?'in endpoint:
+                return {'total_count':1,'workflow_runs':[{'id':7,'status':'in_progress',
+                    'path':'.github/workflows/omen-robot.yml@refs/heads/main'}]}
+            if '/actions/runs/7/jobs?'in endpoint:
+                return {'total_count':1,'jobs':[{'id':9,'run_id':7,'status':'in_progress',
+                    'labels':['opemos-omen-robot'],'runner_id':21}]}
+            raise AssertionError('unrelated/global endpoint must not determine native ownership')
+        active=normal_probe.runner21_active_runs(api)
+        self.assertEqual(normal_probe.runner21_assigned_jobs(active,api),1)
+        self.assertEqual(len(calls),2)
+        for fault in ('truncated','foreign-workflow','foreign-runner','unknown-runner','missing-label','duplicate'):
+            bad=copy.deepcopy(active)
+            job={'id':9,'run_id':7,'status':'in_progress','labels':['opemos-omen-robot'],'runner_id':21}
+            if fault=='truncated':bad['total_count']=2
+            elif fault=='foreign-workflow':bad['workflow_runs'][0]['path']='.github/workflows/ubuntu-executable.yml'
+            elif fault=='foreign-runner':job['runner_id']=22
+            elif fault=='unknown-runner':job['runner_id']=None
+            elif fault=='missing-label':job['labels']=[]
+            rows=[job,dict(job,id=10)]if fault=='duplicate'else[job]
+            with self.subTest(fault=fault),self.assertRaises(RuntimeError):
+                normal_probe.runner21_assigned_jobs(bad,lambda p:{'total_count':len(rows),'jobs':rows})
+        with self.assertRaisesRegex(RuntimeError,'observed=.*returned.*total_count'):
+            normal_probe.runner21_assigned_jobs({'total_count':1,'workflow_runs':[]},api)
 
     @unittest.skipUnless(os.geteuid() == 0 and sys.platform == 'linux', 'disposable Linux CI Root only')
     def test_installed_normal_entry_without_connect_syscall(self):
