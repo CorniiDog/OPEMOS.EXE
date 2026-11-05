@@ -2099,6 +2099,43 @@ except peer.Refused as error:
             with self.subTest(fault=fault),self.assertRaises(RuntimeError):
                 media_drain.pending_dispatcher_scope(badref,bad,pids)
 
+    def test_normal_drain_uses_actual_queue_remain_after_exit_terminal_reader(self):
+        import media_drain,time
+        # Same production backend reader; only external systemd/kernel facts
+        # are modeled using the actual loaded active/exited receipt shape.
+        q=types.ModuleType('normal_drain_terminal_queue');q.__file__=str(SOURCE/'test_queue.py')
+        sys.modules[q.__name__]=q
+        try:
+            exec(compile((SOURCE/'test_queue.py').read_bytes(),q.__file__,'exec'),q.__dict__)
+            backend=q.SystemdBackend(Path('/normal-owned/state'),{})
+            unit=backend.prefix+'a'*32+'.service';spec=json.dumps({'source':'immutable original control'})
+            row={'id':'root-github-robot-control-'+'b'*32,'unit':unit,'spec':spec}
+            bound={'job_id':row['id'],'unit':unit,'specSHA256':hashlib.sha256(spec.encode()).hexdigest(),
+                   'invocation':'c'*32}
+            genuine={'LoadState':'loaded','ActiveState':'active','SubState':'exited','Result':'success',
+                     'ExecMainCode':'1','ExecMainStatus':'0','MainPID':'0','ControlGroup':'','InvocationID':'c'*32}
+            for fault in(None,'foreign-invocation','live-main','unknown-numeric','populated'):
+                props=dict(genuine);empty=True
+                if fault=='foreign-invocation':props['InvocationID']='d'*32
+                if fault=='live-main':props['MainPID']='10'
+                if fault=='unknown-numeric':props['ExecMainCode']='0'
+                if fault=='populated':empty=False
+                calls=[]
+                backend.ctl=lambda *args:calls.append(args)or dict(props)
+                backend.whole_owned_cgroup=lambda *args:{'empty':empty,'externalKernelFactsModeled':True}
+                cuts=[]
+                if fault is None:
+                    actual=media_drain.original_unit_terminal(q,backend,row,bound,time.monotonic()+20,cuts)
+                    self.assertEqual(actual['SubState'],'exited');self.assertEqual(actual['InvocationID'],bound['invocation'])
+                    self.assertEqual(cuts[0]['state'],'passed');self.assertFalse(cuts[0]['effectAttempted'])
+                else:
+                    with self.subTest(fault=fault),self.assertRaisesRegex(RuntimeError,'normal original invocation'):
+                        media_drain.original_unit_terminal(q,backend,row,bound,time.monotonic()+20,cuts)
+                self.assertTrue(cuts);self.assertTrue(all(call[0]=='show'for call in calls),'no stop before normal durable commit')
+            with self.assertRaisesRegex(RuntimeError,'original pending-stop deadline'):
+                media_drain.original_unit_terminal(q,backend,row,bound,time.monotonic()-1,[])
+        finally:sys.modules.pop(q.__name__,None)
+
     def test_expired_pending_stop_keeps_observe_mode_and_original_deadline(self):
         import media_drain,time
         from unittest import mock

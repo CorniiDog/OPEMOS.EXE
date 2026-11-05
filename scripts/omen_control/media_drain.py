@@ -239,6 +239,27 @@ def close_idle_pending_dispatcher(row,N,C,qraw,policy,state,parent_pin,end,trans
          'originalWorkerPIDFDOpenedAndClosed':True}
 
 
+def original_unit_terminal(q,backend,row,bound,end,cuts):
+ try:
+  # Reuse the normal queue's current terminal reader. RemainAfterExit units
+  # deliberately stay active/exited until its durable terminal commit/stop.
+  remaining(end,'before original normal terminal inspection',minimum=10)
+  state,evidence,empty=backend.inspect(row['unit'])
+  cuts.append({'kind':'ORIGINAL_NORMAL_QUEUE_TERMINAL_OBSERVATION','state':state,
+               'evidence':evidence,'empty':empty,'effectAttempted':False})
+  remaining(end,'after original normal terminal inspection')
+  need(bound['job_id']==row['id']and bound['unit']==row['unit']and
+       bound['specSHA256']==hashlib.sha256(row['spec'].encode()).hexdigest(),
+       'exact original control spec/binding before terminal observation')
+  need(state in('passed','failed','timed_out')and empty is True and
+       evidence.get('InvocationID')==bound['invocation']and
+       q.terminal_observation(evidence)and evidence.get('ControlGroup')=='',
+       'normal original invocation/numeric/whole-cgroup terminal proof')
+  return evidence
+ except BaseException as error:
+  error.actualUnitClosureObservation={'kind':'ORIGINAL_NORMAL_QUEUE_TERMINAL_READER_FAILURE','cuts':cuts,'effectAttempted':False}
+  raise
+
 def finish_original_worker(row,N,C,qraw,policy,end,transients,pending=None,state=None,origin=None,mode='observe',effects=None):
  # Observe normal process completion first. No queue/lease/process mutation.
  if pending is not None and mode!='execute':
@@ -248,7 +269,18 @@ def finish_original_worker(row,N,C,qraw,policy,end,transients,pending=None,state
   remaining(end,'before original unit closure probe',minimum=10)
   manager=C.manager(row['unit']);innerCuts.append(manager)
   remaining(end,'after original unit closure probe')
-  if manager.get('MainPID')=='0'and manager.get('ControlGroup')==''and manager.get('ActiveState')in('inactive','failed'):break
+  if manager.get('MainPID')=='0'and manager.get('ControlGroup')=='':
+   if manager.get('ActiveState')in('inactive','failed'):break
+   if manager.get('ActiveState')=='active':
+    # The existing authenticated physical queue owns the terminal semantics.
+    # This is observation only: never stop/GC before its normal durable commit.
+    need(hashlib.sha256(qraw).hexdigest()==policy['queueSourceSHA256'],'current normal queue source before terminal reader')
+    rows,binds,cfg=snapshot(N,qraw,end,transients)
+    actual=next(r for r in rows if r['id']==row['id'])
+    need(actual['unit']==row['unit']and actual['spec']==row['spec'],'unchanged original terminal subject')
+    bound=json.loads(next(b['value']for b in binds if b['job_id']==row['id']))
+    q=module(qraw,str(N.QUEUE/'test_queue.py'));backend=q.SystemdBackend(N.QUEUE/'state',json.loads(cfg[0]['value']))
+    manager=original_unit_terminal(q,backend,actual,bound,end,innerCuts);break
   time.sleep(min(.5,remaining(end,'before original unit closure sleep')))
  stopped=None
  if pending is not None:
@@ -304,6 +336,7 @@ def execute(data):
  except BaseException as e:
   result['first']=dict(type=type(e).__name__,reason=str(e),traceback=traceback.format_exc())
   if hasattr(e,'actualStopObservation'):result['actualStopObservation']=e.actualStopObservation
+  if hasattr(e,'actualUnitClosureObservation'):result['actualUnitClosureObservation']=e.actualUnitClosureObservation
  if result['managerStopObservations']:result['operationalEffect']=True
  result['FDSetRestored']=before==set(os.listdir('/proc/self/fd'));need(result['FDSetRestored'],'all observation/pidfd/lock FDs closed');return result
 
