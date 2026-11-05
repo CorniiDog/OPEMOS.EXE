@@ -137,6 +137,10 @@ def stage(root, output, source_commit, appliance_image=None, include_native_exec
         shutil.copyfile(source, target)
         os.chmod(target, stat.S_IMODE(source.stat().st_mode))
         staged.append((target, digest(target)))
+    native = None
+    if include_native_executable:
+        native_path, native = stage_native_executable(root, appimage, output)
+        staged.append((native_path, native['sha256']))
     if appliance_image is not None:
         appliance_output = output / (appimage.name + ".runtime") / "appliance"
         stage_appliance(lock, appliance_image, root / "builder/appliance/cloud-init", appliance_output)
