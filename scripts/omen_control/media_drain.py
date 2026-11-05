@@ -161,10 +161,30 @@ def existing_heavy_ofd(N,C,ref):
   return {'path':str(path),'identity':initial,'OFDs':records}
  finally:os.close(fd)
 
-def close_idle_pending_dispatcher(row,N,C,qraw,policy,state,parent_pin,end,transients,origin):
+def remaining(end,where,actual=None,minimum=0):
+ value=end-time.monotonic()
+ if value<=minimum:
+  error=RuntimeError('original pending-stop deadline '+where)
+  if actual is not None:error.actualStopObservation=actual
+  raise error
+ return value
+
+def idle_scope_closed(C,ref,end,actual):
+ # The existing dispatcher reader has a finite10s native manager call. Never
+ # start it with less than that budget; do not accept a late positive return.
+ while True:
+  remaining(end,'before dispatcher closure probe',actual,minimum=10)
+  closed=C.dispatcher_closed(ref)
+  remaining(end,'after dispatcher closure probe',actual)
+  if closed:return
+  time.sleep(min(.1,remaining(end,'before dispatcher closure sleep',actual)))
+
+def close_idle_pending_dispatcher(row,N,C,qraw,policy,state,parent_pin,end,transients,origin,mode='observe'):
  # A pending parent cannot make the old source worker exit naturally. Only
  # after its control job completed normally may the owning manager stop this
  # exact idle scope. No direct signal, unit creation, queue edit or VM action.
+ need(mode=='execute','pending worker stop requires explicit execute mode')
+ remaining(end,'before pending stop admission')
  rows,binds,cfg=snapshot(N,qraw,end,transients)
  closed=next(r for r in rows if r['id']==row['id']);status=N.current_control(closed,policy)
  need(closed['finished']is not None and status['terminalLifecycle']=='CLOSED'
@@ -175,6 +195,7 @@ def close_idle_pending_dispatcher(row,N,C,qraw,policy,state,parent_pin,end,trans
       and not any(b['job_id']==pending[0]['id']for b in binds),
       'sole never-allocated pending row and no invocation binding')
  context=current_dispatcher_context(row,origin,state)
+ remaining(end,'before owning dispatcher read',minimum=10)
  ref=C.owning_dispatcher(row,policy,context);actor=C.proc(ref['worker']['pid'])
  proof=pending_root_observation(N,C,policy,parent_pin,actor,qraw)
  need(proof['workerLockProof']['verified']is True,'actual original worker exclusive FLOCK/FD/ancestry')
@@ -184,21 +205,30 @@ def close_idle_pending_dispatcher(row,N,C,qraw,policy,state,parent_pin,end,trans
  group=Path('/sys/fs/cgroup')/actor['cgroup'].removeprefix('0::').lstrip('/')
  pids=sorted(int(v)for v in(group/'cgroup.procs').read_text().split())
  scope=pending_dispatcher_scope(ref,actor,pids);heavy=existing_heavy_ofd(N,C,ref)
- need(snapshot(N,qraw,end,transients)==(rows,binds,cfg)and C.owning_dispatcher(row,policy,context)==ref
-      and C.proc(actor['pid'])==actor and sorted(int(v)for v in(group/'cgroup.procs').read_text().split())==pids
+ need(snapshot(N,qraw,end,transients)==(rows,binds,cfg),'same complete ledger before stop')
+ remaining(end,'before repeated owning dispatcher read',minimum=10)
+ repeated=C.owning_dispatcher(row,policy,context)
+ remaining(end,'after repeated owning dispatcher read')
+ need(repeated==ref and C.proc(actor['pid'])==actor and sorted(int(v)for v in(group/'cgroup.procs').read_text().split())==pids
       and existing_heavy_ofd(N,C,ref)==heavy,
       'same complete ledger/current owned worker/source/manager before normal stop')
+ remaining(end,'after stop admission proof')
  import select
  lifetime=os.pidfd_open(actor['pid'],0)
  try:
   need(C.proc(actor['pid'])==actor and not select.select([lifetime],[],[],0)[0],
        'same original live worker pidfd immediately before normal manager stop')
-  result=C.run(C.USER_ENV+['/usr/bin/systemctl','--user','stop',scope],timeout=min(30,max(.001,end-time.monotonic())),cap=8192)
+  budget=remaining(end,'immediately before manager stop')
+  result=C.run(C.USER_ENV+['/usr/bin/systemctl','--user','stop',scope],timeout=min(30,budget),cap=8192)
+  actual={'scope':scope,'normalManagerStopNumeric':result.returncode,
+          'stdoutSHA256':hashlib.sha256(result.stdout).hexdigest(),
+          'stderrSHA256':hashlib.sha256(result.stderr).hexdigest()}
+  remaining(end,'after manager stop',actual)
   need(result.returncode==0 and not result.stdout and not result.stderr,'normal exact idle worker scope stop failed')
  finally:os.close(lifetime)
- while not C.dispatcher_closed(ref):
-  need(time.monotonic()<end,'original dispatcher/worker closure remains unknown; never repeat stop');time.sleep(.1)
+ idle_scope_closed(C,ref,end,actual)
  need(snapshot(N,qraw,end,transients)==(rows,binds,cfg),'all canonical rows/bindings/config preserved by manager stop')
+ remaining(end,'after unchanged ledger proof',actual)
  return {'kind':'NORMAL_EXACT_IDLE_DISPATCHER_SCOPE_STOP_FOR_EXPIRED_PENDING',
          'dispatcher':ref,'scope':scope,'originalHeavyOFD':heavy,'pendingJob':pending[0]['id'],'parentPin':parent_pin,
          'RootPendingObservation':proof,'canonicalRowsChanged':False,'VMOrGPUAction':False,
@@ -206,22 +236,27 @@ def close_idle_pending_dispatcher(row,N,C,qraw,policy,state,parent_pin,end,trans
          'originalWorkerPIDFDOpenedAndClosed':True}
 
 
-def finish_original_worker(row,N,C,qraw,policy,end,transients,pending=None,state=None,origin=None):
+def finish_original_worker(row,N,C,qraw,policy,end,transients,pending=None,state=None,origin=None,mode='observe'):
  # Observe normal process completion first. No queue/lease/process mutation.
+ if pending is not None and mode!='execute':
+  return dict(normalClosureComplete=False,observeOnly=True,idlePendingDispatcherStop=None)
  innerCuts=[]
  while True:
+  remaining(end,'before original unit closure probe',minimum=10)
   manager=C.manager(row['unit']);innerCuts.append(manager)
+  remaining(end,'after original unit closure probe')
   if manager.get('MainPID')=='0'and manager.get('ControlGroup')==''and manager.get('ActiveState')in('inactive','failed'):break
-  need(time.monotonic()<end,'normal original unit closure deadline; never repeat signal');time.sleep(.5)
+  time.sleep(min(.5,remaining(end,'before original unit closure sleep')))
  stopped=None
  if pending is not None:
   need(state is not None,'original protected normal recovery state')
-  stopped=close_idle_pending_dispatcher(row,N,C,qraw,policy,state,pending,end,transients,origin)
+  stopped=close_idle_pending_dispatcher(row,N,C,qraw,policy,state,pending,end,transients,origin,mode)
  tx=row['id'].removeprefix('root-github-robot-control-');outer='opemos-root-robot-dispatcher-'+tx+'.service'
  while True:
-  r=C.run(C.USER_ENV+['/usr/bin/systemctl','--user','show',outer,'-p','ActiveState','-p','MainPID','-p','ControlGroup'],timeout=10);need(r.returncode==0 and not r.stderr,'normal outer worker manager read');props=dict(x.split('=',1)for x in r.stdout.decode().splitlines()if'='in x)
+  budget=remaining(end,'before outer worker manager probe')
+  r=C.run(C.USER_ENV+['/usr/bin/systemctl','--user','show',outer,'-p','ActiveState','-p','MainPID','-p','ControlGroup'],timeout=min(10,budget));remaining(end,'after outer worker manager probe');need(r.returncode==0 and not r.stderr,'normal outer worker manager read');props=dict(x.split('=',1)for x in r.stdout.decode().splitlines()if'='in x)
   if props.get('MainPID')=='0'and props.get('ControlGroup')==''and props.get('ActiveState')in('inactive','failed'):break
-  need(time.monotonic()<end,'normal outer worker completion deadline');time.sleep(.5)
+  time.sleep(min(.5,remaining(end,'before outer worker closure sleep')))
  locks=[]
  for path in(N.QUEUE/'state/worker.lock',Path('/run/user/1000/opemos-heavy.lock')):
   fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
@@ -231,6 +266,7 @@ def finish_original_worker(row,N,C,qraw,policy,end,transients,pending=None,state
  # The unchanged full reader is mandatory. Unknown or semantic proof failure
  # here is final; it is never retried or converted into authority.
  rows,binds,cfg=snapshot(N,qraw,end,transients);matches=[r for r in rows if r['id']==row['id']];need(len(matches)==1,'exact selected original row retained after worker closure');closed=matches[0];status=N.current_control(closed,policy)
+ remaining(end,'after final canonical closure proof')
  need(closed['finished']is not None and status['terminalLifecycle']=='CLOSED'and status['reservationRetained']is False,'unchanged full canonical pool+normal terminal release proof after worker/locks closed')
  return dict(closedRow=closed,closedManager=manager,innerCuts=innerCuts,outerManager=props,locks=locks,normalClosureComplete=True,fullPoolProofRequestedOnlyAfterWorkerAndLocksClosed=True,idlePendingDispatcherStop=stopped)
 def execute(data):
@@ -261,8 +297,10 @@ def execute(data):
    result['retirement']=owner.retire_listener(row,probe,p,scope,C,observe_only=data['mode']!='execute');result['operationalEffect']=data['mode']=='execute'
   else:need(ctl['terminalLifecycle']=='CLOSED'and ctl['reservationRetained']is False and not any(row['unit']in a['cgroup']for a in actors),'already-CLOSED generation, never resignal')
   if data['mode']=='execute' or row['state']!='running':
-   result.update(finish_original_worker(row,N,C,qraw,p,time.monotonic()+180,transients,data.get('expiredPendingParentPin'),data['recoveryState'],origin))
- except BaseException as e:result['first']=dict(type=type(e).__name__,reason=str(e),traceback=traceback.format_exc())
+   result.update(finish_original_worker(row,N,C,qraw,p,time.monotonic()+180,transients,data.get('expiredPendingParentPin'),data['recoveryState'],origin,data['mode']))
+ except BaseException as e:
+  result['first']=dict(type=type(e).__name__,reason=str(e),traceback=traceback.format_exc())
+  if hasattr(e,'actualStopObservation'):result['actualStopObservation']=e.actualStopObservation
  result['FDSetRestored']=before==set(os.listdir('/proc/self/fd'));need(result['FDSetRestored'],'all observation/pidfd/lock FDs closed');return result
 
 if __name__=='__main__':

@@ -2039,6 +2039,35 @@ except peer.Refused as error:
             with self.subTest(fault=fault),self.assertRaises(RuntimeError):
                 media_drain.pending_dispatcher_scope(badref,bad,pids)
 
+    def test_expired_pending_stop_keeps_observe_mode_and_original_deadline(self):
+        import media_drain,time
+        from unittest import mock
+        calls=[]
+        cycle=types.SimpleNamespace(run=lambda *a,**k:calls.append((a,k)),
+            dispatcher_closed=lambda ref:calls.append('probe') or True)
+        # The actual scope-stop admission refuses before reading any ledger or
+        # invoking a manager when observe-only or the original end is expired.
+        for mode,end in (('observe',time.monotonic()+20),('execute',time.monotonic()-1)):
+            with self.subTest(mode=mode),self.assertRaises(RuntimeError):
+                media_drain.close_idle_pending_dispatcher(None,None,cycle,b'',None,None,None,end,[],None,mode)
+        self.assertEqual(calls,[])
+        observed=media_drain.finish_original_worker(None,None,cycle,b'',None,time.monotonic()+20,[],
+            pending={'immutable':'original'},mode='observe')
+        self.assertFalse(observed['normalClosureComplete']);self.assertTrue(observed['observeOnly'])
+        self.assertEqual(calls,[])
+        actual={'scope':'run-original.scope','normalManagerStopNumeric':0}
+        # A genuine positive reader result delivered late is retained as an
+        # actual observation, never accepted as in-budget closure or retried.
+        with mock.patch.object(media_drain.time,'monotonic',side_effect=[1,22]):
+            with self.assertRaisesRegex(RuntimeError,'after dispatcher closure probe') as caught:
+                media_drain.idle_scope_closed(cycle,{},21,actual)
+        self.assertEqual(calls,['probe']);self.assertEqual(caught.exception.actualStopObservation,actual)
+        calls.clear()
+        with mock.patch.object(media_drain.time,'monotonic',return_value=21):
+            with self.assertRaisesRegex(RuntimeError,'before dispatcher closure probe'):
+                media_drain.idle_scope_closed(cycle,{},21,actual)
+        self.assertEqual(calls,[])
+
     def test_post_drain_cut_keeps_original_deadline_before_and_after_observation(self):
         import time
         idle={'runnerOnline':True,'runnerBusy':False,'actionsInProgress':0}
