@@ -1062,13 +1062,17 @@ except peer.Refused as error:
                         self.assertEqual(health_request['observer'],observer)
                         backend=health.SystemdBackend(Path('/run'),{})
                         backend.terminal_implementation_pin=implementation['sourceContractPin']
+                        if prior_version:
+                            # Fresh actual proof and its own original start
+                            # clock; no intervening adapter work may age it.
+                            health_captures=[];health_started=time.monotonic()
+                            queue.observe_queue_libvirt(request,captures=health_captures)
+                            with self.assertRaisesRegex(Exception,'original subject actual CLOSED/current implementation only'):
+                                health.validate_libvirt_observation(health_captures[-1]['proof'],health_request,
+                                    health_started,implementation['sourceContractPin'])
                         with self.assertRaisesRegex(Exception,'original subject accepted for actual CLOSED observation only'):
                             health.observe_queue_libvirt(health_request,
                                 terminal_implementation_pin=backend.terminal_implementation_pin)
-                        if prior_version:
-                            with self.assertRaisesRegex(Exception,'original subject actual CLOSED/current implementation only'):
-                                health.validate_libvirt_observation(captures[-1]['proof'],health_request,
-                                    started,implementation['sourceContractPin'])
                         missing=copy.deepcopy(health_request);missing.pop('currentControl')
                         with self.assertRaises(Exception):
                             health.observe_queue_libvirt(missing,
