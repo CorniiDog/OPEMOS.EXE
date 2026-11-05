@@ -2508,6 +2508,32 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                 with self.subTest(fault=fault),self.assertRaises(RuntimeError):
                     r.validate_materialized_renewal(bad,policy,state,probe,time.time(),pending=True)
 
+    @unittest.skipUnless(os.geteuid()==0,'actual Root private failed-native custody')
+    def test_actual_failed_held_probe_keeps_original_stderr_without_state_or_effect(self):
+        from unittest import mock
+        _,r=self.modules();policy,state,_,_,_=self.pending(r)
+        policy.update(maxTotalCycles=4096,maxCycles=128,controllerProbeSHA256='1'*64)
+        state.update(inflight=None,nextAttemptUnix=0,totalCycles=2,completedCycles=1)
+        original=copy.deepcopy(state)
+        source=b'import sys;sys.stderr.buffer.write(b"actual child failure\\n");raise SystemExit(17)'
+        with tempfile.TemporaryDirectory()as directory,mock.patch.object(r,'ROOT',Path(directory)), \
+             mock.patch.object(r,'load_code',return_value=source), \
+             mock.patch.object(r,'write_state',side_effect=AssertionError('no state/effect')):
+            with self.assertRaisesRegex(RuntimeError,'numeric=17'):
+                r.run_cycle(policy,state,1000)
+            files=list(Path(directory).glob('probe-failure-*.json'));self.assertEqual(len(files),1)
+            raw=files[0].read_bytes();record=r.strict(raw)
+            self.assertEqual(bytes.fromhex(record['stderrHex']),b'actual child failure\n')
+            self.assertEqual(record['stderrSHA256'],r.sha(b'actual child failure\n'))
+            self.assertEqual(record['numeric'],17);self.assertTrue(record['reaped'])
+            self.assertEqual(record['eof'],{'stdout':True,'stderr':True})
+            self.assertEqual(stat.S_IMODE(files[0].stat().st_mode),0o400)
+            self.assertEqual(state,original)
+            # Same evidence is content-addressed once, never rewritten.
+            before=files[0].stat().st_ino
+            r.failed_probe('controller-native',dict(record,stdout=b'',stderr=b'actual child failure\n'))
+            self.assertEqual(files[0].stat().st_ino,before)
+
     def test_timer_backoff_does_not_reprobe_or_slide_pre_effect_failure(self):
         from unittest import mock
         _,r=self.modules();policy,state,_,_,_=self.pending(r)
