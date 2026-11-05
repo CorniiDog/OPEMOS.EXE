@@ -1865,7 +1865,7 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             live=copy.deepcopy(initial);live['runnerOnline']=True
             live['control'].update(state='running',terminalLifecycle=None,reservationRetained=True,
                 **{k:True for k in ('listenerAlive','controllerAlive','workerAlive','ownUnitBound')})
-            if fault:live['control']['ownUnitBound']=False
+            if fault=='binding':live['control']['ownUnitBound']=False
             ps=importlib.util.spec_from_file_location('fixture_controller_probe',SOURCE/'controller_probe.py')
             pm=importlib.util.module_from_spec(ps);ps.loader.exec_module(pm)
             cuts=[initial,live]
