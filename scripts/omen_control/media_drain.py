@@ -179,7 +179,7 @@ def idle_scope_closed(C,ref,end,actual):
   if closed:return
   time.sleep(min(.1,remaining(end,'before dispatcher closure sleep',actual)))
 
-def close_idle_pending_dispatcher(row,N,C,qraw,policy,state,parent_pin,end,transients,origin,mode='observe'):
+def close_idle_pending_dispatcher(row,N,C,qraw,policy,state,parent_pin,end,transients,origin,mode='observe',effects=None):
  # A pending parent cannot make the old source worker exit naturally. Only
  # after its control job completed normally may the owning manager stop this
  # exact idle scope. No direct signal, unit creation, queue edit or VM action.
@@ -219,10 +219,13 @@ def close_idle_pending_dispatcher(row,N,C,qraw,policy,state,parent_pin,end,trans
   need(C.proc(actor['pid'])==actor and not select.select([lifetime],[],[],0)[0],
        'same original live worker pidfd immediately before normal manager stop')
   budget=remaining(end,'immediately before manager stop')
+  actual={'scope':scope,'managerStopAttempted':True,'normalManagerStopNumeric':None,
+          'nativeReturnObserved':False}
+  if effects is not None:effects.append(actual)
   result=C.run(C.USER_ENV+['/usr/bin/systemctl','--user','stop',scope],timeout=min(30,budget),cap=8192)
-  actual={'scope':scope,'normalManagerStopNumeric':result.returncode,
+  actual.update({'normalManagerStopNumeric':result.returncode,'nativeReturnObserved':True,
           'stdoutSHA256':hashlib.sha256(result.stdout).hexdigest(),
-          'stderrSHA256':hashlib.sha256(result.stderr).hexdigest()}
+          'stderrSHA256':hashlib.sha256(result.stderr).hexdigest()})
   remaining(end,'after manager stop',actual)
   need(result.returncode==0 and not result.stdout and not result.stderr,'normal exact idle worker scope stop failed')
  finally:os.close(lifetime)
@@ -236,7 +239,7 @@ def close_idle_pending_dispatcher(row,N,C,qraw,policy,state,parent_pin,end,trans
          'originalWorkerPIDFDOpenedAndClosed':True}
 
 
-def finish_original_worker(row,N,C,qraw,policy,end,transients,pending=None,state=None,origin=None,mode='observe'):
+def finish_original_worker(row,N,C,qraw,policy,end,transients,pending=None,state=None,origin=None,mode='observe',effects=None):
  # Observe normal process completion first. No queue/lease/process mutation.
  if pending is not None and mode!='execute':
   return dict(normalClosureComplete=False,observeOnly=True,idlePendingDispatcherStop=None)
@@ -250,7 +253,7 @@ def finish_original_worker(row,N,C,qraw,policy,end,transients,pending=None,state
  stopped=None
  if pending is not None:
   need(state is not None,'original protected normal recovery state')
-  stopped=close_idle_pending_dispatcher(row,N,C,qraw,policy,state,pending,end,transients,origin,mode)
+  stopped=close_idle_pending_dispatcher(row,N,C,qraw,policy,state,pending,end,transients,origin,mode,effects)
  tx=row['id'].removeprefix('root-github-robot-control-');outer='opemos-root-robot-dispatcher-'+tx+'.service'
  while True:
   budget=remaining(end,'before outer worker manager probe')
@@ -285,7 +288,7 @@ def execute(data):
  lease=json.loads(N.held(Path(spec['command'][2]),65536,0)[0]);need(lease['kind']=='OPEMOS_ROBOT_FIXED_CONTROL_LEASE'and lease['runtimeAuthorized']is True and lease['runnerId']==21 and lease['repository']=='CorniiDog/OPEMOS.EXE'and lease['engine_source_commit']==p['mainCommit']and lease['connection_queue_sha256']==p['queueSourceSHA256'],'exact current Root normal control lease semantics')
  ctl=N.current_control(row,p);need(ctl['brokerSHA256']==p['controlBrokerSHA256'],'current broker only; historical approvals not transferred');actors=N.actors();need(not any(any('Runner.Worker'in z or'qemu-system-'in z for z in a['argv'])for a in actors),'no current Worker or guest')
  if row['state']=='running':need(type(ctl['leaseExpiresUnix'])in(int,float)and time.time()<ctl['leaseExpiresUnix'],'actual running generation still within finite normal lease')
- result=dict(kind='CURRENT_NORMAL_CONTROL_PRIORITY_TRANSITION',job=row['id'],scope=None,initialState=row['state'],signalReplayed=False,first=None,snapshotTransients=transients,operationalEffect=False,controllerGenerationOrigin=origin)
+ result=dict(kind='CURRENT_NORMAL_CONTROL_PRIORITY_TRANSITION',job=row['id'],scope=None,initialState=row['state'],signalReplayed=False,first=None,snapshotTransients=transients,operationalEffect=False,controllerGenerationOrigin=origin,managerStopObservations=[])
  try:
   if retirement_required(row,ctl):
    need(gh['runnerOnline'],'running listener must be authenticated online')
@@ -297,10 +300,11 @@ def execute(data):
    result['retirement']=owner.retire_listener(row,probe,p,scope,C,observe_only=data['mode']!='execute');result['operationalEffect']=data['mode']=='execute'
   else:need(ctl['terminalLifecycle']=='CLOSED'and ctl['reservationRetained']is False and not any(row['unit']in a['cgroup']for a in actors),'already-CLOSED generation, never resignal')
   if data['mode']=='execute' or row['state']!='running':
-   result.update(finish_original_worker(row,N,C,qraw,p,time.monotonic()+180,transients,data.get('expiredPendingParentPin'),data['recoveryState'],origin,data['mode']))
+   result.update(finish_original_worker(row,N,C,qraw,p,time.monotonic()+180,transients,data.get('expiredPendingParentPin'),data['recoveryState'],origin,data['mode'],result['managerStopObservations']))
  except BaseException as e:
   result['first']=dict(type=type(e).__name__,reason=str(e),traceback=traceback.format_exc())
   if hasattr(e,'actualStopObservation'):result['actualStopObservation']=e.actualStopObservation
+ if result['managerStopObservations']:result['operationalEffect']=True
  result['FDSetRestored']=before==set(os.listdir('/proc/self/fd'));need(result['FDSetRestored'],'all observation/pidfd/lock FDs closed');return result
 
 if __name__=='__main__':
