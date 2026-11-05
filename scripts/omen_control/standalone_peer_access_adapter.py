@@ -5,16 +5,16 @@ Queue owner must independently adopt exact bytes and consumer contract.
 import contextlib,copy,hashlib,json,os,re,stat,sys,time,traceback,types
 from pathlib import Path
 ORIGINAL_SOURCE_ROOT='/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r107b'
-PEER_SHA='314076a17d300854e942674f4d3dbfb5c5d489ace233c5b4af6f75d49323ce9c'
+PEER_SHA='f9deff3c479e8a805782bcc75642260b6ceb681007b71705a655227f07ff5591'
 F=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns');CORE=F[:6]
 NONCE='cd9ef0826364409da287f6f3e3830c95';CONTRACT='R109_CURRENT_NORMAL_QUEUE_FULL_PHASE_READONLY'
-PEER_BYTES=65396
+PEER_BYTES=65324
 ORIGINAL_PEER_SHA='7e1663f8351247b9643b7c14419119449b0bd0722a46b80ae0f8ea34a9f9816a';ORIGINAL_PEER_BYTES=64727
 CLOSED_SUBJECT_PEERS={'9e5516fcdf57624d786a91741066998605045fe145ce60fbe8bde68f5b494bdd':61355,'224aa4a8b06999e318350267195cc681a095aaf2a2b5e407552f8811673a8614':61400}
 SOURCE_ROOT=None
 SOURCE_CONTRACT_SHA='4cb604515bbb577e6448283a7b785249929c73216e890a06ca5c531e25bd6e5d'
 CURRENT_DEFINITION=None
-ACCESS_SHA='28867292c15b26f683a8d81d79af23dfb9ef647c10af86ebab01ed7393502285';ACCESS_BYTES=39326
+ACCESS_SHA='c659275c55005e842e4be51614ee53559a5ecbae712702d49b17dbafa91b04cc';ACCESS_BYTES=43477
 ORIGINAL_ACCESS_SHA='ee32a4e84df796d6932062ded9e1049ce5e82cbbf01315d8c74da96b9e03aa9e';ORIGINAL_ACCESS_BYTES=33928
 ROLES={'libvirt_peer','libvirt_access','libvirt_native','libvirt_preflight','libvirt_producer','queue_assignment','runtime_entry','guest_delta','guest_firmware_probe','held_history_reader','two_boot_contract','postqueue_issuer','libvirt_storage','retained_media','source_contract'}
 def placement_root(candidate):

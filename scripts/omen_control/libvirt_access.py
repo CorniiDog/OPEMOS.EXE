@@ -14,6 +14,40 @@ UID=64055
 CORE=('st_dev','st_ino','st_mode','st_uid','st_gid')
 OBJECT=('st_dev','st_ino','st_uid','st_gid')
 
+def historical_restored_acl(state,request,files,rows):
+ """Read original closed journals as DATA; never reopen an old media mount."""
+ p.need(type(rows)is list and len(rows)==6 and all(type(x)is dict and x.get('restored')is True and type(x.get('path'))is str and x['path'].startswith('/')for x in rows)and len({x['path']for x in rows})==6,'exact six distinct restored ACL paths')
+ root_only=all(x.get('identity',{}).get('st_uid')==x.get('identity',{}).get('st_gid')==0 for x in rows)
+ if type(request)is not dict or 'currentControl'not in request:
+  p.need(root_only,'exact six distinct Root restored ACL paths');return True
+ import source_contract,retained_media
+ from postqueue_issuer import protected
+ p.need(type(request)is dict and 'currentControl'in request and files is not None and str(files.path)=='/run/opemos-libvirt-queue-'+request['jobToken'],'nonRoot historical media requires original structured request/journals')
+ control=request['currentControl'];parent=protected(control['parentPin'],0o444)
+ definition=source_contract.validate(parent['sourceRoles'],parent['queuePrograms'],control['definitionPin'])
+ c=parent['candidate'];paths=source_contract.candidate_paths(c)
+ if not retained_media.is_adopted(c):
+  p.need(root_only,'exact six distinct Root restored ACL paths');return True
+ p.need(parent['installedSourceContractPin']==control['definitionPin']and c['operationContext']['deploymentId']==definition['deployment']['id']and c['lineageNonce']==definition['guestNonce']and control['parentPin']['path']==paths['parentPath']and c['working']['path']==paths['mountRoot']+'/working.raw'and parent['nonce']==c['nonce']==request['leaseNonce']==state['nonce']and parent['jobId']==c['jobId']==request['jobId']==state['jobID']and parent['bootID']==c['hostBoot']==state['currentBoot'],'same immutable original source/candidate/job/nonce/boot')
+ raw,intent_pin=files.read('intent.json');intent=json.loads(raw)
+ p.need(intent['kind']=='ROOT_EXACT_QUEUE_LIBVIRT_INTENT_R2'and intent['request']==request and intent['bootID']==c['hostBoot']and intent['accessScope']=={k:c[k]for k in('working','run','output','firmwareVarsTemplate')},'same original intent access roles')
+ p.need(retained_media.is_adopted(c)and c['installer']['currentCustodyPin']['path']==paths['placementRoot']+'/retained-media-current-custody.json','only declared immutable retained media history')
+ retained_media.contract(c)
+ expected={'working-parent':str(Path(c['working']['path']).parent),'working':c['working']['path'],'runtime-parent':c['run'],'vars':c['run']+'/OVMF_VARS_4M.fd','output-parent':c['output'],'serial':c['output']+'/serial.raw'}
+ p.need({x['path']for x in rows}==set(expected.values()),'six original declared restoration paths')
+ for role,path in expected.items():
+  before_raw,before_pin=files.read('acl-before-'+role+'.json');after_raw,after_pin=files.read('acl-restored-'+role+'.json');before=json.loads(before_raw);after=json.loads(after_raw)
+  p.need(before['role']==role and before['path']==before['before']['path']==after['path']==path and after in rows and after['restored']is True,'same held original role/before/restored journal and action')
+  projection={k:after[k]for k in('path','identity','ACL')}
+  if role in('working','working-parent'):
+   p.need(retained_media.validate_stage_row(c,before,projection,protected),'exact original immutable media restoration')
+   if role=='working':p.need((after['bytes'],after['sha256'])==(c['working']['bytes'],c['working']['sha256']),'whole restored readonly working hash')
+  else:
+   old=before['before']['identity'];now=after['identity']
+   p.need(old['st_uid']==old['st_gid']==now['st_uid']==now['st_gid']==0 and all(old[k]==now[k]for k in OBJECT+('st_mode',))and after['ACL']==before['priorACL']and after['contentMayHaveGuestWrites']is False,'other historical roles retain original Root object/mode/ACL')
+  p.need(files.read('acl-before-'+role+'.json')==(before_raw,before_pin)and files.read('acl-restored-'+role+'.json')==(after_raw,after_pin),'held restoration journals full9/hash post-use')
+ p.need(files.read('intent.json')==(raw,intent_pin),'held historical intent full9/hash post-use');return True
+
 class ACL:
  def __init__(self):
   name=ctypes.util.find_library('acl');p.need(name is not None,'existing libacl required')
