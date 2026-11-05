@@ -694,8 +694,8 @@ print(json.dumps({'uid':os.getuid(),'result':value,'defaultGuardRefused':True,'w
 
     @unittest.skipUnless(os.geteuid() == 0 and sys.platform == 'linux', 'disposable Linux CI Root only')
     def test_installed_normal_entry_without_connect_syscall(self):
-        for prior_version in (False,True):
-            with self.subTest(deployment='arbitrary future identity'):
+        for index,prior_version in enumerate((False,False,True)):
+            with self.subTest(deployment='arbitrary future identity '+str(index)):
                 self._installed_normal_entry_without_connect_syscall(uuid.uuid4().hex, uuid.uuid4().hex,prior_version)
 
     def _installed_normal_entry_without_connect_syscall(self, deployment_id, attempt,prior_version=False):
@@ -810,9 +810,10 @@ print(json.dumps({'uid':os.getuid(),'result':value,'defaultGuardRefused':True,'w
             original=installer.put(fixture/'original.raw',b'fixture original',0o400)
             working=installer.put(fixture/'media/working.raw',b'fixture media',0o600)
             installer.put(fixture/'run/OVMF_VARS_4M.fd',b'fixture vars',0o600)
+            firmware=installer.put(fixture/'firmware-template.fd',b'fixture vars',0o400)
             installer.put(fixture/'output/serial.raw',b'',0o600)
             c={'nonce':nonce,'hostBoot':boot,'jobId':spec['id'],'guestUUID':domain['uuid'],'name':domain['name'],
-               'original':original,'working':working,'run':str(fixture/'run'),'output':str(fixture/'output'),
+               'original':original,'working':working,'run':str(fixture/'run'),'output':str(fixture/'output'),'firmwareVarsTemplate':firmware,
                'installer':{'kind':'AUTHENTICATED_F9AA_RAW_RECOVERY_USB_FIRSTBOOT','noInstallTarget':True},
                'operationContext':{'deploymentId':deployment_id,'attempt':attempt,'paths':paths},'lineageNonce':guest_nonce}
             profile=normal_entry.protected(installed['operationProfilePin'],0o444)
@@ -1431,6 +1432,109 @@ except peer.Refused as error:
                 for wrong in (dict(request,specSHA256='0'*64),dict(request,jobId='foreign-job'),
                               dict(request,observer=dict(observer,sha256=adapter.ORIGINAL_PEER_SHA))):
                     with self.assertRaises(RuntimeError):adapter.verify_inputs(wrong,inputs,boot,include_context=False)
+            if not prior_version:
+                # SAME installed-entry fixture, now the actual six-role phase
+                # callback -> full queue access consumer. Domain/lease facts are
+                # explicit MODELS; ACLs, chown, owned child identity, socket and all
+                # Root metadata/FD custody below are real. No VM or grant is used.
+                import socket
+                phase_root=Path('/run/opemos-libvirt-queue-'+request['jobToken'])
+                lease_root=Path('/run/opemos-vfio-'+nonce)
+                for path in (phase_root,lease_root):
+                    self.assertFalse(os.path.lexists(path));producer.create_root(str(path));created.append(path)
+                owner_process=subprocess.Popen(['/usr/bin/python3','-I','-B','-c',
+                    'import os,sys;print(os.getpid(),flush=True);sys.stdin.buffer.read()'],
+                    stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                    user=64055,group=67123,extra_groups=())
+                vnc=socket.socket(socket.AF_UNIX);vnc.bind(c['run']+'/vnc.sock')
+                os.chown(c['run']+'/vnc.sock',64055,67123)
+                try:
+                    self.assertEqual(int(owner_process.stdout.readline()),owner_process.pid)
+                    actor=peer.process(owner_process.pid);leader={k:actor[k]for k in('pid','start','uid')}
+                    reg={'scope':'explicit-modeled-qemu.scope','leader':leader,'uuid':c['guestUUID'],'name':c['name']}
+                    intent={'MODEL_ONLY':True,'request':request,'workingPin':c['working'],'originalPin':c['original'],
+                        'accessScope':{'run':c['run'],'output':c['output'],'working':c['working']['path'],
+                                       'firmwareVarsTemplate':c['firmwareVarsTemplate']}}
+                    phase_queue=queue_assignment.load_queue(implementation['queuePrograms'][0]if prior_version else installed['queuePrograms'][0],
+                        implementation_definition=implementation['sourceContractPin']if prior_version else installed['sourceContractPin'])
+                    with peer.RootFiles(phase_root)as files,files.lock(True),peer.RootFiles(lease_root)as leases,leases.lock(True):
+                        intent_pin=producer.put(files,'intent.json',intent)
+                        for item in rows:producer.put(files,'acl-before-'+item['role']+'.json',item)
+                        producer.append_lease(leases,request,boot,'PREPARED',{'domain':None})
+                        producer.commit_phase(files,request,boot,0,'PREPARED')
+                        producer.append_lease(leases,request,boot,'ACTIVE',{'domain':reg,'restored':False,
+                            'changed':['0000:01:00.'+str(i)for i in range(4)]})
+                        producer.commit_phase(files,request,boot,1,'ACTIVE',reg['scope'],leader,reg)
+                        def consume_phase(phase,registration,state):
+                            data=acl.verify_phase(c,stagepin,disks,phase,intent,registration,state,files)
+                            raw,hp=files.read('phase-head.json');head=json.loads(raw)
+                            raw,rp=files.read(head['record']);record=json.loads(raw)
+                            raw,lhp=leases.read('head.json');lp=json.loads(raw)
+                            raw,actual=leases.read(Path(lp['path']).name);self.assertEqual(actual,lp);lease=json.loads(raw)
+                            pins={'intentPin':intent_pin,'phaseHeadPin':hp,'phaseRecordPin':rp,'phaseHead':head,
+                                'phaseRecord':record,'leaseHeadPin':lhp,'leaseStatePin':lp,'leaseHead':lp,'leaseState':lease}
+                            data['phasePins']=pins
+                            proof={'phase':phase,'bootID':boot,'intentPin':intent_pin,'scope':record['scope'],
+                                'leader':record['leader'],'lease':{'headPin':lhp,'statePin':lp,
+                                    'closed':lease['closed'],'restored':lease['restored']}}
+                            custody={'kind':'ROOT_PHASE_PREPARED_ACCESS_CUSTODY_R1','phase':phase,'nonce':nonce,
+                                'bootID':boot,'requestSHA256':hashlib.sha256(installer.canon(request)).hexdigest(),
+                                'parentPin':parent_ref,'preparedAccessPin':stagepin,'preparedDiskPins':disks,
+                                'sourceGraphSHA256':hashlib.sha256(installer.canon(roles)).hexdigest(),
+                                'placementPin':storagepin,'qualificationPin':qualifiedpin,'stage':stage,
+                                'stageRawBase64':__import__('base64').b64encode(installer.canon(stage)).decode(),'data':data}
+                            phase_queue.validate_installer_access_custody(custody,proof,request)
+                            return data,custody,proof
+                        nvram=fixture/'run/OVMF_VARS_4M.fd';os.chown(nvram,64055,67123)
+                        data,custody,proof=consume_phase('ACTIVE',reg,{'closed':False})
+                        self.assertEqual(data['rows'][3]['activeFirmwareOwner'],{'leader':leader,'gids':[67123]*4})
+                        for uid,gid in ((1001,67123),(64055,67124)):
+                            os.chown(nvram,uid,gid)
+                            with self.assertRaisesRegex(Exception,'Root path custody'):consume_phase('ACTIVE',reg,{'closed':False})
+                        os.chown(nvram,64055,67123)
+                        for role,path in (('parent',fixture/'run'),('serial',fixture/'output/serial.raw')):
+                            os.chown(path,64055,67123)
+                            try:
+                                with self.subTest(nonFirmwareOwner=role),self.assertRaisesRegex(Exception,'Root path custody'):
+                                    consume_phase('ACTIVE',reg,{'closed':False})
+                            finally:os.chown(path,0,0)
+                        bad=copy.deepcopy(custody);bad['data']['rows'][3]['activeFirmwareOwner']['leader']['start']+=1
+                        with self.assertRaisesRegex(ValueError,'registered QEMU firmware owner'):phase_queue.validate_installer_access_custody(bad,proof,request)
+                        foreign=fixture/'run/foreign-child';foreign.write_bytes(b'foreign')
+                        try:
+                            with self.assertRaisesRegex(Exception,'declared owned runtime/output children'):
+                                consume_phase('ACTIVE',reg,{'closed':False})
+                        finally:foreign.unlink()
+                        # A live kernel Unix socket is never a closed leftover node.
+                        with acl.Held(c['run'])as directory:
+                            with self.assertRaisesRegex(Exception,'no current kernel socket'):acl.runtime_socket(directory.fd,c['run'],'CLOSED')
+                        vnc.close();os.chown(nvram,0,0) # MODEL of libvirt's own owner restoration; no host effect.
+                        closed={'domainAbsent':True,'originalPIDStartAbsent':True,'cgroupEmpty':True,
+                            'VFIOFDsAbsent':True,'hostRestored':True,'unknown':[],
+                            'qemuExitStatus':None,'controllerWaitpidClaimed':False,'explicitNativeClosureModel':True}
+                        for item in rows[::-1]:acl.restore(item,closed,lambda label,value:producer.put(files,label+'.json',value))
+                        producer.append_lease(leases,request,boot,'KNOWN_DOMAIN_CLOSURE',
+                            {'domain':None,'closed':True,'restored':True,'changed':[],'currentDisposition':closed})
+                        producer.commit_phase(files,request,boot,2,'CLOSED',details=closed)
+                        state={'closed':True,'restored':True,'changed':[],'currentDisposition':closed}
+                        data,custody,proof=consume_phase('CLOSED',{'details':closed},state)
+                        self.assertTrue(data['rows'][2]['socket']['kernelSocketAbsent'])
+                        bad=copy.deepcopy(custody);bad['data']['rows'][2]['socket']['kernelSocketAbsent']=False
+                        with self.assertRaisesRegex(ValueError,'no-kernel-socket proof'):phase_queue.validate_installer_access_custody(bad,proof,request)
+                        socket_path=fixture/'run/vnc.sock';os.chown(socket_path,1001,67123)
+                        try:
+                            with self.assertRaisesRegex(Exception,'VNC socket type/UID/link'):
+                                consume_phase('CLOSED',{'details':closed},state)
+                        finally:os.chown(socket_path,64055,67123)
+                        preserved=fixture/'preserved-vnc.node';socket_path.rename(preserved);socket_path.symlink_to(fixture/'firmware-template.fd')
+                        try:
+                            with self.assertRaisesRegex(Exception,'VNC socket type/UID/link'):
+                                consume_phase('CLOSED',{'details':closed},state)
+                        finally:socket_path.unlink();preserved.rename(socket_path)
+                finally:
+                    vnc.close();owner_process.stdin.close();owner_process.wait(timeout=5)
+                    self.assertEqual(owner_process.returncode,0);self.assertEqual(owner_process.stdout.read(),b'')
+                    self.assertEqual(owner_process.stderr.read(),b'');owner_process.stdout.close();owner_process.stderr.close()
         finally:
             if parent_identity is not None:
                 self.assertEqual(media.identity(os.lstat(public_parent)),parent_identity)

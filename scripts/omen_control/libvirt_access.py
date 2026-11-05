@@ -38,8 +38,9 @@ def hashfd(fd):
  return n,h.hexdigest()
 
 class Held:
- def __init__(self,path):
-  self.path=Path(path);p.need(self.path.is_absolute()and '..'not in self.path.parts,'absolute confined ACL path');self.fds=[];self.rows=[]
+ def __init__(self,path,active_vars_owner=None):
+  self.path=Path(path);p.need(self.path.is_absolute()and '..'not in self.path.parts,'absolute confined ACL path');self.fds=[];self.rows=[];self.active_vars_owner=active_vars_owner
+  p.need(active_vars_owner is None or self.path.name=='OVMF_VARS_4M.fd'and type(active_vars_owner)is tuple and len(active_vars_owner)==2 and active_vars_owner[0]==UID and type(active_vars_owner[1])is int and active_vars_owner[1]>=0,'only registered QEMU firmware leaf owner')
   try:
    fd=os.open('/',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);self.fds.append(fd);self.rows.append(('/',p.ident(os.fstat(fd))))
    for part in self.path.parts[1:]:
@@ -51,7 +52,7 @@ class Held:
    a=p.ident(os.fstat(self.fds[i]));b=p.ident(os.lstat(name));p.need(a==b,'full9 FD/name identity '+name)
    keys=OBJECT if i==len(self.rows)-1 and allow_leaf_epoch else CORE
    p.need(all(a[k]==old[k]for k in keys),'held same object/Root/mode '+name)
-   p.need(a['st_uid']==a['st_gid']==0,'Root path custody '+name)
+   owner=(a['st_uid'],a['st_gid']);p.need(owner==(0,0)or i==len(self.rows)-1 and self.active_vars_owner is not None and owner==self.active_vars_owner,'Root path custody '+name)
    if i not in (0,len(self.rows)-1) and a['st_mode']&0o022:
     p.need(ACL().get(self.fds[i])==expected_acl(0o700,UID,'rwx')[1],'only exact named libvirt UID private parent ACL '+name)
   return p.ident(os.fstat(self.fd))
@@ -265,6 +266,32 @@ def closed_working_content_epoch(now,restored,disk,receipt,row):
  p.need(now==restored['identity']and stat.S_ISREG(now['st_mode'])and now['st_nlink']==1 and all(now[k]==row['before']['identity'][k]for k in('st_uid','st_gid')) and now['st_mode']==row['before']['identity']['st_mode']and restored['ACL']==row['priorACL']and (restored['bytes'],restored['sha256'])==(disk['bytes'],disk['sha256'])and now['st_size']==restored['bytes'],'same full9 including ctime/ACL/mode/bytes/hash restoration epoch')
  return {'bytes':restored['bytes'],'sha256':restored['sha256']}
 
+def active_firmware_owner(reg):
+ """Same registered live QEMU, not a general non-Root path exception."""
+ leader=reg['leader'];actor=p.process(leader['pid']);p.need({k:actor[k]for k in('pid','start','uid')}==leader and actor['uid']==UID and actor['tgid']==actor['pid'],'original registered firmware QEMU owner')
+ fd=os.open('/proc/'+str(leader['pid']),os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+ def gids():
+  child=os.open('status',os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd)
+  try:
+   raw=b''
+   while block:=os.read(child,4096):raw+=block;p.need(len(raw)<=65536,'bounded QEMU group observation')
+   lines=[x.split()[1:]for x in raw.decode().splitlines()if x.startswith('Gid:')];p.need(len(lines)==1,'one actual QEMU GID quartet');values=[int(x)for x in lines[0]];p.need(len(values)==4 and len(set(values))==1 and values[0]>=0,'uniform actual QEMU GID quartet');return values
+  finally:os.close(child)
+ try:
+  values=gids();p.need(p.process(leader['pid'])==actor and gids()==values,'original QEMU PID/start/UID/argv/cgroup/GID stable');return {'leader':leader,'gids':values}
+ finally:os.close(fd)
+
+def runtime_socket(directory,run,phase):
+ """A declared live socket or its unbound node after proved domain closure."""
+ fd=os.open('vnc.sock',os.O_PATH|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=directory)
+ try:
+  st=os.fstat(fd);value={'path':run+'/vnc.sock','identity':p.ident(st)};p.need(stat.S_ISSOCK(st.st_mode)and st.st_uid==UID and st.st_nlink==1,'same domain owned VNC socket type/UID/link')
+  if phase=='CLOSED':
+   with open('/proc/net/unix','rb')as inventory:raw=inventory.read(1048577)
+   p.need(len(raw)<=1048576,'bounded current UNIX socket inventory');rows=[line.split()for line in raw.decode().splitlines()[1:]];p.need(all(len(row)>=7 for row in rows),'complete current UNIX socket rows');p.need(not any(row[6]==str(st.st_ino)or len(row)>7 and row[7]==value['path']for row in rows),'closed VNC node has no current kernel socket');value.update(kernelSocketAbsent=True,networkNamespace=os.readlink('/proc/self/ns/net'))
+  p.need(p.ident(st)==p.ident(os.stat('vnc.sock',dir_fd=directory,follow_symlinks=False))==p.ident(os.fstat(fd)),'held and named VNC socket epoch');return value
+ finally:os.close(fd)
+
 def verify_phase(c,ref,disks,phase,intent,reg,state,files):
  """Called inside the observer's held intent AND lease locks, before rereads.
  Frozen stage is provenance, never a substitute for live phase custody.
@@ -284,8 +311,9 @@ def verify_phase(c,ref,disks,phase,intent,reg,state,files):
  for row,a in zip(v['rows'],v['after']):
   role=row['role'];p.need(row['path']==allowed[role]==a['path']and row['uid']==UID,'exact phase six-role scope')
   raw,jp=files.read('acl-before-'+role+'.json');journals.append(('acl-before-'+role+'.json',raw,jp));p.need(json.loads(raw)==row,'protected original six-role ACL journal')
-  with held_row(row)as h:
-   now=h.check();acl=ACL().get(h.fd);restore_pin=None;restore_raw=None;content=None;expected=a['identity'];p.need(all(now[k]==expected[k]for k in OBJECT)and stat.S_IFMT(now['st_mode'])==stat.S_IFMT(expected['st_mode'])and now['st_nlink']==expected['st_nlink'],'same owned phase inode/type/link')
+  owner=active_firmware_owner(reg)if phase=='ACTIVE'and role=='vars'else None
+  with (Held(row['path'],(UID,owner['gids'][0]))if owner is not None else held_row(row))as h:
+   now=h.check();acl=ACL().get(h.fd);restore_pin=None;restore_raw=None;content=None;expected=a['identity'];keys=('st_dev','st_ino')if owner is not None else OBJECT;p.need(all(now[k]==expected[k]for k in keys)and stat.S_IFMT(now['st_mode'])==stat.S_IFMT(expected['st_mode'])and now['st_nlink']==expected['st_nlink'],'same owned phase inode/type/link')
    if phase=='ACTIVE':
     p.need(now['st_mode']==expected['st_mode']and acl==row['targetACL']==a['ACL'],'exact active effective ACL/mode')
     if role in('working','working-parent'):p.need(now==expected,'immutable readonly working and parent full9 during ACTIVE')
@@ -302,14 +330,11 @@ def verify_phase(c,ref,disks,phase,intent,reg,state,files):
    children=None;socket_pin=None
    if role in('runtime-parent','output-parent'):
     children=sorted(os.listdir(h.fd));wanted=['OVMF_VARS_4M.fd']if role=='runtime-parent'else['serial.raw']
-    if role=='runtime-parent'and phase=='ACTIVE':wanted+=['vnc.sock']
+    if role=='runtime-parent'and(phase=='ACTIVE'or 'vnc.sock'in children):wanted+=['vnc.sock']
     p.need(children==sorted(wanted),'only declared owned runtime/output children')
-    if role=='runtime-parent'and phase=='ACTIVE':
-     sf=os.open('vnc.sock',os.O_PATH|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=h.fd)
-     try:
-      sock=os.fstat(sf);socket_pin={'path':c['run']+'/vnc.sock','identity':p.ident(sock)};p.need(stat.S_ISSOCK(sock.st_mode)and sock.st_uid==UID and sock.st_nlink==1,'same domain owned VNC socket type/UID/link');p.need(p.ident(sock)==p.ident(os.stat('vnc.sock',dir_fd=h.fd,follow_symlinks=False))==p.ident(os.fstat(sf)),'held and named VNC socket epoch')
-     finally:os.close(sf)
+    if role=='runtime-parent'and 'vnc.sock'in children:socket_pin=runtime_socket(h.fd,c['run'],phase)
    p.need(now==h.check()and ACL().get(h.fd)==acl,'phase held/named object and ACL stable during observation');out.append({'role':role,'identity':now,'ACL':acl,'journalPin':jp,'children':children,'socket':socket_pin,'restorePin':restore_pin,'restoreRawBase64':restore_raw,'content':content})
+   if owner is not None:out[-1]['activeFirmwareOwner']=owner
  with Held(disks['original']['path'])as h:p.need(h.check()==disks['original']['identity'],'immutable original full9 after runtime custody')
  for name,raw,jpin in journals:p.need(files.read(name)==(raw,jpin),'same original held-epoch ACL journals full9/raw after custody')
  prepared_lineage(c,ref,disks)
