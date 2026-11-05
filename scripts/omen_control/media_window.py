@@ -207,15 +207,19 @@ def runner_return_cut(value, policy, now):
           and value['otherActiveJobs']==[] and value['guestActive']is False
           and value['gpuLeaseActive']is False and value['sourceOwnerBusy']is False)
     if not idle or value['heartbeatCurrent']is not True:return None
-    pub=value.get('heartbeatPublication',{}).get('after')
+    publications=value.get('heartbeatPublication',{})
+    pub=publications.get('after')
     if pub is None:return None
-    if pub['nonce']!=ctl['jobId'].removeprefix('root-github-robot-control-'):return None
+    # REFRESH_HEARTBEAT has its own action nonce; the process-bound control
+    # job remains unchanged. A publication crossing the native cut is retried.
+    if publications.get('before')!=pub:return None
     need(pub['ready']is True and pub['runnerId']==21 and pub['sourceCommit']==policy['mainCommit']
          and pub['queueSourceSHA256']==policy['queueSourceSHA256']
+         and type(pub['nonce'])is str and re.fullmatch('[0-9a-f]{32}',pub['nonce'])is not None
          and type(pub['checkedAt'])is int and type(pub['expiresAt'])is int
          and now-180<=pub['checkedAt']<=now<pub['expiresAt']<=pub['checkedAt']+180
          and re.fullmatch('[0-9a-f]{64}',pub['rawSHA256'])is not None,
-         'actual fresh180s published heartbeat bound to current control')
+         'actual fresh180s current-source published heartbeat action')
     return {'jobId':ctl['jobId'],'leaseExpiresUnix':ctl['leaseExpiresUnix'],
             'boot':value['boot'],'publication':pub}
 
@@ -269,9 +273,10 @@ def verify_runner_return(profile_pin, attempt, completed_heavy_pin):
             if observed is not None:
                 current=(observed['jobId'],observed['boot'],observed['leaseExpiresUnix'])
                 if current!=epoch:epoch=current;last=None;advances=0;witnesses=[]
-                checked=observed['publication']['checkedAt']
-                if last is None:witnesses.append(observed);last=checked
-                elif checked>last:witnesses.append(observed);last=checked;advances+=1
+                publication=observed['publication'];checked=publication['checkedAt'];nonce=publication['nonce']
+                if last is None:witnesses.append(observed);last=(checked,nonce)
+                elif checked>last[0]and nonce not in {w['publication']['nonce']for w in witnesses}:
+                    witnesses.append(observed);last=(checked,nonce);advances+=1
                 if advances>=2:break
             remaining=end-time.monotonic();need(remaining>0,'bounded natural advancing runner heartbeat')
             time.sleep(min(15,remaining))

@@ -700,6 +700,7 @@ print(json.dumps({'uid':os.getuid(),'result':value,'defaultGuardRefused':True,'w
 
     def _installed_normal_entry_without_connect_syscall(self, deployment_id, attempt,prior_version=False):
         """Actual installer/isolated entry; external queue helpers and media are MODELED, never executed."""
+        from unittest import mock
         import install_media_controller as installer
         import run_current_media as normal_entry
         import runtime_entry
@@ -1584,7 +1585,8 @@ except peer.Refused as error:
                     nonce_for_control='e'*32
                     def model_frame():
                         now=wall+clock[0];checked=int(now)
-                        pub={'checkedAt':checked,'expiresAt':checked+180,'nonce':nonce_for_control,
+                        action_nonce=hashlib.sha256(str(checked).encode()).hexdigest()[:32]
+                        pub={'checkedAt':checked,'expiresAt':checked+180,'nonce':action_nonce,
                              'sourceCommit':'a'*40,'queueSourceSHA256':'b'*64,'runnerId':21,'ready':True,
                              'rawSHA256':hashlib.sha256(str(checked).encode()).hexdigest()}
                         return {'kind':'ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1','effects':[],'boot':boot,
@@ -1625,18 +1627,31 @@ except peer.Refused as error:
                         if live:
                             self.assertEqual(returned['naturalHeartbeatAdvances'],2)
                             self.assertEqual(len(returned['witnesses']),3)
+                            self.assertEqual({w['jobId']for w in returned['witnesses']},
+                                             {'root-github-robot-control-'+nonce_for_control})
+                            self.assertEqual(len({w['publication']['nonce']for w in returned['witnesses']}),3)
+                            self.assertNotIn(nonce_for_control,{w['publication']['nonce']for w in returned['witnesses']})
                         else:
                             self.assertIn('bounded natural',returned['first']['reason'])
                             self.assertEqual(clock[0],300.0)
                     model_live[0]=True;positive=model_frame();policy=installed['normalControlPolicy']
                     self.assertIsNotNone(installed_window.runner_return_cut(positive,policy,wall+clock[0]))
-                    for fault in ('listener','busy','old-publication'):
+                    for fault in ('listener','busy','crossed-publication','unknown'):
                         changed=copy.deepcopy(positive)
                         if fault=='listener':changed['control']['listenerAlive']=False
                         elif fault=='busy':changed['runnerBusy']=True
-                        else:changed['heartbeatPublication']['after']['nonce']='f'*32
+                        elif fault=='crossed-publication':changed['heartbeatPublication']['before']=None
+                        else:changed['unknownReservations']=['explicit modeled unknown']
                         with self.subTest(returnFault=fault):
                             self.assertIsNone(installed_window.runner_return_cut(changed,policy,wall+clock[0]))
+                    for fault in ('wrong-source','stale','malformed-nonce'):
+                        changed=copy.deepcopy(positive);publication=changed['heartbeatPublication']['after']
+                        if fault=='wrong-source':publication['sourceCommit']='f'*40
+                        elif fault=='stale':publication.update(checkedAt=wall-181,expiresAt=wall-1)
+                        else:publication['nonce']='unbound-action'
+                        changed['heartbeatPublication']['before']=copy.deepcopy(publication)
+                        with self.subTest(returnFault=fault),self.assertRaisesRegex(RuntimeError,'fresh180s'):
+                            installed_window.runner_return_cut(changed,policy,wall+clock[0])
         finally:
             if parent_identity is not None:
                 self.assertEqual(media.identity(os.lstat(public_parent)),parent_identity)
