@@ -161,7 +161,7 @@ def user_dispatcher(unit):
     need(value.returncode==0 and value.stderr==b'','actual normal dispatcher manager')
     return dict(x.split('=',1)for x in value.stdout.decode().splitlines()if'='in x)
 
-def owning_dispatcher(row,policy,state):
+def owning_dispatcher(row,policy,state,starting=False):
     old=state['lastOutcome'];tx=old.get('dispatcherNonce')
     if tx is None:tx=row['id'].removeprefix('root-github-robot-control-')
     need(old.get('controlJobId')==row['id']and re.fullmatch('[0-9a-f]{32}',tx),
@@ -176,6 +176,18 @@ def owning_dispatcher(row,policy,state):
         actor=proc(ref['pid']);need(actor['uids']==[1000]*4 and unit in actor['cgroup']and
              unit in m.get('ControlGroup',''),'actual normal dispatcher leader/source group')
         ref['start']=actor['start']
+        children=[int(x)for x in(Path('/proc')/str(ref['pid'])/'task'/str(ref['pid'])/'children').read_text().split()]
+        workers=[]
+        for pid in children:
+            try:
+                worker=proc(pid);parent=int((Path('/proc')/str(pid)/'stat').read_text().rsplit(')',1)[1].split()[1])
+                if(parent==ref['pid']and worker['uids']==[1000]*4 and worker['argv']==
+                   [b'/usr/bin/python3',str(QUEUE/'test_queue.py').encode(),b'--queue',str(QUEUE/'state').encode(),b'run']and
+                   worker['cgroup'].startswith('0::/user.slice/user-1000.slice/user@1000.service/opemos.slice/opemos-heavy.slice/run-')and
+                   worker['cgroup'].endswith('.scope')):workers.append(worker)
+            except(FileNotFoundError,ProcessLookupError):continue
+        if len(children)==len(workers)==1:ref['worker']={k:workers[0][k]for k in('pid','start','cgroup')}
+        else:need(starting,'actual same-parent ordinary heavy worker; no unknown dispatcher helper')
     else:
         need(m.get('ControlGroup')==''and m.get('ActiveState')in('inactive','failed'),
              'quiescent exact old dispatcher identity')
@@ -191,6 +203,31 @@ def dispatcher_closed(ref):
         try:actor=proc(ref['pid'])
         except(FileNotFoundError,ProcessLookupError):actor=None
         need(actor is None or actor['start']!=ref['start'],'original dispatcher leader still exists')
+    if ref.get('worker')is not None:
+        old=ref['worker']
+        try:worker=proc(old['pid'])
+        except(FileNotFoundError,ProcessLookupError):worker=None
+        if worker is not None and worker['start']==old['start']:return False
+        group=Path('/sys/fs/cgroup')/old['cgroup'].removeprefix('0::').lstrip('/')
+        if group.exists()and(group/'cgroup.procs').read_text().strip():return False
+    else:
+        # Legacy/quiescent manager has no retained child PID. Its actual normal
+        # worker cannot be declared gone while either existing lock is held.
+        fds=[]
+        try:
+            import fcntl
+            for path in(QUEUE/'state/worker.lock',Path('/run/user/1000/opemos-heavy.lock')):
+                fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC);fds.append(fd);st=os.fstat(fd)
+                fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+                before=tuple(getattr(st,k)for k in fields)
+                need(stat.S_ISREG(st.st_mode)and st.st_uid==1000 and st.st_nlink==1 and
+                     before==tuple(getattr(os.stat(path,follow_symlinks=False),k)for k in fields),'same held/named existing normal lock inode')
+                try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                except BlockingIOError:return False
+                need(before==tuple(getattr(os.fstat(fd),k)for k in fields)==
+                     tuple(getattr(os.stat(path,follow_symlinks=False),k)for k in fields),'same held/named lock custody after nonblocking admission')
+        finally:
+            for fd in reversed(fds):os.close(fd)
     for root in Path('/proc').iterdir():
         if not root.name.isdecimal():continue
         try:need(ref['unit']not in(root/'cgroup').read_text(),'actual dispatcher group still has an actor')
@@ -584,7 +621,7 @@ def main():
             finalizer=completion_dispatch_nonce(nonce)
             dispatch(finalizer,policy,probe_module)
             context={'lastOutcome':{'controlJobId':job_id,'dispatcherNonce':finalizer}}
-            dispatchers.append(owning_dispatcher(selected,policy,context))
+            dispatchers.append(owning_dispatcher(selected,policy,context,starting=True))
             selected,_=wait_terminal(probe_module,policy,job_id,time.monotonic()+180,
                                      dispatcher_nonce=finalizer,dispatchers=dispatchers)
         if action in ('CREATE','GRACEFUL_RENEW','RECONCILE_CLOSED'):

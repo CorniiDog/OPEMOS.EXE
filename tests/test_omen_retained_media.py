@@ -1757,7 +1757,7 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
              mock.patch.object(cycle,'module',side_effect=lambda path,digest:probe if path.name=='normal_probe.py'else trigger), \
              mock.patch.object(cycle,'normal_at_use',return_value={'control':{'jobId':old['id'],'workerAlive':False}}), \
              mock.patch.object(cycle,'current_rows',return_value=(old,[],[],[])), \
-             mock.patch.object(cycle,'owning_dispatcher',side_effect=lambda row,p,state:{'unit':state['lastOutcome']['dispatcherNonce']}), \
+             mock.patch.object(cycle,'owning_dispatcher',side_effect=lambda row,p,state,**kwargs:{'unit':state['lastOutcome']['dispatcherNonce']}), \
              mock.patch.object(cycle,'dispatch',side_effect=lambda value,*args:calls.append(value)), \
              mock.patch.object(cycle,'wait_terminal',return_value=(closed,{}))as waited, \
              mock.patch.object(cycle,'manager',return_value={}), \
@@ -1964,8 +1964,18 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
         closed=dict(active,ActiveState='failed',MainPID='0',ControlGroup='')
         actor=dict(pid=987654,start=77,uids=[1000]*4,argv=[],cgroup='0::/user/'+unit)
         context={'lastOutcome':{'controlJobId':old_id,'dispatcherNonce':dispatch}}
-        with mock.patch.object(cycle,'user_dispatcher',return_value=active),mock.patch.object(cycle,'proc',return_value=actor):
-            actual=cycle.owning_dispatcher(old,policy,context)
+        child=dict(pid=987655,start=78,uids=[1000]*4,
+            argv=[b'/usr/bin/python3',str(cycle.QUEUE/'test_queue.py').encode(),b'--queue',str(cycle.QUEUE/'state').encode(),b'run'],
+            cgroup='0::/user.slice/user-1000.slice/user@1000.service/opemos.slice/opemos-heavy.slice/run-r'+'0'*32+'.scope')
+        real_path=Path
+        with tempfile.TemporaryDirectory()as directory:
+            fake=Path(directory);(fake/'987654/task/987654').mkdir(parents=True);(fake/'987655').mkdir()
+            (fake/'987654/task/987654/children').write_text('987655 ')
+            (fake/'987655/stat').write_text('987655 (modeled) S 987654 0')
+            with mock.patch.object(cycle,'Path',side_effect=lambda value:fake if str(value)=='/proc'else real_path(value)), \
+                 mock.patch.object(cycle,'user_dispatcher',return_value=active), \
+                 mock.patch.object(cycle,'proc',side_effect=lambda pid:actor if pid==987654 else child):
+                actual=cycle.owning_dispatcher(old,policy,context)
         self.assertEqual(actual['nonce'],dispatch);self.assertNotEqual(actual['nonce'],old_id[-32:])
         root_closed=dict(ActiveState='inactive',MainPID='0',ControlGroup='')
         observed=types.SimpleNamespace(current_control=lambda row,p:{'terminalLifecycle':'CLOSED','reservationRetained':False})
@@ -1979,6 +1989,14 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                 cycle.closed_receipt(old,root_closed,[actual])
             self.assertTrue(queried.call_args_list)
             self.assertEqual({x.args[0]for x in queried.call_args_list},{unit})
+        def parent_gone_child_live(pid):
+            if pid==actor['pid']:raise FileNotFoundError
+            return child
+        with mock.patch.object(cycle,'user_dispatcher',return_value=closed), \
+             mock.patch.object(cycle,'proc',side_effect=parent_gone_child_live):
+            self.assertFalse(cycle.dispatcher_closed(actual))
+            with self.assertRaisesRegex(RuntimeError,'actual dispatcher still active'):
+                cycle.closed_receipt(old,root_closed,[actual])
         installer=b'def targets():return {}\ndef full(path):raise AssertionError("no targets")\n'
         policy.update(currentReleaseTx='f'*32,normalInstallerSHA256=cycle.sha(installer),
             queueLoggerSHA256='9'*64,controlBrokerSHA256=cycle.sha(b'control.py'),jobStartedSHA256='8'*64)
@@ -2002,15 +2020,17 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             payload,_=cycle.materialize(policy,source,renewal,row,root_closed,dispatchers=[actual])
         produced=json.loads(payload);closure=json.loads(bytes.fromhex(produced['oldControl']['closedReceiptHex']))
         self.assertEqual(closure['normalDispatchers'],[actual])
-        proof.update(oldRow=old,oldManager=root_closed,oldOuter=closed,oldOuters=[closed],closure=closure)
+        proof.update(oldRow=old,oldManager=root_closed,oldOuter=closed,oldOuters=[closed],closure=closure,
+            oldWorkers=[{'expected':actual['worker'],'processAbsent':True,'scopeEmpty':True}])
         proof['preflight']['oldControl']=produced['oldControl']
         with mock.patch.object(r,'materialized_source_roles',return_value=expected):
             r.validate_materialized_renewal(proof,policy,state,probe,time.time(),pending=True)
-            for fault in ('live-worker','invocation','control','source'):
+            for fault in ('live-worker','invocation','control','source','heavy-child'):
                 bad=copy.deepcopy(proof)
                 if fault=='live-worker':bad['oldOuters'][0]=active;bad['oldOuter']=active
                 elif fault=='invocation':bad['oldOuters'][0]['InvocationID']='0'*32
                 elif fault=='control':bad['closure']['normalDispatchers'][0]['jobId']='wrong'
+                elif fault=='heavy-child':bad['oldWorkers'][0]['processAbsent']=False
                 else:bad['closure']['normalDispatchers'][0]['queueSourceSHA256']='0'*64
                 with self.subTest(fault=fault),self.assertRaises(RuntimeError):
                     r.validate_materialized_renewal(bad,policy,state,probe,time.time(),pending=True)
