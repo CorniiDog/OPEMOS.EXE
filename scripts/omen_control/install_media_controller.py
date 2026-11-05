@@ -21,6 +21,7 @@ PREPARE = {'current_media_preparation','fresh_placement_producer','fresh_media_p
 QUEUE_NAMES = ('test_queue.py','queue_job.py','heavy.sh','queue.sh','queue-files.sh',
                'retained_media.py','source_contract.py')
 FIELDS = ('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+CONTROL_POLICY = Path('/var/lib/opemos-robot-control-r1/auto-recovery/policy.json')
 
 
 def need(ok, message):
@@ -30,13 +31,14 @@ def need(ok, message):
 def canon(value): return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
 
 
-def pin(path):
+def pin(path, with_bytes=False):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
         i = {k:getattr(os.fstat(fd),k) for k in FIELDS}; raw = b''
         while b := os.read(fd, 65536): raw += b; need(len(raw) <= 8388608, 'installer pin cap')
         need(all(i[k] == getattr(os.fstat(fd),k) == getattr(os.lstat(path),k) for k in FIELDS), 'installed full9/FD/name')
-        return {'path':str(path),'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),'identity':i}
+        result={'path':str(path),'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),'identity':i}
+        return (result,raw)if with_bytes else result
     finally: os.close(fd)
 
 
@@ -121,7 +123,10 @@ def install(payload):
     for name,value in payload['drainSources'].items():
         raw = body(value); compile(raw,name+'.py','exec')
         drain_sources[name] = put(drain_root/(name+'.py'),raw,0o444)
-    policy = payload['normalControlPolicy']
+    # This is a reviewed control-code deployment, not a candidate push/run.
+    # Bind its health selection from the actual created definition once; all
+    # consumers use this same value. Routine jobs reuse installed control code.
+    policy = dict(payload['normalControlPolicy'],healthImplementationDefinitionPin=contract_pin)
     need(drain_sources['normal_probe']['sha256'] == policy['normalProbeSHA256']
          and drain_sources['normal_cycle']['sha256'] == policy['normalCycleSHA256'], 'same actual installed normal control sources')
     normal_sources = {'normal_probe':drain_sources['normal_probe'],'normal_cycle':drain_sources['normal_cycle'],
@@ -143,6 +148,7 @@ def install(payload):
             'drainEntryPin':drain_sources['media_drain'],'drainProfilePin':drain_profile_pin,
             'probeEntryPin':drain_sources['media_probe_remote'],'probeProfilePin':probe_profile_pin,
             'normalControlSources':normal_sources,
+            'normalControlPolicy':policy,
             'serviceStarted':False,'mounts':[],'queueSubmitted':False,'hardwareEffects':[]}
 
 
@@ -153,6 +159,17 @@ def install_window(payload):
     definition = types.ModuleType('window_definition'); exec(compile(body(payload['sourceDefinition']), 'source_contract.py', 'exec'), definition.__dict__)
     need(str(root) == definition.deployment_paths(payload['deploymentId'])['windowRoot'], 'same authenticated window deployment')
     need(set(payload['sources']) == {'media_window','media_client','window_common','owned_command','media_probe'}, 'whole fixed window implementation')
+    remote = payload['remoteInstallation']
+    # Existing guarded adoption must activate/read back the desired policy
+    # before sealing a window. An old policy pin cannot silently survive a
+    # source transition or disagree with the remote probe/drain profiles.
+    policy_ref=payload['controlPolicyPin'];actual,raw=pin(CONTROL_POLICY,with_bytes=True)
+    need(policy_ref==actual and actual['identity']['st_uid']==actual['identity']['st_gid']==0
+         and actual['identity']['st_nlink']==1 and stat.S_IMODE(actual['identity']['st_mode'])==0o400,
+         'actual activated controller policy full9')
+    need(hashlib.sha256(raw).hexdigest()==actual['sha256'] and len(raw)==actual['bytes']
+         and pin(CONTROL_POLICY)==actual and json.loads(raw)==remote['normalControlPolicy'],
+         'actual activated policy equals installed health/probe/drain selection')
     root_directory(root)
     sources = {}
     for name,value in payload['sources'].items():
@@ -162,7 +179,6 @@ def install_window(payload):
     if not os.path.lexists(evidence): root_directory(evidence)
     else:
         s=os.lstat(evidence);need(stat.S_ISDIR(s.st_mode)and s.st_uid==s.st_gid==0 and stat.S_IMODE(s.st_mode)==0o700,'protected existing evidence owner; preserve contents')
-    remote = payload['remoteInstallation']
     client = {'kind':'OPEMOS_INSTALLED_MEDIA_CLIENT_V1','sshConfigPin':ssh,
               'ownedCommandPin':sources['owned_command'],'remoteEntry':remote['operationProfilePin']['path'].rsplit('/',1)[0]+'/run_current_media.py',
               'remoteProfilePin':remote['operationProfilePin'],'remoteHeavyPin':remote['queuePrograms'][2],

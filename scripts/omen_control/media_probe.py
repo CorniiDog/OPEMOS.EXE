@@ -54,9 +54,16 @@ def github(p,m):
              and h.get('runner_id')==21 and h.get('ready')is True
              and type(h.get('checked_at'))is int and type(h.get('expires_at'))is int
              and now-180<=h['checked_at']<=now<h['expires_at'])
+    publication=None
+    if current and nonce is not None:
+        publication={'checkedAt':h['checked_at'],'expiresAt':h['expires_at'],'nonce':nonce,
+                     'sourceCommit':h['source_commit'],'queueSourceSHA256':h['queue_source_sha256'],
+                     'runnerId':h['runner_id'],'ready':h['ready'],
+                     'rawSHA256':hashlib.sha256(json.dumps(h,sort_keys=True,separators=(',',':')).encode()).hexdigest()}
     return {'networkReachable':True,'protectedMain':protected,'mainCommit':p['mainCommit'],
             'protectedMainCommit':main,'runnerOnline':runner['status']=='online','runnerBusy':runner['busy'],
-            'actionsInProgress':assigned,'actionsQueued':queued,'heartbeatCurrent':current,'heartbeatNonce':nonce}
+            'actionsInProgress':assigned,'actionsQueued':queued,'heartbeatCurrent':current,'heartbeatNonce':nonce,
+            'heartbeatPublication':publication}
 
 
 
@@ -100,4 +107,6 @@ def observe(inputs):
         if value[key]!=p[key]:raise RuntimeError('actual installed source drift: '+key)
     for key in('runnerOnline','runnerBusy','actionsInProgress','mainCommit'):
         if value[key]!=before[key]:raise RuntimeError('authenticated carrier equality: '+key)
+    value['heartbeatPublication']={'before':before.get('heartbeatPublication'),
+                                  'after':after.get('heartbeatPublication')}
     return value

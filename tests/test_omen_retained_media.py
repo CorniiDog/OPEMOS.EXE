@@ -739,7 +739,8 @@ print(json.dumps({'uid':os.getuid(),'result':value,'defaultGuardRefused':True,'w
                    'protectedMain':'a'*40,'reviewedHead':'b'*40,'deploymentId':deployment_id,  # modeled identity DATA, no review fabricated
                    'sources':sources,'queueSources':queue_sources,'queueRoot':str(queue_root),
                    'originCopyData':member(b'{}'), 'drainRoot':str(drain_root),'drainSources':drains,
-                   'normalControlPolicy':{'normalProbeSHA256':model['sha256'],'normalCycleSHA256':model['sha256']},
+                   'normalControlPolicy':{'normalProbeSHA256':model['sha256'],'normalCycleSHA256':model['sha256'],
+                                          'mainCommit':'a'*40,'queueSourceSHA256':'b'*64},
                    'parentTemplate':{'noNIC':True,'noInstall':True,'maxBoots':1},
                    'operationProfile':{'kind':'OPEMOS_INSTALLED_CURRENT_MEDIA_OPERATION_V1','candidateTemplate':{'nonce':guest_nonce}}}
         if prior_version:
@@ -1539,6 +1540,103 @@ except peer.Refused as error:
                     vnc.close();owner_process.stdin.close();owner_process.wait(timeout=5)
                     self.assertEqual(owner_process.returncode,0);self.assertEqual(owner_process.stdout.read(),b'')
                     self.assertEqual(owner_process.stderr.read(),b'');owner_process.stdout.close();owner_process.stderr.close()
+                # The actual installer result produces ONE desired health
+                # selection for this future deployment. A stale controller
+                # policy refuses before a window is created. Native adoption
+                # pause/service/backstop facts are not modeled as acceptance.
+                self.assertEqual(installed['normalControlPolicy'],dict(payload['normalControlPolicy'],
+                    healthImplementationDefinitionPin=installed['sourceContractPin']))
+                policy_path=fixture/'modeled-controller-policy.json'
+                old_policy=installer.put(policy_path,installer.canon(payload['normalControlPolicy']),0o400)
+                window_programs={name:member((SOURCE/(name+'.py')).read_bytes())for name in
+                    ('media_window','media_client','window_common','owned_command','media_probe')}
+                window_payload={'kind':'ROOT_REVIEWED_MEDIA_WINDOW_INSTALL_V1','root':layout['windowRoot'],
+                    'deploymentId':deployment_id,'sourceDefinition':sources['source_contract'],
+                    'sources':window_programs,'existingSSHConfig':member(b'# MODELED route, never executed\n'),
+                    'remoteInstallation':installed,'controlPolicyPin':old_policy,
+                    'normalProbePin':installed['normalControlSources']['normal_probe'],'jobPrefix':'fixture-'}
+                with mock.patch.object(installer,'CONTROL_POLICY',policy_path):
+                    with self.assertRaisesRegex(RuntimeError,'actual activated policy equals installed health'):
+                        installer.install_window(window_payload)
+                    self.assertFalse(os.path.lexists(layout['windowRoot']))
+                    prior=installer.put(fixture/'preserved-prior-policy.json',policy_path.read_bytes(),0o400)
+                    replacement=fixture/'modeled-policy-new.json'
+                    installer.put(replacement,installer.canon(installed['normalControlPolicy']),0o400)
+                    os.replace(replacement,policy_path) # MODEL of already-guarded adoption, not service authority.
+                    window_payload['controlPolicyPin']=installer.pin(policy_path)
+                    sealed=installer.install_window(window_payload);created.append(Path(layout['windowRoot']))
+                    profile=json.loads(Path(sealed['windowProfilePin']['path']).read_bytes())
+                    self.assertEqual(profile['controlPolicyPin'],installer.pin(policy_path))
+                    self.assertEqual(profile['probeInputs']['policyPin'],profile['controlPolicyPin'])
+                    for name in ('drainProfilePin','probeProfilePin'):
+                        self.assertEqual(json.loads(Path(installed[name]['path']).read_bytes())['policy'],
+                                         installed['normalControlPolicy'])
+                    self.assertEqual(prior['sha256'],old_policy['sha256'])
+                    self.assertEqual(Path(prior['path']).read_bytes(),installer.canon(payload['normalControlPolicy']))
+                    window_spec=importlib.util.spec_from_file_location('actual_installed_return_window',sealed['windowEntryPin']['path'])
+                    installed_window=importlib.util.module_from_spec(window_spec);window_spec.loader.exec_module(installed_window)
+                    actual_module=installed_window.module
+                    # Only external service/GitHub/native-control facts below
+                    # are MODELED. Installed code/profile/full9, evidence and
+                    # the entire production post-heavy loop are real. No tick,
+                    # listener, VM or heartbeat publication is performed.
+                    wall=int(time.time());clock=[0.0];model_live=[True]
+                    nonce_for_control='e'*32
+                    def model_frame():
+                        now=wall+clock[0];checked=int(now)
+                        pub={'checkedAt':checked,'expiresAt':checked+180,'nonce':nonce_for_control,
+                             'sourceCommit':'a'*40,'queueSourceSHA256':'b'*64,'runnerId':21,'ready':True,
+                             'rawSHA256':hashlib.sha256(str(checked).encode()).hexdigest()}
+                        return {'kind':'ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1','effects':[],'boot':boot,
+                            'runnerOnline':model_live[0],'runnerBusy':False,'actionsInProgress':0,
+                            'queueKnown':True,'unknownReservations':[],'otherActiveJobs':[],
+                            'guestActive':False,'gpuLeaseActive':False,'sourceOwnerBusy':False,
+                            'heartbeatCurrent':True,'heartbeatPublication':{'before':pub,'after':pub},
+                            'control':{'jobId':'root-github-robot-control-'+nonce_for_control,'state':'running',
+                                'sourceCommit':'a'*40,'queueSourceSHA256':'b'*64,'leaseExpiresUnix':wall+21600,
+                                **{k:True for k in('listenerAlive','controllerAlive','workerAlive','ownUnitBound')}}}
+                    def model_module(ref,name):
+                        value=actual_module(ref,name)
+                        if name=='runner_return_common':value.manager=lambda unit:{'ActiveState':'active','UnitFileState':'enabled'}
+                        elif name=='runner_return_actual_probe':value.observe=lambda inputs:model_frame()
+                        return value
+                    def sleep(seconds):clock[0]+=seconds
+                    for live in (True,False):
+                        model_live[0]=live;clock[0]=0.0;return_attempt=uuid.uuid4().hex
+                        evidence=Path(profile['evidenceRoot'])/return_attempt;evidence.mkdir(mode=0o700);created.append(evidence)
+                        diagnostic_first=None if live else'explicit modeled original VM FIRST'
+                        installer.put(evidence/'final.json',installer.canon({'first':diagnostic_first,'cleanup':[],
+                            'guestAcceptanceClaimed':False}),0o400)
+                        command=['/MODELED/heavy.sh','/usr/bin/python3','-I','-B',sealed['windowEntryPin']['path'],
+                                 '--profile-pin-json',json.dumps(sealed['windowProfilePin']),'--attempt',return_attempt]
+                        native={'schema':'opemos-owned-command-v2','argv':command,'lifecycleClosed':True,
+                            'reaped':True,'childSetRestored':True,'stdoutEOF':True,'stderrEOF':True,
+                            'fd':{'restored':True,'closeErrors':[]},'tailUNKNOWN':False,
+                            'numericExit':0 if live else 1,'stdin':{'closed':True,'complete':True},'errors':[]}
+                        completion=installer.put(fixture/('modeled-heavy-'+return_attempt+'.json'),installer.canon(native),0o400)
+                        with mock.patch.object(installed_window,'module',side_effect=model_module), \
+                             mock.patch.object(installed_window.time,'monotonic',side_effect=lambda:clock[0]), \
+                             mock.patch.object(installed_window.time,'time',side_effect=lambda:wall+clock[0]), \
+                             mock.patch.object(installed_window.time,'sleep',side_effect=sleep):
+                            returned=installed_window.verify_runner_return(sealed['windowProfilePin'],return_attempt,completion)
+                        self.assertEqual(returned['runnerRecoveryVerified'],live)
+                        self.assertEqual(returned['windowFirst'],diagnostic_first)
+                        self.assertFalse(returned['guestAcceptanceClaimed']);self.assertEqual(returned['effects'],[])
+                        if live:
+                            self.assertEqual(returned['naturalHeartbeatAdvances'],2)
+                            self.assertEqual(len(returned['witnesses']),3)
+                        else:
+                            self.assertIn('bounded natural',returned['first']['reason'])
+                            self.assertEqual(clock[0],300.0)
+                    model_live[0]=True;positive=model_frame();policy=installed['normalControlPolicy']
+                    self.assertIsNotNone(installed_window.runner_return_cut(positive,policy,wall+clock[0]))
+                    for fault in ('listener','busy','old-publication'):
+                        changed=copy.deepcopy(positive)
+                        if fault=='listener':changed['control']['listenerAlive']=False
+                        elif fault=='busy':changed['runnerBusy']=True
+                        else:changed['heartbeatPublication']['after']['nonce']='f'*32
+                        with self.subTest(returnFault=fault):
+                            self.assertIsNone(installed_window.runner_return_cut(changed,policy,wall+clock[0]))
         finally:
             if parent_identity is not None:
                 self.assertEqual(media.identity(os.lstat(public_parent)),parent_identity)

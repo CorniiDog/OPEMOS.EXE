@@ -185,11 +185,110 @@ def execute(profile_pin, attempt):
             except BaseException as error: closure_errors.append(str(error))
         os.close(lock)
         record('final.json',{'first':None if first is None else str(first),'cleanup':closure_errors,
-                             'diagnosticErrors':errors,'guestAcceptanceClaimed':False})
+                             'diagnosticErrors':errors,'guestAcceptanceClaimed':False,
+                             'runnerRecovery':'RESTORE_REQUESTED_NOT_YET_VERIFIED_AFTER_HEAVY'})
         if closure_errors and first is None: raise RuntimeError('restoration unknown; finite backstop preserved: '+repr(closure_errors))
+
+
+def runner_return_cut(value, policy, now):
+    """Existing full native probe plus independent authenticated publication."""
+    need(value['kind']=='ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1'and value['effects']==[],
+         'actual normal runner return probe')
+    ctl=value['control']
+    live=(value['runnerOnline']is True and ctl['state']=='running'
+          and all(ctl[k]is True for k in('listenerAlive','controllerAlive','workerAlive','ownUnitBound'))
+          and type(ctl['leaseExpiresUnix'])in(int,float)and ctl['leaseExpiresUnix']>now)
+    if not live:return None
+    need(ctl['sourceCommit']==policy['mainCommit']and ctl['queueSourceSHA256']==policy['queueSourceSHA256']
+         and re.fullmatch('root-github-robot-control-[0-9a-f]{32}',ctl['jobId'])is not None,
+         'current process-bound control source/queue/lease identity')
+    idle=(value['runnerBusy']is False and value['actionsInProgress']==0
+          and value['queueKnown']is True and value['unknownReservations']==[]
+          and value['otherActiveJobs']==[] and value['guestActive']is False
+          and value['gpuLeaseActive']is False and value['sourceOwnerBusy']is False)
+    if not idle or value['heartbeatCurrent']is not True:return None
+    pub=value.get('heartbeatPublication',{}).get('after')
+    if pub is None:return None
+    if pub['nonce']!=ctl['jobId'].removeprefix('root-github-robot-control-'):return None
+    need(pub['ready']is True and pub['runnerId']==21 and pub['sourceCommit']==policy['mainCommit']
+         and pub['queueSourceSHA256']==policy['queueSourceSHA256']
+         and type(pub['checkedAt'])is int and type(pub['expiresAt'])is int
+         and now-180<=pub['checkedAt']<=now<pub['expiresAt']<=pub['checkedAt']+180
+         and re.fullmatch('[0-9a-f]{64}',pub['rawSHA256'])is not None,
+         'actual fresh180s published heartbeat bound to current control')
+    return {'jobId':ctl['jobId'],'leaseExpiresUnix':ctl['leaseExpiresUnix'],
+            'boot':value['boot'],'publication':pub}
+
+
+def verify_runner_return(profile_pin, attempt, completed_heavy_pin):
+    """Read-only after the owned diagnostic heavy command exits; never a tick."""
+    need(os.getuid()==os.geteuid()==0 and re.fullmatch('[0-9a-f]{32}',attempt),'Root typed return observation')
+    need(not any('/'+name+'/'in Path('/proc/self/cgroup').read_text()
+                 for name in('opemos-heavy.slice','opemos-windows-vm.slice')),
+         'runner return observation must follow released diagnostic heavy custody')
+    profile=json.loads(read(profile_pin));completion=json.loads(read(completed_heavy_pin))
+    need(profile['kind']=='OPEMOS_INSTALLED_MEDIA_WINDOW_V1'and profile['maximumWindowSeconds']==2700,
+         'installed finite return-observation profile')
+    for ref in profile['localSources'].values():read(ref)
+    need(completion['schema']=='opemos-owned-command-v2'and completion['lifecycleClosed']is True
+         and completion['reaped']is True and completion['childSetRestored']is True
+         and completion['stdoutEOF']is True and completion['stderrEOF']is True
+         and completion['fd']['restored']is True and completion['fd']['closeErrors']==[]
+         and completion['tailUNKNOWN']is False and type(completion['numericExit'])is int
+         and completion['stdin']['closed']is True and completion['stdin']['complete']is True
+         and completion['errors']==[],
+         'actual completed owned heavy command EOF/reap/group/FD receipt')
+    argv=completion['argv'];entry=profile['localSources']['media_window']['path']
+    need(entry==str(Path(__file__).absolute())and type(argv)is list and 0<len(argv)<=64
+         and all(type(arg)is str for arg in argv)and argv.count(entry)==1
+         and any(Path(arg).name=='heavy.sh'for arg in argv)
+         and argv.count('--attempt')==1 and argv[argv.index('--attempt')+1]==attempt
+         and argv.count('--profile-pin-json')==1 and json.loads(argv[argv.index('--profile-pin-json')+1])==profile_pin,
+         'completed heavy command bound to exact installed window/profile/attempt')
+    W=module(profile['localSources']['window_common'],'runner_return_common')
+    probe=module(profile['currentProbePin'],'runner_return_actual_probe')
+    policy=json.loads(read(profile['controlPolicyPin'],modes=(0o400,0o444,0o600)))
+    evidence=Path(profile['evidenceRoot'])/attempt
+    st=os.lstat(evidence);need(stat.S_ISDIR(st.st_mode)and st.st_uid==st.st_gid==0
+                              and stat.S_IMODE(st.st_mode)==0o700,'original protected diagnostic evidence')
+    original,_=W.held(evidence/'final.json');original=json.loads(original)
+    need(original['cleanup']==[],'normal timer restoration must already be known')
+    timer=W.manager(TIMER)
+    need(timer['ActiveState']=='active'and timer['UnitFileState']=='enabled','normal recovery timer restored')
+    end=time.monotonic()+300;cuts=[];witnesses=[];epoch=None;last=None;advances=0;first=None
+    try:
+        while True:
+            need(time.monotonic()<end,'bounded natural runner recovery before observation')
+            try:value=probe.observe(profile['probeInputs'])
+            except probe.RunnerStatusTransition:
+                remaining=end-time.monotonic();need(remaining>0,'bounded natural runner API transition')
+                time.sleep(min(.5,remaining));continue
+            need(time.monotonic()<end,'bounded natural runner recovery after observation')
+            W.put(evidence,'runner-return-cut-'+str(len(cuts)).zfill(3)+'.json',value);cuts.append(value)
+            observed=runner_return_cut(value,policy,time.time())
+            if observed is not None:
+                current=(observed['jobId'],observed['boot'],observed['leaseExpiresUnix'])
+                if current!=epoch:epoch=current;last=None;advances=0;witnesses=[]
+                checked=observed['publication']['checkedAt']
+                if last is None:witnesses.append(observed);last=checked
+                elif checked>last:witnesses.append(observed);last=checked;advances+=1
+                if advances>=2:break
+            remaining=end-time.monotonic();need(remaining>0,'bounded natural advancing runner heartbeat')
+            time.sleep(min(15,remaining))
+    except BaseException as error:first={'type':type(error).__name__,'reason':str(error)}
+    result={'kind':'ACTUAL_POST_HEAVY_NORMAL_RUNNER_RETURN','runnerRecoveryVerified':first is None and advances>=2,
+            'first':first,'naturalHeartbeatAdvances':advances,'witnesses':witnesses,
+            'diagnosticCompletionPin':completed_heavy_pin,'windowFirst':original['first'],
+            'effects':[],'guestAcceptanceClaimed':False}
+    W.put(evidence,'runner-return-result.json',result)
+    return result
 
 
 if __name__ == '__main__':
     ap=argparse.ArgumentParser();ap.add_argument('--profile-pin-json',required=True)
-    ap.add_argument('--attempt',required=True);a=ap.parse_args()
+    ap.add_argument('--attempt',required=True);ap.add_argument('--completed-heavy-pin-json');a=ap.parse_args()
+    if a.completed_heavy_pin_json:
+        result=verify_runner_return(json.loads(a.profile_pin_json),a.attempt,json.loads(a.completed_heavy_pin_json))
+        print(json.dumps(result,sort_keys=True),flush=True)
+        sys.exit(0 if result['runnerRecoveryVerified'] else 1)
     execute(json.loads(a.profile_pin_json),a.attempt)
