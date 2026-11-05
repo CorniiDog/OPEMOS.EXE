@@ -46,6 +46,46 @@ def fixture_reap_receipt(child, row):
 
 
 class RunnerTest(unittest.TestCase):
+    def test_virtual_usb_candidate_medium_preserves_actual_package_companion_and_refuses_escape(self):
+        import hashlib,io,stat,zipfile
+        spec=importlib.util.spec_from_file_location('normal_ubuntu_candidate_medium',
+            Path(__file__).resolve().parents[1]/'scripts/omen_control/prepare_observer_iso.py')
+        medium=importlib.util.module_from_spec(spec);spec.loader.exec_module(medium)
+        package=b'actual package DATA, never executed'
+        fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+        with tempfile.TemporaryDirectory(prefix='opemos-candidate-medium-') as directory:
+            root=Path(directory);root.chmod(0o700)
+            def archive(name,fault=None):
+                stream=io.BytesIO()
+                with zipfile.ZipFile(stream,'w')as out:
+                    member=zipfile.ZipInfo('package/candidate.AppImage');member.external_attr=(stat.S_IFREG|0o755)<<16
+                    out.writestr(member,package)
+                    out.writestr('package/candidate.AppImage.runtime/appliance/appliance-manifest.json',b'{}')
+                    if fault=='escape':out.writestr('../escaped',b'bad')
+                    if fault=='link':
+                        link=zipfile.ZipInfo('linked');link.external_attr=(stat.S_IFLNK|0o777)<<16;out.writestr(link,'/foreign')
+                path=root/name;path.write_bytes(stream.getvalue());path.chmod(0o400);s=path.stat()
+                return {'path':str(path),'bytes':s.st_size,'sha256':hashlib.sha256(path.read_bytes()).hexdigest(),
+                        'identity':{k:getattr(s,k)for k in fields}}
+            ref=archive('producer.zip')
+            descriptor={'platform':'ubuntu','repository':'CorniiDog/OPEMOS.EXE','source_commit':'a'*40,
+                'artifact_archive_sha256':ref['sha256'],'executable_name':'candidate.AppImage',
+                'package_name':'candidate.AppImage','executable_bytes':len(package),
+                'package_sha256':hashlib.sha256(package).hexdigest(),'executable_sha256':hashlib.sha256(package).hexdigest()}
+            result=medium.extract_candidate(ref,descriptor,root/'extracted',1048576)
+            self.assertEqual(result['executable']['sha256'],descriptor['package_sha256'])
+            self.assertEqual((root/'extracted/package/candidate.AppImage').read_bytes(),package)
+            self.assertEqual(stat.S_IMODE((root/'extracted/package/candidate.AppImage').stat().st_mode),0o500)
+            for fault in ('escape','link'):
+                badref=archive(fault+'.zip',fault);bad=dict(descriptor,artifact_archive_sha256=badref['sha256'])
+                with self.subTest(fault=fault),self.assertRaises(ValueError):
+                    medium.extract_candidate(badref,bad,root/('refused-'+fault),1048576)
+                self.assertFalse((root/'escaped').exists())
+            with self.assertRaisesRegex(ValueError,'expanded producer bound'):
+                medium.extract_candidate(ref,descriptor,root/'too-large',1)
+            with self.assertRaisesRegex(ValueError,'AppImage bytes'):
+                medium.extract_candidate(ref,dict(descriptor,executable_sha256='0'*64),root/'wrong-package',1048576)
+
     def test_virtual_usb_native_sender_preserves_partial_qmp_and_rejects_foreign_target(self):
         import copy,importlib.util
         spec=importlib.util.spec_from_file_location('ubuntu_connection_control',
