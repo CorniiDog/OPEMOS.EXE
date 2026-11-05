@@ -815,6 +815,13 @@ def reconcile_running_resume(policy,state,probe,now):
             'nonce':nonce,'jobId':c['jobId'],'heartbeatPublished':False}
 
 def run_cycle(policy, state, now):
+    # A pre-effect failure schedules one future attempt. Read-only timer ticks
+    # before that point must not run another fallible probe and slide it away.
+    # Inflight outcomes still require their normal fresh reconciliation proof.
+    if (state['inflight'] is None and now < state['nextAttemptUnix'] and
+            state.get('totalCycles',0) < policy['maxTotalCycles'] and
+            state['completedCycles'] < policy['maxCycles']):
+        return {'decision':'BACKOFF','effect':False}
     probe_raw=load_code(PROBE,policy['controllerProbeSHA256'])
     probe_child=start_held_python(probe_raw,['--probe'])
     observed=capture(probe_child,MAX_PROBE_SECONDS,abort_readonly=True)

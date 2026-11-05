@@ -2508,6 +2508,37 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                 with self.subTest(fault=fault),self.assertRaises(RuntimeError):
                     r.validate_materialized_renewal(bad,policy,state,probe,time.time(),pending=True)
 
+    def test_timer_backoff_does_not_reprobe_or_slide_pre_effect_failure(self):
+        from unittest import mock
+        _,r=self.modules();policy,state,_,_,_=self.pending(r)
+        policy.update(maxTotalCycles=4096,maxCycles=128)
+        state.update(inflight=None,nextAttemptUnix=1000,totalCycles=2,completedCycles=1,
+                     failureCount=7,lastOutcome={'first':'preserved original failure','preEffect':True})
+        original=copy.deepcopy(state)
+        with mock.patch.object(r,'load_code',side_effect=AssertionError('no probe before due'))as load, \
+             mock.patch.object(r,'write_state',side_effect=AssertionError('no backoff/state rewrite')):
+            for now in (100,115,999):
+                self.assertEqual(r.run_cycle(policy,state,now),{'decision':'BACKOFF','effect':False})
+        self.assertEqual(state,original);load.assert_not_called()
+
+    def test_due_or_inflight_timer_keeps_actual_probe_and_caps(self):
+        from unittest import mock
+        _,r=self.modules();policy,state,_,_,_=self.pending(r)
+        policy.update(maxTotalCycles=4096,maxCycles=128)
+        state.update(inflight=None,nextAttemptUnix=1000,totalCycles=2,completedCycles=1)
+        for fault in ('due','inflight','total-cap','cycle-cap'):
+            candidate=copy.deepcopy(state);now=999
+            if fault=='due':now=1000
+            elif fault=='inflight':candidate['inflight']='a'*32
+            elif fault=='total-cap':candidate['totalCycles']=policy['maxTotalCycles']
+            else:candidate['completedCycles']=policy['maxCycles']
+            before=copy.deepcopy(candidate)
+            with self.subTest(fault=fault), \
+                 mock.patch.object(r,'load_code',side_effect=RuntimeError('actual authenticated probe required'))as load, \
+                 self.assertRaisesRegex(RuntimeError,'actual authenticated probe required'):
+                r.run_cycle(policy,candidate,now)
+            load.assert_called_once();self.assertEqual(candidate,before)
+
     def test_actual_run_cycle_acknowledges_pending_without_heartbeat_or_dispatch(self):
         from unittest import mock
         import time
