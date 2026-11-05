@@ -94,7 +94,9 @@ jobs:
           /usr/bin/python3 -B tests/robot/test_peerpid_namespace.py --source "$GITHUB_WORKSPACE/scripts/robot_client.py" --sha256 e80a29c46c0283506d117ec89dc63dbf6923918854b1ede8a621c4887591c4b7
 
       - name: Exercise optional VM diagnostics and genuine failure boundaries
-        run: python3 -m unittest discover -s tests -p 'test_vm_runtime_diagnostics.py' -v
+        run: |
+          python3 -m unittest discover -s tests -p 'test_vm_runtime_diagnostics.py' -v
+          python3 -m unittest discover -s tests -p 'ubuntu_vm_runner_test.py' -k virtual_usb -v
 
       - name: Exercise Robot source adapter and real Unix client fault contracts
         run: python3 -m unittest discover -s tests -p 'test_omen*.py' -v

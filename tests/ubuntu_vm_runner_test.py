@@ -46,6 +46,73 @@ def fixture_reap_receipt(child, row):
 
 
 class RunnerTest(unittest.TestCase):
+    def test_real_file_backed_usb_descriptor_and_qemu_attachment_preserve_source(self):
+        import fcntl
+        with tempfile.TemporaryDirectory(prefix='opemos-virtual-usb-') as directory:
+            root = Path(directory); root.chmod(0o700)
+            original = root / 'source.raw'; original.write_bytes(b'immutable source')
+            with runner.virtual_usb_backing(root, 1048576, 0) as (backing, fd):
+                args = runner.virtual_usb_qemu_arguments(backing, fd, 'a' * 32)
+                self.assertIn(f'file=/proc/self/fd/{fd}', args[1])
+                self.assertIn('usb-storage', args[3])
+                self.assertNotIn('/dev/', ' '.join(args))
+                self.assertEqual(os.pread(fd, 512, 0), bytes(512))
+                self.assertGreaterEqual(os.fstat(fd).st_blocks * 512, backing['capacityBytes'])
+                os.pwrite(fd, b'guest USB bytes', 0); os.fsync(fd)
+                for fault in ('inode', 'capacityBytes', 'uid'):
+                    bad = dict(backing); bad[fault] += 1
+                    with self.subTest(fault=fault), self.assertRaises(ValueError):
+                        runner.virtual_usb_qemu_arguments(bad, fd, 'a' * 32)
+                with self.assertRaises(ValueError):
+                    runner.virtual_usb_qemu_arguments(backing, fd, '../escape')
+                self.assertTrue(fcntl.fcntl(fd, fcntl.F_GETFD) & fcntl.FD_CLOEXEC)
+            with self.assertRaises(OSError): os.fstat(fd)
+            self.assertEqual((root / 'virtual-usb.raw').read_bytes()[:15], b'guest USB bytes')
+            self.assertEqual(original.read_bytes(), b'immutable source')
+            with self.assertRaises(FileExistsError):
+                with runner.virtual_usb_backing(root, 1048576, 0): pass
+
+    def test_virtual_usb_refuses_unbudgeted_or_foreign_placement_before_creation(self):
+        with tempfile.TemporaryDirectory(prefix='opemos-virtual-usb-refuse-') as directory:
+            root = Path(directory); root.chmod(0o700)
+            for capacity, charged in ((True, 0), (513, 0), (0, 0), (1048576, runner.VM_BUDGET_BYTES)):
+                with self.subTest(capacity=capacity, charged=charged), self.assertRaises(ValueError):
+                    with runner.virtual_usb_backing(root, capacity, charged): pass
+                self.assertFalse((root / 'virtual-usb.raw').exists())
+            root.chmod(0o755)
+            with self.assertRaises(ValueError):
+                with runner.virtual_usb_backing(root, 1048576, 0): pass
+            self.assertFalse((root / 'virtual-usb.raw').exists())
+
+    def test_virtual_usb_full_readback_detects_payload_tail_and_source_drift(self):
+        import hashlib
+        with tempfile.TemporaryDirectory(prefix='opemos-virtual-usb-readback-') as directory:
+            root = Path(directory); root.chmod(0o700)
+            image = root / 'actual-output.img'; payload = b'image bytes' * 512
+            image.write_bytes(payload); image.chmod(0o400)
+            fields = ('st_dev', 'st_ino', 'st_mode', 'st_uid', 'st_gid', 'st_nlink',
+                      'st_size', 'st_mtime_ns', 'st_ctime_ns')
+            ref = {'path': str(image), 'bytes': len(payload), 'sha256': hashlib.sha256(payload).hexdigest(),
+                   'identity': {name: getattr(image.stat(), name) for name in fields}}
+            with runner.virtual_usb_backing(root, 1048576, 0) as (backing, fd):
+                os.pwrite(fd, payload, 0)
+                alias = {'path': backing['path'], 'bytes': backing['capacityBytes'], 'sha256': '0' * 64,
+                         'identity': {name: getattr(os.fstat(fd), name) for name in fields}}
+                with self.assertRaisesRegex(ValueError, 'alias'):
+                    runner.virtual_usb_readback(backing, fd, alias)
+                value = runner.virtual_usb_readback(backing, fd, ref)
+                self.assertEqual(value['bytesRead'], 1048576)
+                self.assertEqual(value['readbackSHA256'], ref['sha256'])
+                self.assertEqual(value['backingSHA256'], hashlib.sha256(payload + bytes(1048576-len(payload))).hexdigest())
+                self.assertFalse(value['guestGUIOrBootAcceptanceClaimed'])
+                for offset, expected in ((0, 'differs'), (len(payload) + 100, 'tail')):
+                    os.pwrite(fd, b'x', offset)
+                    with self.subTest(offset=offset), self.assertRaisesRegex(ValueError, expected):
+                        runner.virtual_usb_readback(backing, fd, ref)
+                    os.pwrite(fd, payload[:1] if offset == 0 else b'\0', offset)
+                image.chmod(0o600); image.write_bytes(b'changed'.ljust(len(payload), b'!')); image.chmod(0o400)
+                with self.assertRaises(ValueError): runner.virtual_usb_readback(backing, fd, ref)
+
     def test_launcher_relay_refuses_unisolated_or_missing_base_before_spawn(self):
         with patch.object(runner.subprocess, 'Popen') as spawn:
             for selected in (True, 1, 'true'):
