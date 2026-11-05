@@ -1019,8 +1019,10 @@ except peer.Refused as error:
                     with active_peer.RootFiles(history_root)as journals:
                         producer.put(journals,'intent.json',{'kind':'ROOT_EXACT_QUEUE_LIBVIRT_INTENT_R2',
                             'request':request,'bootID':boot})
+                        producer.commit_phase(journals,request,boot,0,'PREPARED')
                         producer.commit_phase(journals,request,boot,1,'CLOSED',details=details)
                     with active_peer.RootFiles(lease_root)as leases:
+                        producer.append_lease(leases,request,boot,'PREPARED',{})
                         producer.append_lease(leases,request,boot,'FAILED_KNOWN_CURRENT_DISPOSITION',
                             {'closed':True,'restored':True,'changed':[],'domain':None,
                              'currentDisposition':details})
