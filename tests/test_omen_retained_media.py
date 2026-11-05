@@ -1956,6 +1956,24 @@ except peer.Refused as error:
                 observe=lambda inputs:media_probe.require_stable_assignment(online,offline),
                 RunnerStatusTransition=media_probe.RunnerStatusTransition), {}, time.monotonic()-1, [])
 
+    def test_expired_pending_dispatcher_stop_scope_requires_exact_idle_owner(self):
+        import media_drain
+        group='0::/user.slice/user-1000.slice/user@1000.service/opemos.slice/opemos-heavy.slice/run-r123456.scope'
+        actor={'pid':411,'start':917,'uids':[1000]*4,'cgroup':group}
+        ref={'pid':410,'start':916,'worker':{k:actor[k]for k in('pid','start','cgroup')}}
+        self.assertEqual(media_drain.pending_dispatcher_scope(ref,actor,[411]),'run-r123456.scope')
+        for fault in('pid','start','uid','foreign-scope','escaped-scope','extra-child','no-worker'):
+            bad=copy.deepcopy(actor);badref=copy.deepcopy(ref);pids=[411]
+            if fault=='pid':bad['pid']=412
+            elif fault=='start':bad['start']=918
+            elif fault=='uid':bad['uids']=[1000,0,0,0]
+            elif fault=='foreign-scope':bad['cgroup']='0::/user.slice/user-1000.slice/user@1000.service/app.slice/foreign.service'
+            elif fault=='escaped-scope':bad['cgroup']=group+'/child'
+            elif fault=='extra-child':pids=[411,412]
+            else:badref['worker']=None
+            with self.subTest(fault=fault),self.assertRaises(RuntimeError):
+                media_drain.pending_dispatcher_scope(badref,bad,pids)
+
     def test_post_drain_cut_keeps_original_deadline_before_and_after_observation(self):
         import time
         idle={'runnerOnline':True,'runnerBusy':False,'actionsInProgress':0}

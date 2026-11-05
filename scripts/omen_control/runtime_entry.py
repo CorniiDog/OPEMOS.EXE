@@ -352,7 +352,7 @@ def observe_expired_pending(cfg):
  peer.need(issuer.protected(cfg['parentPin'],mode=0o444)==parent,'same original parent post-use')
  contract.validate(definition['sourceRoles'],definition['queuePrograms'],cfg['implementationDefinitionPin'])
  peer.need(before==set(os.listdir('/proc/self/fd')),'Root pending observer all owned descriptors closed')
- return {'kind':'ROOT_EXPIRED_PENDING_NO_RUNTIME_PUBLICATION_V1','request':cfg,'bootID':boot,'jobId':parent['jobId'],'nonce':nonce,'runtimeRootPin':runtime_pin,'lockIdentity':lock_pin,'physicalLeaseAbsent':True,'contextAssignmentGrantAbsent':True,'effects':[],'allOwnedDescriptorsClosed':True,'startedMonotonic':started,'completedMonotonic':time.monotonic()}
+ return {'kind':'ROOT_EXPIRED_PENDING_NO_RUNTIME_PUBLICATION_V1','request':cfg,'bootID':boot,'jobId':parent['jobId'],'normalizedSpecSHA256':hashlib.sha256(peer.canon(issuer.expected_spec(parent,cfg['parentPin']))).hexdigest(),'nonce':nonce,'runtimeRootPin':runtime_pin,'lockIdentity':lock_pin,'physicalLeaseAbsent':True,'contextAssignmentGrantAbsent':True,'effects':[],'allOwnedDescriptorsClosed':True,'startedMonotonic':started,'completedMonotonic':time.monotonic()}
 
 
 if __name__=='__main__':
