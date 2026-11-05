@@ -1680,4 +1680,140 @@ except peer.Refused as error:
             self.assertEqual(set(os.listdir('/proc/self/fd')), before_fd)
 
 
+class NormalRunnerMaterializationTests(unittest.TestCase):
+    """Existing R1 programs; OS/GitHub facts modeled, no runtime deployment."""
+
+    def modules(self):
+        import importlib.util
+        values=[]
+        for name in ('normal_cycle','runner21_recovery'):
+            spec=importlib.util.spec_from_file_location('fixture_r1_'+name,SOURCE/(name+'.py'))
+            value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value);values.append(value)
+        return values
+
+    def pending(self,r):
+        import time
+        now=int(time.time());nonce='b'*32;prior='root-github-robot-control-'+'a'*32
+        policy={'mainCommit':'c'*40,'queueSourceSHA256':'d'*64,'normalProbeSHA256':'e'*64,
+                'controllerProbeSHA256':'1'*64}
+        actors=('listenerAlive','controllerAlive','workerAlive','ownUnitBound')
+        control=dict(jobId='root-github-robot-control-'+nonce,state='pending',
+            sourceCommit=policy['mainCommit'],queueSourceSHA256=policy['queueSourceSHA256'],
+            leaseExpiresUnix=now+21600,**{k:False for k in actors})
+        probe=dict(kind='ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1',boot='modeled-boot',control=control,
+            networkReachable=True,protectedMain=True,queueKnown=True,workerLockFree=True,
+            runnerOnline=False,runnerBusy=False,actionsInProgress=0,sourceOwnerBusy=False,
+            otherActiveJobs=[],unknownReservations=[],guestActive=False,gpuLeaseActive=False)
+        state=dict(inflight=nonce,lastOutcome={'action':'RECONCILE_CLOSED','nonce':nonce,
+            'controlJobId':prior,'first':'original remote result retained'},
+            completedCycles=4,totalCycles=257,failureCount=0,nextAttemptUnix=now)
+        old={'id':prior,'state':'passed','finished':now-1}
+        closure={'oldRowId':prior,'oldRowSHA256':r.sha(r.canonical(old)),
+                 'oldDispatcherAbsent':True,'oldListenerAbsent':True,'fullUID0Group':{'absent':True}}
+        raw=r.canonical(closure)
+        manager={'MainPID':'0','ControlGroup':'','ActiveState':'inactive'}
+        root='/var/lib/opemos-robot-control-r1/releases/'+nonce
+        def pin(path,sha,size=1):
+            return {'path':path,'bytes':size,'sha256':sha,
+                    'identity':{'st_uid':0,'st_gid':0,'st_nlink':1,'st_mode':0o100444}}
+        expected={name:{'bytes':1,'sha256':hashlib.sha256(name.encode()).hexdigest()}
+                  for name in ('control.py','connection_host.py','host_engine.py','launch.py')}
+        lease_pin=pin(root+'/lease.json','f'*64)
+        proof=dict(kind='NORMAL_MATERIALIZED_PENDING_PROVENANCE_V1',effects=[],atUnix=time.time(),
+            boot=probe['boot'],nonce=nonce,prior=prior,oldRow=old,
+            oldStatus={'terminalLifecycle':'CLOSED','reservationRetained':False},
+            oldManager=manager,oldOuter=manager,oldActors=[],closure=closure,
+            preflight={'transaction':nonce,'mainCommit':policy['mainCommit'],
+                'queueSourceSHA256':policy['queueSourceSHA256'],
+                'oldControl':{'closedReceiptHex':raw.hex(),'closedReceiptSHA256':r.sha(raw)}},
+            postflight={'transaction':nonce,'rootRelease':root,'leaseSHA256':lease_pin['sha256']},
+            sourcePin=pin('/modeled/normal_probe.py',policy['normalProbeSHA256']),
+            currentRow={'id':control['jobId'],'state':'pending','unit':None,'started':None,'finished':None,'result':None},
+            currentStatus=control,currentBinding=None,currentManager=None,currentActors=[],
+            currentDispatcher=dict(manager,LoadState='not-found',ExecStart=''),
+            currentFiles=[pin(root+'/'+name,v['sha256'])for name,v in expected.items()]+[lease_pin],
+            lease={'pin':lease_pin,'value':{'runtimeAuthorized':True,'runnerId':21,
+                'engine_source_commit':policy['mainCommit'],'connection_queue_sha256':policy['queueSourceSHA256']}},
+            fixed={'value':{'expiresAt':control['leaseExpiresUnix']}})
+        return policy,state,probe,proof,expected
+
+    def test_normal_reconcile_uses_distinct_finalizer_and_control_dispatches(self):
+        from unittest import mock
+        import contextlib
+        cycle,_=self.modules();nonce='b'*32;old={'id':'root-github-robot-control-'+'a'*32,
+                                              'state':'running','unit':'modeled-control.service'}
+        closed=dict(old,state='passed');policy={'normalProbeSHA256':'1'*64,
+            'recoverySourceSHA256':'2'*64,'queueSourceSHA256':'3'*64,'mainCommit':'4'*40}
+        wire=cycle.enc(policy);calls=[]
+        trigger=types.SimpleNamespace(strict=json.loads,validate_policy=lambda value,now:value)
+        probe=types.SimpleNamespace(observe=lambda:{})
+        with mock.patch.object(cycle.os,'geteuid',return_value=0), \
+             mock.patch.object(cycle.sys,'argv',['normal','--normal-cycle','RECONCILE_CLOSED',nonce,cycle.sha(wire),'5'*64]), \
+             mock.patch.object(cycle,'REMOTE_POLICY_RAW',wire.hex(),create=True), \
+             mock.patch.object(cycle,'module',side_effect=lambda path,digest:probe if path.name=='normal_probe.py'else trigger), \
+             mock.patch.object(cycle,'normal_at_use',return_value={'control':{'jobId':old['id'],'workerAlive':False}}), \
+             mock.patch.object(cycle,'current_rows',return_value=(old,[],[],[])), \
+             mock.patch.object(cycle,'dispatch',side_effect=lambda value,*args:calls.append(value)), \
+             mock.patch.object(cycle,'wait_terminal',return_value=(closed,{}))as waited, \
+             mock.patch.object(cycle,'manager',return_value={}), \
+             mock.patch.object(cycle,'materialize',return_value=(b'payload',object())), \
+             mock.patch.object(cycle,'install',return_value={'job':'/modeled/robot-control-'+nonce+'/job.json'}), \
+             mock.patch.object(cycle,'submit'),contextlib.redirect_stdout(io.StringIO()):
+            cycle.main()
+        self.assertEqual(calls,[cycle.completion_dispatch_nonce(nonce),nonce])
+        self.assertNotEqual(calls[0],calls[1])
+        self.assertEqual(waited.call_args.kwargs['dispatcher_nonce'],calls[0])
+        self.assertEqual(cycle.completion_dispatch_nonce(nonce),calls[0])
+        with self.assertRaises(RuntimeError):cycle.completion_dispatch_nonce('invalid')
+
+    def test_pending_lineage_requires_actual_closed_source_lease_and_no_runtime(self):
+        from unittest import mock
+        import time
+        _,r=self.modules();policy,state,probe,proof,expected=self.pending(r)
+        with mock.patch.object(r,'materialized_source_roles',return_value=expected):
+            self.assertIs(r.validate_materialized_renewal(proof,policy,state,probe,time.time(),pending=True),proof)
+            for fault in ('old-closed','old-row','old-actor','source','binding','manager','actor','file','lease','dispatcher','ready'):
+                bad=copy.deepcopy(proof)
+                if fault=='old-closed':bad['oldStatus']['terminalLifecycle']='PREPARED'
+                elif fault=='old-row':bad['closure']['oldRowSHA256']='0'*64
+                elif fault=='old-actor':bad['oldActors']=[{'pid':1}]
+                elif fault=='source':bad['currentStatus']['sourceCommit']='0'*40
+                elif fault=='binding':bad['currentBinding']={}
+                elif fault=='manager':bad['currentManager']={}
+                elif fault=='actor':bad['currentActors']=[{'pid':1}]
+                elif fault=='file':bad['currentFiles'][0]['sha256']='0'*64
+                elif fault=='lease':bad['postflight']['leaseSHA256']='0'*64
+                elif fault=='dispatcher':bad['currentDispatcher']['MainPID']='123'
+                else:bad['currentStatus']['listenerAlive']=True
+                with self.subTest(fault=fault),self.assertRaises(RuntimeError):
+                    r.validate_materialized_renewal(bad,policy,state,probe,time.time(),pending=True)
+
+    def test_actual_run_cycle_acknowledges_pending_without_heartbeat_or_dispatch(self):
+        from unittest import mock
+        import time
+        _,r=self.modules();policy,state,probe,proof,expected=self.pending(r);before=copy.deepcopy(state)
+        observed={'reaped':True,'numeric':0,'eof':{'stdout':True,'stderr':True},
+                  'first':None,'stdout':r.canonical(probe),'stderr':b''}
+        with tempfile.TemporaryDirectory()as directory, \
+             mock.patch.object(r,'ROOT',Path(directory)), \
+             mock.patch.object(r,'load_code',return_value=b'modeled authenticated probe')as loaded, \
+             mock.patch.object(r,'start_held_python',return_value=object()), \
+             mock.patch.object(r,'capture',return_value=observed), \
+             mock.patch.object(r,'validate_probe'), \
+             mock.patch.object(r,'materialized_source_roles',return_value=expected), \
+             mock.patch.object(r,'materialized_renewal_provenance',return_value=proof)as lineage, \
+             mock.patch.object(r,'reconcile_closed_inflight',side_effect=AssertionError('pending must prove lineage first')), \
+             mock.patch.object(r,'write_state')as saved:
+            value=r.run_cycle(policy,state,int(time.time()))
+            record=json.loads(next(Path(directory).glob('materialized-pending-*.json')).read_bytes())
+        self.assertEqual(value['decision'],'RECONCILED_MATERIALIZED_PENDING')
+        self.assertEqual(value['effect'],'RECOVERY_BOOKKEEPING_ONLY')
+        self.assertFalse(value['heartbeatPublished'])
+        self.assertIsNone(state['inflight']);self.assertEqual(state['lastOutcome']['originalOutcome'],before['lastOutcome'])
+        self.assertEqual(state['lastOutcome']['phase'],'PENDING_MATERIALIZED_NOT_READY')
+        self.assertEqual(record['before'],before);self.assertFalse(record['queueMutation'])
+        self.assertEqual(loaded.call_count,1);self.assertTrue(lineage.call_args.kwargs['pending'])
+        saved.assert_called_once()
+
+
 if __name__ == '__main__': unittest.main()
