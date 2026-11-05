@@ -206,7 +206,7 @@ def current_github(p,route_only=False):
             'actionsQueued':None if route_only else queued['total_count'],'heartbeatCurrent':current,
             'heartbeatNonce':nonce}
 
-def health_source(ref):
+def health_source(ref,mode=0o444):
     """Authenticate executable bytes before imports, using their real paths."""
     fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
     need(type(ref) is dict and set(ref)=={'path','bytes','sha256','identity'} and
@@ -225,7 +225,7 @@ def health_source(ref):
         fd=os.open(path.name,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd);descriptors.append(fd)
         before=os.fstat(fd);identity=lambda s:{k:getattr(s,k) for k in fields}
         need(stat.S_ISREG(before.st_mode) and before.st_uid==before.st_gid==0 and
-             stat.S_IMODE(before.st_mode)==0o444 and before.st_nlink==1 and
+             stat.S_IMODE(before.st_mode)==mode and before.st_nlink==1 and
              0<before.st_size<=1048576,'immutable bounded health implementation')
         raw=b''
         while block:=os.read(fd,65536):
@@ -259,8 +259,10 @@ def health_queue(source_raw,implementation_pin=None):
         bodies[name]=health_source(roles[name])
     # The pinned definition is DATA; authenticate every executable in its
     # existing graph before interpreting any member of that graph.
-    for ref in [*roles.values(),*definition['preparationRoles'].values(),*definition['queuePrograms']]:
+    for ref in [*roles.values(),*definition['preparationRoles'].values()]:
         health_source(ref)
+    for ref in definition['queuePrograms']:
+        health_source(ref,0o555 if Path(ref['path']).name in ('heavy.sh','queue.sh','queue-files.sh') else 0o444)
     missing=object();previous={name:sys.modules.get(name,missing) for name in names}
     try:
         for name in names:
