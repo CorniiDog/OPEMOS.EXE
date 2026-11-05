@@ -1068,7 +1068,7 @@ except peer.Refused as error:
                         if prior_version:
                             with self.assertRaisesRegex(Exception,'original subject actual CLOSED/current implementation only'):
                                 health.validate_libvirt_observation(captures[-1]['proof'],health_request,
-                                    time.monotonic(),implementation['sourceContractPin'])
+                                    started,implementation['sourceContractPin'])
                         missing=copy.deepcopy(health_request);missing.pop('currentControl')
                         with self.assertRaises(Exception):
                             health.observe_queue_libvirt(missing,
