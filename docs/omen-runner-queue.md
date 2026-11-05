@@ -27,6 +27,13 @@ observer deadline remains distinct from the native
 self-hosted queue's 24-hour limit; a timeout never means acceptance. No new
 credential is required.
 
+Hosted artifact and result readers use the protected Main workflow's exact
+revision. They carry the installed controller SHA and candidate package SHA as
+separate data. An older installed controller's hosted reader must not replace
+the workflow's reader and reject a valid branch candidate. The self-hosted
+checkout still uses only the independently installed controller revision;
+updating hosted readers does not update that controller or its Root broker.
+
 Queuing grants no VM or GPU permission. The installed job-start hook rechecks
 the real source, lease, namespace and broker before checkout, and the normal
 queue rechecks exclusive GPU/resource/data ownership before any VM operation.

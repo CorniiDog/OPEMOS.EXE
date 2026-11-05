@@ -56,12 +56,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           OPEMOS_OMEN_ROBOT_RUNNER_STATE: ${{ vars.OPEMOS_OMEN_ROBOT_RUNNER_STATE }}
         run: python3 scripts/omen_robot_gate.py
-      - name: Load the exact installed reviewed controller reader
-        if: steps.guard.outputs.queueable == 'true'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          ref: ${{ steps.guard.outputs.source }}
-          persist-credentials: false
+      # Hosted metadata readers belong to this protected workflow revision.
+      # The installed controller SHA remains a separate authenticated operand;
+      # its historical hosted reader cannot interpret newer candidate inputs.
       - id: scope
         name: Bind exact artifact from passed native package JOB before OMEN
         if: steps.guard.outputs.queueable == 'true' && inputs.required_platform != ''
@@ -190,7 +187,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ needs.trusted-runner-route.outputs.source || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Retrieve closed exact-run preflight context
         continue-on-error: true

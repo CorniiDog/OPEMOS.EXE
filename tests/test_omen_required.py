@@ -47,6 +47,33 @@ class Metadata:
  def verify(self):return gate.producer_ready(SOURCE,self.value['platform'],'10','2',self.read,self.download)
 
 class RequiredProducerTests(unittest.TestCase):
+ def test_hosted_scope_uses_protected_workflow_reader_with_distinct_installed_and_candidate_sources(self):
+  """The live b4 reader rejected this join before any self-hosted dispatch."""
+  root=Path(__file__).parents[1]
+  workflow=(root/'.github/workflows/omen-robot.yml').read_text()
+  hosted=workflow.split('  trusted-runner-route:',1)[1].split('  actual-robot-transactions:',1)[0]
+  result=workflow.split('  required-platform-result:',1)[1]
+  for section in(hosted,result):
+   self.assertIn('ref: ${{ github.sha }}',section)
+   self.assertNotIn('ref: ${{ steps.guard.outputs.source }}',section)
+   self.assertNotIn('ref: ${{ needs.trusted-runner-route.outputs.source',section)
+  for name,next_name in [('actual-robot-transactions','required-platform-robot'),('required-platform-robot','required-platform-result')]:
+   section=workflow.split('  '+name+':',1)[1].split('  '+next_name+':',1)[0]
+   self.assertIn('ref: ${{ needs.trusted-runner-route.outputs.source }}',section)
+  m=Metadata();m.run['head_branch']='work/current';m.value['ref']='refs/heads/work/current'
+  m.raw=encoded_zip('executable-producer.json',m.value);m.artifacts[1]['digest']='sha256:'+hashlib.sha256(m.raw).hexdigest()
+  with tempfile.TemporaryDirectory()as temp:
+   prior=os.getcwd();os.chdir(temp)
+   try:
+    event=Path('event.json');event.write_text(json.dumps({'inputs':{'required_platform':'ubuntu','source_sha':SOURCE,'producer_run':'10','producer_attempt':'2','artifact_id':'30','correlation_nonce':'f'*32}}))
+    env={'GITHUB_REPOSITORY':gate.REPO,'GITHUB_EVENT_NAME':'workflow_dispatch','GITHUB_REF':'refs/heads/main','GITHUB_REF_PROTECTED':'true','GITHUB_SHA':'d'*40,'OPEMOS_SOURCE_SHA':'b'*40,'GITHUB_TOKEN':'synthetic-token','GITHUB_EVENT_PATH':str(event),'GITHUB_OUTPUT':'output'}
+    with patch.dict(os.environ,env),patch.object(gate,'api_reader',return_value=m.read),patch.object(gate,'metadata_download',side_effect=m.download):gate.scope_guard()
+    value=json.loads(Path('robot-preflight/required-context.json').read_bytes())
+    self.assertEqual(value['context']['source_commit'],'b'*40)
+    self.assertEqual(value['context']['workflow_source_commit'],'d'*40)
+    self.assertEqual(value['context']['candidate_source_commit'],SOURCE)
+    self.assertEqual(json.loads(Path('output').read_text().split('=',1)[1]),gate.target(m.value))
+   finally:os.chdir(prior)
  def test_actual_dispatch_pages_past_lifetime_history_for_fresh_non_main_candidate(self):
   """Real issuer/result verifier, modeled GitHub/native result, no VM claim."""
   m=Metadata();m.run['head_branch']='work/dev';m.value['ref']='refs/heads/work/dev'
