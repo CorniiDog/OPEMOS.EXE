@@ -117,21 +117,23 @@ def next_native_event(s,nonce,receipt):
                            ' numeric='+str(row['numeric']))
     return row
 
+def bounded_input(q,args,records,end=None):
+    if end is not None:
+        remaining=end-time.monotonic();need(remaining>0,'original input deadline before QMP event')
+        q.s.settimeout(min(10,remaining))
+    event={'request':args,'response':None};records.append(event)
+    event['response']=q.call('input-send-event',args)
+    if end is not None:need(time.monotonic()<end,'original input deadline after QMP event')
+
+
 def pointer(q,x,y,w,h,records=None,end=None):
     records=[] if records is None else records
-    def send(args):
-        if end is not None:
-            remaining=end-time.monotonic();need(remaining>0,'original pointer deadline before QMP event')
-            q.s.settimeout(min(10,remaining))
-        event={'request':args,'response':None};records.append(event)
-        event['response']=q.call('input-send-event',args)
-        if end is not None:need(time.monotonic()<end,'original pointer deadline after QMP event')
     for axis,value,dimension in (('x',x,w),('y',y,h)):
         args={'events':[{'type':'abs','data':{'axis':axis,'value':round(value*32767/(dimension-1))}}]}
-        send(args)
+        bounded_input(q,args,records,end)
     for down in (True,False):
         args={'events':[{'type':'btn','data':{'button':'left','down':down}}]}
-        send(args)
+        bounded_input(q,args,records,end)
     return records
 
 def main():
@@ -278,10 +280,16 @@ class Pipeline:
     def key(self,qcode,modifiers=()):
         need(qcode in ('a','l','ret','tab')or re.fullmatch('[a-z0-9]|spc|dot|minus|slash|underscore',qcode),
              'bounded QMP text key')
-        process(self.binding);need(time.monotonic()<self.end,'original clock before keyboard input')
-        for code in modifiers:self.q.call('input-send-event',{'events':[{'type':'key','data':{'down':True,'key':{'type':'qcode','data':code}}}]})
-        for down in (True,False):self.q.call('input-send-event',{'events':[{'type':'key','data':{'down':down,'key':{'type':'qcode','data':qcode}}}]})
-        for code in reversed(modifiers):self.q.call('input-send-event',{'events':[{'type':'key','data':{'down':False,'key':{'type':'qcode','data':code}}}]})
+        need(set(modifiers)<={'ctrl','shift'},'only declared location/text modifiers')
+        process(self.binding)
+        record={'kind':'keyboard','qcode':qcode,'modifiers':list(modifiers),'actualQMPInput':[]}
+        self.actions.append(record)
+        def send(code,down):
+            bounded_input(self.q,{'events':[{'type':'key','data':{'down':down,
+                'key':{'type':'qcode','data':code}}}]},record['actualQMPInput'],self.end)
+        for code in modifiers:send(code,True)
+        for down in(True,False):send(qcode,down)
+        for code in reversed(modifiers):send(code,False)
 
     def text(self,value):
         need(type(value)is str and 0<len(value)<=512 and re.fullmatch('[A-Za-z0-9 /_.-]+',value),
