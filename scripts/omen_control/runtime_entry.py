@@ -231,6 +231,12 @@ def recovery_worker_lock(fd,path,ref):
  peer.need(initial==peer.ident(os.fstat(fd))==peer.ident(os.lstat(path)),'worker lock unchanged after actual exclusive admission')
  return initial
 
+def recovered_prepared_disposition(terminal,cfg,definition_ref,restored):
+ """Record current closure separately from the unchanged failed native result."""
+ current={'known':True,'domainAbsent':True,'originalPIDStartAbsent':True,'cgroupEmpty':True,'VFIOFDsAbsent':True,'hostRestored':True,'ACLRestored':True,'originalFullHashVerified':True,'unknown':[],'historicalQMPClosed':None,'qemuExitStatus':None,'controllerWaitpidClaimed':False,'currentDispositionOnly':True}
+ final={'known':True,'FDsClosed':True,'leaseHeld':False,'closure':current,'originalTerminalPin':cfg['terminalPin'],'originalChildResultPin':cfg['childResultPin'],'newRecoverySourceDefinitionPin':definition_ref,'restorationReadback':restored,'originalCaptureErrorsUnchanged':terminal['result']['secondary'],'originalFDLifetimeRecreated':False,'newCurrentObservationOnly':True}
+ return {'first':terminal['result']['first'],'secondary':terminal['result']['secondary'],'currentClosure':final,'historicalQMPClosed':None,'noHistoricalCloseFabrication':True}
+
 def recover_failed_prepared(profile_ref,definition_ref):
  """One same-boot logical completion. No ACL, VM, driver, signal or SQL effects."""
  import fcntl
@@ -296,9 +302,7 @@ def recover_failed_prepared(profile_ref,definition_ref):
      primary.add_note('Recovery readonly closure failed: '+repr(error))
    peer.need(absent(terminal['actor'])and absent({'pid':start['pid'],'start':start['startTicks']})and peer.ident(os.fstat(fd))==lock_initial==peer.ident(os.lstat(lock))and all(entry.heavy_custody(parent['queuePrograms'][2])[k]==heavy[k]for k in('owner','OFD','lockCore')),'same original absence/locks before logical write')
    peer.need(issuer.protected(cfg['terminalPin'])==terminal and issuer.protected(cfg['contextPin'])==context and peer.read_lease(lf,request,c['hostBoot'])[2]==lease_raw and files.read('phase-head.json')[1]==phase_head,'original terminal/context/lease/phase held epochs unchanged')
-   current={'known':True,'domainAbsent':True,'originalPIDStartAbsent':True,'cgroupEmpty':True,'VFIOFDsAbsent':True,'hostRestored':True,'ACLRestored':True,'originalFullHashVerified':True,'unknown':[],'historicalQMPClosed':None,'qemuExitStatus':None,'controllerWaitpidClaimed':False,'currentDispositionOnly':True}
-   final={'known':True,'FDsClosed':True,'leaseHeld':False,'closure':current,'originalTerminalPin':cfg['terminalPin'],'originalChildResultPin':cfg['childResultPin'],'newRecoverySourceDefinitionPin':definition_ref,'restorationReadback':restored,'originalCaptureErrorsUnchanged':terminal['result']['secondary'],'originalFDLifetimeRecreated':False,'newCurrentObservationOnly':True}
-   details={'first':terminal['result']['first'],'secondary':terminal['result']['secondary'],'currentClosure':final,'historicalQMPClosed':None,'noHistoricalCloseFabrication':True}
+   details=recovered_prepared_disposition(terminal,cfg,definition_ref,restored);final=details['currentClosure']
    result={'kind':'ROOT_FAILED_PREPARED_CURRENT_COMPLETION_V1','jobId':request['jobId'],'request':request,'originalTerminalPin':cfg['terminalPin'],'currentClosure':final,'apply':cfg['apply'],'SQLOrHardwareEffects':[]}
    if cfg['apply']:
     peer.need(time.time()<cfg['notAfterUnix'],'original metadata completion deadline before logical write')

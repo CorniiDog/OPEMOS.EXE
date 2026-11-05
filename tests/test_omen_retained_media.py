@@ -989,6 +989,54 @@ except peer.Refused as error:
                 elif fault=='job':bad_child['loggerProvenance']['jobId']='foreign-job'
                 else:bad_context['assignmentPin']['sha256']='0'*64
                 with self.assertRaises(Exception):runtime_entry.failed_prepared_terminal(bad,child_start,bad_child,bad_context,parent,old_grant)
+            # The same production recovery record must remain consumable by
+            # later historical admission. Only machine facts below are modeled;
+            # the producer ABI, immutable files, locks and reader are real.
+            history_root=Path('/run/opemos-libvirt-queue-'+request['jobToken'])
+            terminal_root=Path('/run/opemos-libvirt-results-'+nonce)
+            for path in (history_root,terminal_root):
+                self.assertFalse(os.path.lexists(path));producer.create_root(str(path))
+            try:
+                with peer.RootFiles(terminal_root)as terminal_files:
+                    terminal_pin=producer.put(terminal_files,'terminal-index.json',classification)
+                child_path=fixture/'original-child-result.json'
+                child_path.write_bytes(peer.canon(child_result));child_path.chmod(0o600)
+                os.chown(child_path,1000,1000);child_pin=installer.pin(child_path)
+                restored=[]
+                with peer.RootFiles(history_root)as journals:
+                    for role in ('working-parent','working','runtime-parent','vars','output-parent','serial'):
+                        before=producer.put(journals,'acl-before-'+role+'.json',{'modeledRole':role})
+                        after=producer.put(journals,'acl-restored-'+role+'.json',{'modeledRole':role,'restored':True})
+                        restored.append({'role':role,'beforePin':before,'restorePin':after,
+                                         'currentIdentity':{},'ACL':'modeled external ACL observation'})
+                details=runtime_entry.recovered_prepared_disposition(classification,
+                    {'terminalPin':terminal_pin,'childResultPin':child_pin},
+                    implementation['sourceContractPin'],restored)
+                historical={'nonce':nonce,'jobID':request['jobId'],'closed':True,
+                            'restored':True,'changed':[],'currentDisposition':details}
+                before_fds=set(os.listdir('/proc/self/fd'))
+                with peer.RootFiles(history_root)as journals,journals.lock():
+                    self.assertTrue(peer._complete_historical_libvirt_closed(historical,request,journals))
+                    self.assertEqual(details['secondary'],classification['result']['secondary'])
+                    self.assertIsNone(details['currentClosure']['closure']['qemuExitStatus'])
+                    for fault in ('lost-error','invented-FD','invented-exit','current-unknown',
+                                  'terminal-hash','child-invocation','definition','journal','role'):
+                        bad=copy.deepcopy(historical);cc=bad['currentDisposition']['currentClosure']
+                        bad_request=copy.deepcopy(request)
+                        if fault=='lost-error':bad['currentDisposition']['secondary']=[]
+                        elif fault=='invented-FD':cc['originalFDLifetimeRecreated']=True
+                        elif fault=='invented-exit':cc['closure']['qemuExitStatus']=0
+                        elif fault=='current-unknown':cc['closure']['unknown']=['VFIO FD']
+                        elif fault=='terminal-hash':cc['originalTerminalPin']['sha256']='0'*64
+                        elif fault=='child-invocation':bad_request['invocation']='b'*32
+                        elif fault=='definition':cc['newRecoverySourceDefinitionPin']['sha256']='0'*64
+                        elif fault=='journal':cc['restorationReadback'][0]['restorePin']['sha256']='0'*64
+                        else:cc['restorationReadback'][0]['role']='foreign'
+                        with self.subTest(fault=fault),self.assertRaises(Exception):
+                            peer._complete_historical_libvirt_closed(bad,bad_request,journals)
+                self.assertEqual(before_fds,set(os.listdir('/proc/self/fd')))
+            finally:
+                shutil.rmtree(history_root);shutil.rmtree(terminal_root)
             self.assertFalse(os.path.lexists('/run/opemos-vfio-'+nonce))
             # Complete actual renderer -> installed libvirt schema. The paths
             # and media content are explicitly MODELED; no domain is created.
