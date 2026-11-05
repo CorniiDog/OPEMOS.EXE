@@ -487,6 +487,40 @@ class RetainedMediaContract(unittest.TestCase):
         with self.assertRaises(Exception):native.native_queue_worker(command,time.time()+15,bad)
 
     @unittest.skipUnless(os.geteuid()==0 and sys.platform=='linux','disposable Linux CI Root only')
+    def test_historical_provenance_consumes_complete_over_256_rows_and_bindings(self):
+        """Real locked Root leaves; modeled historical job data, no VM effects."""
+        import libvirt_peer as peer
+        import test_queue as queue
+        nonce=os.urandom(16).hex();root=Path('/run/opemos-vfio-'+nonce)
+        root.mkdir(mode=0o700)
+        def leaf(name,value,mode=0o400):
+            raw=peer.canon(value);path=root/name;path.write_bytes(raw);path.chmod(mode)
+            return {'path':str(path),'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),'identity':peer.ident(path.stat())}
+        try:
+            (root/'lock').touch(mode=0o600)
+            rows=[{'id':'historical-'+str(i),'state':'failed','finished':1}for i in range(300)]
+            bindings=[[r['id'],json.dumps({'unit':'modeled-unit-'+str(i)})]for i,r in enumerate(rows)]
+            state={'nonce':nonce,'jobID':rows[0]['id'],'closed':True,'restored':True,'changed':[],
+                   'historicalQMPClosed':None}
+            head=leaf('state.json',state);leaf('head.json',head)
+            leaf('control.json',{'nonce':nonce,'jobID':rows[0]['id'],'bootId':'modeled-boot'})
+            result=peer.historical_lease_provenance(str(root),rows,bindings,queue,'modeled-boot')
+            self.assertEqual(result['statePin'],head)
+            self.assertIsNone(result['historicalQMPClosed'])
+            self.assertEqual(len(rows),300);self.assertEqual(len(bindings),300)
+            with self.assertRaisesRegex(peer.Refused,'historical rows'):
+                peer.historical_lease_provenance(str(root),rows+[rows[0]],bindings,queue,'modeled-boot')
+            with self.assertRaisesRegex(peer.Refused,'historical bindings'):
+                peer.historical_lease_provenance(str(root),rows,bindings+[bindings[0]],queue,'modeled-boot')
+            oversized=copy.deepcopy(rows);oversized[-1]['payload']='x'*queue.HISTORY_FILE_MAX
+            with self.assertRaisesRegex(peer.Refused,'historical rows'):
+                peer.historical_lease_provenance(str(root),oversized,bindings,queue,'modeled-boot')
+            leaf('state.json',dict(state,closed=False))
+            with self.assertRaisesRegex(peer.Refused,'known closed/restored'):
+                peer.historical_lease_provenance(str(root),rows,bindings,queue,'modeled-boot')
+        finally:shutil.rmtree(root)
+
+    @unittest.skipUnless(os.geteuid()==0 and sys.platform=='linux','disposable Linux CI Root only')
     def test_real_unprivileged_owned_sudo_monitor_keeps_uniform_payload_and_default_guard(self):
         """Real sudo/PIDFD/EOF lifecycle; no VM or host configuration effects."""
         import pwd
@@ -985,6 +1019,20 @@ except peer.Refused as error:
                         with adapter.RootInputs(control) as wrong_inputs:
                             adapter.verify_inputs(dict(request,currentControl=control),wrong_inputs,boot,include_context=False)
                 with adapter.load_pair(accepted)as(current_peer,current_access):
+                    # SAME authenticated implementation/original-subject bridge
+                    # also validates historical requests as immutable DATA.
+                    # The historical caller separately requires actual CLOSED
+                    # state/phase; this context grants no lifecycle effect.
+                    definition=implementation['sourceContractPin']if prior_version else installed['sourceContractPin']
+                    original_request=copy.deepcopy(request)
+                    baseline=set(os.listdir('/proc/self/fd'))
+                    with current_peer._original_readonly_subject(request,definition):
+                        current_peer.validate_request(request)
+                        changed=copy.deepcopy(request);changed['observer']['sha256']='0'*64
+                        with self.assertRaises(Exception):current_peer.validate_request(changed)
+                    self.assertIsNone(current_peer._CLOSED_SUBJECT)
+                    self.assertEqual(request,original_request)
+                    self.assertEqual(set(os.listdir('/proc/self/fd')),baseline)
                     import postqueue_issuer as issuer
                     issuer.NativeIssueOps(parent,str(runtime)).check_prepared_disks(c,disks)
                     wrong_disks=copy.deepcopy(disks);wrong_disks['working']['identity']['st_uid']=1000
@@ -1072,6 +1120,7 @@ except peer.Refused as error:
                         for _ in range(4100):repeated.borrowed_run()
                     self.assertEqual(set(os.listdir('/proc/self/fd')),baseline)
                     normal_queue=queue_assignment.load_queue(implementation['queuePrograms'][0],implementation_definition=implementation['sourceContractPin'])
+                    self.assertEqual(normal_queue.currentImplementationDefinitionPin,implementation['sourceContractPin'])
                     normal_queue.validate_borrowed_run_custody(repeated.runProof)
                     self.assertLess(len(installer.canon(repeated.runProof)),32768)
                     for fault in ('inode','mount','namespace','flags','close'):

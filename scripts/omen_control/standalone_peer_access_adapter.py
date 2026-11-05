@@ -5,10 +5,10 @@ Queue owner must independently adopt exact bytes and consumer contract.
 import contextlib,copy,hashlib,json,os,re,stat,sys,time,traceback,types
 from pathlib import Path
 ORIGINAL_SOURCE_ROOT='/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r107b'
-PEER_SHA='0dd7509740d0aa3de62b1526747ccaa71853d6ee2098c0d6a55f2aac2f827544'
+PEER_SHA='3bb68eecf14c31287f6f7cb7bfe7235dc276bca626b506f02d5e9c7246e2cbca'
 F=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns');CORE=F[:6]
 NONCE='cd9ef0826364409da287f6f3e3830c95';CONTRACT='R109_CURRENT_NORMAL_QUEUE_FULL_PHASE_READONLY'
-PEER_BYTES=65210
+PEER_BYTES=65141
 ORIGINAL_PEER_SHA='7e1663f8351247b9643b7c14419119449b0bd0722a46b80ae0f8ea34a9f9816a';ORIGINAL_PEER_BYTES=64727
 CLOSED_SUBJECT_PEERS={'9e5516fcdf57624d786a91741066998605045fe145ce60fbe8bde68f5b494bdd':61355,'224aa4a8b06999e318350267195cc681a095aaf2a2b5e407552f8811673a8614':61400}
 SOURCE_ROOT=None

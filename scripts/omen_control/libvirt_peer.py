@@ -162,8 +162,8 @@ def _complete_historical_libvirt_closed(state):
   v=values.get(role);need(type(v)is dict and type(v.get('numeric'))is int and v['numeric']==0,'positive native libvirt connection close')
  change=cc.get('FDComparison',{}).get('changes');need(change=={'added':[],'removed':[],'replaced':[]},'native role FD comparison closed without unknown changes')
  need(state.get('restored')is True and state.get('changed')==[],'nested closed native lease restored unchanged');return True
-_hp_z=zlib.decompressobj();_hp_raw=_hp_z.decompress(__import__('base64').b85decode('c-oCv-*4MC5Pr{JLG*<-D%)L$4QM(&v`vNv=+ZV#hXI~p$Pyhfl}Ux9oCZby_kBlFzno;-ODu_Z$GhWq-yKtkEnAn;I&Ea0RqIM*R;+8I_d;bV7n4F7kz@5PG5Xdf8>tGZuGV!XjZJPE(THTDwVNIvv1iYoebD(gQLwx*MkvP$X=`nzlUlLoY?EP86*F6lTyAB~<ZjovY*Pu=Z#X|XVwa_0aHbN5m6>JOQq)j{#p;gjg@H0Qagf3%_}A^{{b5#RwJo(<SlyUh9I;Fltde_(?`n6)N^RYu*1DQwCu!NXQMq?f2??Wy8R64lS;qVWQ`#`s7-f&Tt+I_3a2L)w&H4ng&wqSkVlN9?oU;o-YH)VjR28eGvTWB_$82NvaOenui)|&ZO6Q$KvRsHk+%#Dw-Ccsc9lItSN4`phY+@VTI5<j4n)}2bvF@PKPnj$GbDO?a8os36hq=mjVs69^DW~n__X*cEUhQnZm3qdfN63UICf1pOnKb1K)2PKr^trd~eK%rGLGCh_mlM8xF?*HGwyPgMzr5#(mzu(T3g%oZk#O-n%iS<>b$Ms~LrA#+s5pElN8DX4CImk+Q9&h~s8HeKZ|Tcle(gT}FiS2AzS`o<4D!WD<{s{M@(FL0M4H2)3|yd9iavteB4@dqj36I9B3rFgG(8scK8-i}Chh=)!FH_y+VU32V;6||cUcKLNIUSqrB8|fJFie+6Dl@Vn(Q_y>oj~fA}c1m#NYX~)e4!T=ainIlNEMC^4KUIt#A_(fbTze4ZQG#Z|<D1__bvQ-|;{ocEBLNr`!@6JhDh{8I)Gjd7V)?zz(ekUuX$Q&NCc)IMKiggV1kFU5Od$fsr+MYbhE#isq5c2)U4TnG?g%>?pK4O-YLdry;uJ9)En5rafHaN?vIzfEEDj(lnzbBgow+7V|PwSG1O<%T>a^DSfM0Ft%tF*#nGw<<|@)q!z%ZkXLHasGy8WY`{6lg)bpt)1_e}5Hq=D5!{q+@5i;?oSpF1s*RqI81-=`KY5qq`|`zV$+sX7TgIT;YJ4E&jYC9Dka|lAO87Rz(a?jFJ5j7bKzPRAx^e4D?j*f#!b$UKTi+n5omAPV%HT3sO@PN)-E1oK0kHqI@Dz;b5oy}{@;Ww+5byj7xaIK^l?|!tEig<c{z)o+T-Hf&-@jSBg%ll+6P83w9Q&Vy_x^#v-vv+{5B7X)9Z|Nf9P?1Io)$UIDK0Q%*=JZ(;I#Ph9)3R*p_*nnl|eo(>Rc;l(5zxz$JZhL^N9Zdfhh1O>btd=hC>{UWT>y7d9cw_d!!-I5px^u@JV#4i?&H_0*U)WTDF1E!K~7}?i_wP*fgEQj3C!><0#=d_0<CNL5b2ao<(4h@_gJ`Zo!lCN^bVj5Jua28xnCmiM|A5{|luaf_Y1^#9R!SAZ89V+VXkQ?#70B@H!!dp%Y;9D_<K?&-)M2MipxWownwd2c<sfiJdStMi4MaSMTadIPt(b3-s>yFqkgDQK=s_=F!=8{7OAC8Gx(bWBPiJnWTU-y=?gPRttGWM(IRgavs{q#CL&CZaOc;_aHclS&mB~zT$C6b~1i8IDeAOquiJGZ>WPoB5c({x64VGv7+?Cn^|BxaItg?srEY0h>aFOJtXahCX(?C6f-yT<}eHmL%Gy|6enIj?CstV_4S+3*l!LyJJ^9hFYEMXSQ?l#fu)uP!rPDqWXl2p`$1sIzv28T75w7k$IJEUUvJ)Bu0MZ0{d&6oaQ61kvy031+4<$^`Q`fJC8t!jdNCMMjgM@&?8)JzCkKnxJYa&h0)qIWP4yu$_#vh)4<fCBAu$^cGycorL{pdJh-s+l1pQ<K!qBGZXPWy5gQ|&}(Y(6)@$&xfuw&BMS++)2<N4K>Mc3o|z`bHS)zm(`adeMa4)Kj*8;5pKRDN|>N@+SU8-w+g<3BG$kRAo^K79Ogdcp^5PZSLsh>Q<=xMFkEf*&TjK_af8R10CcrM3pc{>;OrMTIx&)#$ntu4+bHfuKzmr-DK_%pW$5#^WoGWZ15zW6D11ub&|s>y{ozSKi2fVR{R!k9HGoY<+8s$R(-9kbjl;&3ioPCEg0#W*d49&iiBZJ#gOCM4z!X(Fjvn2dKRd^9$mOAN)%lZrB&Y6KXlFC9}7I-{ax|P&)FS<36ejF&Q&(XXHZPK5ih=x4s=KM(%!^pU}A@iA^c-|6bk@?wH_#_+#}#3Zb-cP#Im~MAdUn|IdWskU)3qSwlC=ep+}ievF-pS1j++|G1byBVJ?R)x$dvX)HXt{=+Tf|7j2q^AAu;L9z'),8193)
-need(_hp_z.eof and not _hp_z.unused_data and not _hp_z.unconsumed_tail and len(_hp_raw)==4512 and hashlib.sha256(_hp_raw).hexdigest()=='701588e9f9273e7a00372c42d38fd18729bc80f37f83520bb4db607e3f004153','exact immutable historical provenance definition')
+_hp_z=zlib.decompressobj();_hp_raw=_hp_z.decompress(__import__('base64').b85decode('c-oCvTW{Mo6n^io;2UL3wz~`)P-l8*lN2@3CTZ#p9XvyjB|2gwlL{#%4TAjlopVUalAUyWiA9|Y&*eK8r4SpImeMxb$ULjkN@P}~wb6G%Whxg@A&tm^`Vbp^Z{xL8g;dvRok?Tk+g7w9UTfWqX0KSsnp|d0xsx0nD-EiW?!`o9TQM<W3%ArpY~+uK>l%)Be7BK$%tx=75~7G~V|r?mgilSYrUTYrNH@z=!Hk$}+N#=SO<qQP`Fi{&8*f&Rza2gCn7BsLGNl`Ku9b+n_>tue+xgDw^1;#r1%VlGi-YZGNb^vO2m^pBDiEOy>FppQ19Bx)lxJ{r^vF?`&nSf4OTc*``!pK;nNUP0ALd^c7gv9$@8=)S(ob){b?P3?lFNdxHrg=5q++P?2_l0;vJcejRu!UPt&*UPVMzL3k|hw}U<ITlZ}z-!PNUAi<*yjB#k_yVjd*}tdpC7{!fp4mDcKc7^u4Tv?Iks{Y=f_2`a7v~eiI>>SZT8RxU3WR-iWM-cnN<e->p`V7kp0e8Dz4;M#v8rdEkg9LIyDVk=KAm4sm&CgoR&QW=FsO0S~ees*%kDf5Px0)(E#Kw{$|Q(WK4{aDg7AJ6n(hzEf%)Ucl&~>-VLu#JGk8p*FDAqBnNn%`=x_T>x*BHKOmD9k^B}2}&_%G_Wo?p_{LgWLFHHl2_Ua01V)AVcG%72sHNvVqRwI8fi(gT*drG>3hYTvS|=x2NguZ#|#QoO#z}pUaM)VoG{dRYas!nV=7Q#lciw;95cCL9^V*lvg5m6&rkVk6}(3fdU?pnuVk`6FJG^gd?S^#rFSaS`T-Xy2No4U=q&~)=9>&sgAa||iXzo*1JCfcZkx1{TZzZD%QPQ_?$HRdl`0z)7?>P`v3J6-x?NW?XV6Z+1KcIy7CcRMwj8fB(5MRM@8lYA%l#`X8x++Wz%XX~QYt<x>)4r3CkrPRqS-KDvB$)Weqz3}@AIe269<Y}@6PAw*h{=AGwv#unl6Vtc>;qdQ-nnY9n-&j0=o}cu%=m#WsnbxI@hW(x(apekA3{-9{&ykp5a;4cQhY{eH;yVaBj^BZ1@yX>Kq-+1*02yB|6b*-Wu!*Z0$w_C21KP!NjbRyzUHs+1VtCd_*AD{$kHTJ@w7B%xnpzW2lROMvU{U(;UE)@Jg=lq(O{^dh0i0pNU-w`swOQ-8u6PeetpAcLE<dsL{~R<8T}6$AM&A2;C%r%de?6yd2rjXga0fbQ07p_e#AtaXV(5tI&X<>FRA=iAEe~XRf`|9Y(-VvW*|6-q_T?#W5N8z_q)BWC6G#A}1~r9NUwVrO3NkmIeb-%#BvnLu%VKmU-lv-F7tb%I0YI79KL}1E&HT6+Qu4Mzg!Dk_7}|XQTTiizwwk<tXGex{Fu=XD4pJ`PC!vjV7h|;TR*Ie@}9eFP<-!j)!)l^B3og=lk;EEzVZpa94$*>as;K30kM5W(wEAl#tC-sym%ie5Ov^rSldyvElCLb2=t<umtv9S!e(|$BD7Ob&w+5IBwm_al5~BK>D#9Wu4sii&m-z5*HejJN5gM4E@PfrDIs~8$c$8f?r)+EYh=YZ%-EK=dWj9&(e?ccYn>V7U}$aady5)uZ}o|GRS#nP}D!NKAGCq>8@>ASQ>ggD%7T9pN3HHw=7z(>T=K18Zacr{WXi;?C)B2IrJFUt&Wj)E@)-i6uWKf>0m)O{xaOtSC2<e|F|3DPR}wZSq=C0u-`gl?Hnh;uy57m-q5?}G&}zWz71X5D=MP)ODRcuYQ3{mIrMtzoFo*Se7yK_cFKFS7m9}UScb{&Q)~{kKx<C7;&=*_Y9UNV3N`5NX9Smk3Q|g9u(D{t&K=UOVRV?x?<<99U^B9bSMHD8x9LDlhQs7k+FDy`a4s5YXxxL3P2ZW_Ug_o$3_|*v=nY+uT;ysE+E<ZnWN~lGkruYe)_8QrQyOVHPud#Wr>{+Dx{0hE)IPY)3jFgg=uo@vebvuU=xL#uy>pYt6Ze49jg^T|xh_OB?7*FpD}DdG0^h#%{ZP>N?w9)$>=eF<jWF;(FK=M(I>7<^bM=A(uCyRg8Gc!cYS(ji|2OEbFMxz*+~ODYZjU)wjD|+}k3TZ$e|$25g#W+-s}8@$P-05x`VX^=Xj-EjV*Uj$C=*H'),8193)
+need(_hp_z.eof and not _hp_z.unused_data and not _hp_z.unconsumed_tail and len(_hp_raw)==4378 and hashlib.sha256(_hp_raw).hexdigest()=='2fc084b1b35358140911fc56d40582ed91c60bf40814927880a04fadbab48bd8','exact immutable historical provenance definition')
 exec(compile(_hp_raw,__file__,'exec'));del _hp_z,_hp_raw
 def historical_lease_provenance(directory,rows,binding_pairs,queue,boot):
  try:return _historical_lease_provenance(directory,rows,binding_pairs,queue,boot)
@@ -177,8 +177,8 @@ def verify_historical_lease_set(expected,rows,binding_pairs,queue,boot):
  return observed
 _CLOSED_SUBJECT=None
 
-def observe_closed_subject(request,definition_ref,custody=None):
- """Current readonly implementation; immutable original request stays DATA."""
+@contextlib.contextmanager
+def _original_readonly_subject(request,definition_ref):
  global _CLOSED_SUBJECT
  import source_contract
  from libvirt_native import held
@@ -190,9 +190,12 @@ def observe_closed_subject(request,definition_ref,custody=None):
  source_contract.validate(parent['sourceRoles'],parent['queuePrograms'],control['definitionPin'])
  _CLOSED_SUBJECT={'pid':os.getpid(),'request':request,'parent':parent,'parentRef':ref,'implementationDefinitionPin':definition_ref}
  try:
-  proof=observe(request,custody=custody);need(proof['phase']=='CLOSED'and proof['lease']['closed']is True and proof['lease']['restored']is True,'original subject accepted for actual CLOSED observation only')
-  need(held(ref,1048576)==raw,'original readonly subject remains exact');return proof
+  yield
+  need(held(ref,1048576)==raw,'original readonly subject remains exact')
  finally:_CLOSED_SUBJECT=None
+def observe_closed_subject(request,definition_ref,custody=None):
+ with _original_readonly_subject(request,definition_ref):
+  proof=observe(request,custody=custody);need(proof['phase']=='CLOSED'and proof['lease']['closed']is True and proof['lease']['restored']is True,'original subject accepted for actual CLOSED observation only');return proof
 
 def bind_request_source(r):
  import source_contract

@@ -80,6 +80,7 @@ def load_queue(ref,source=None,implementation_definition=None):
  p.need(ref['sha256']==expected,'exact reviewed paired live-export queue source');raw=held(ref,1048576);q=types.ModuleType('held_live_export_queue_R6');q.__file__=ref['path'];sys.modules[q.__name__]=q
  try:exec(compile(raw,ref['path'],'exec'),q.__dict__)
  finally:sys.modules.pop(q.__name__,None)
+ q.currentImplementationDefinitionPin=implementation_definition if source is None else source.get('installedSourceContractPin')
  return q
 
 def produce(c,g,parent,prior,persist,worker_guard,end,metrics=None):
