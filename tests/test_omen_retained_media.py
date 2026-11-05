@@ -1579,7 +1579,7 @@ except peer.Refused as error:
                     actual_module=installed_window.module
                     # Only external service/GitHub/native-control facts below
                     # are MODELED. Installed code/profile/full9, evidence and
-                    # the entire production post-heavy loop are real. No tick,
+                    # the entire production post-window loop are real. No tick,
                     # listener, VM or heartbeat publication is performed.
                     wall=int(time.time());clock=[0.0];model_live=[True]
                     nonce_for_control='e'*32
@@ -1607,20 +1607,13 @@ except peer.Refused as error:
                         model_live[0]=live;clock[0]=0.0;return_attempt=uuid.uuid4().hex
                         evidence=Path(profile['evidenceRoot'])/return_attempt;evidence.mkdir(mode=0o700);created.append(evidence)
                         diagnostic_first=None if live else'explicit modeled original VM FIRST'
-                        installer.put(evidence/'final.json',installer.canon({'first':diagnostic_first,'cleanup':[],
+                        installer.put(evidence/'window-closure.json',installer.canon({'first':diagnostic_first,'cleanup':[],
                             'guestAcceptanceClaimed':False}),0o400)
-                        command=['/MODELED/heavy.sh','/usr/bin/python3','-I','-B',sealed['windowEntryPin']['path'],
-                                 '--profile-pin-json',json.dumps(sealed['windowProfilePin']),'--attempt',return_attempt]
-                        native={'schema':'opemos-owned-command-v2','argv':command,'lifecycleClosed':True,
-                            'reaped':True,'childSetRestored':True,'stdoutEOF':True,'stderrEOF':True,
-                            'fd':{'restored':True,'closeErrors':[]},'tailUNKNOWN':False,
-                            'numericExit':0 if live else 1,'stdin':{'closed':True,'complete':True},'errors':[]}
-                        completion=installer.put(fixture/('modeled-heavy-'+return_attempt+'.json'),installer.canon(native),0o400)
                         with mock.patch.object(installed_window,'module',side_effect=model_module), \
                              mock.patch.object(installed_window.time,'monotonic',side_effect=lambda:clock[0]), \
                              mock.patch.object(installed_window.time,'time',side_effect=lambda:wall+clock[0]), \
                              mock.patch.object(installed_window.time,'sleep',side_effect=sleep):
-                            returned=installed_window.verify_runner_return(sealed['windowProfilePin'],return_attempt,completion)
+                            returned=installed_window.verify_runner_return(sealed['windowProfilePin'],return_attempt,2700.0)
                         self.assertEqual(returned['runnerRecoveryVerified'],live)
                         self.assertEqual(returned['windowFirst'],diagnostic_first)
                         self.assertFalse(returned['guestAcceptanceClaimed']);self.assertEqual(returned['effects'],[])
@@ -1652,6 +1645,64 @@ except peer.Refused as error:
                         changed['heartbeatPublication']['before']=copy.deepcopy(publication)
                         with self.subTest(returnFault=fault),self.assertRaisesRegex(RuntimeError,'fresh180s'):
                             installed_window.runner_return_cut(changed,policy,wall+clock[0])
+                    # Execute the installed finally path too. Only OS service,
+                    # GitHub and VM facts are modeled; the recovery mutex and
+                    # all immutable records/calls below are real.
+                    import fcntl
+                    modeled_root=fixture/'modeled-r1';modeled_root.mkdir(mode=0o700)
+                    mutex=modeled_root/'recovery.lock';installer.put(mutex,b'',0o600)
+                    timer_active=[True];restore_created=[False];vm_first=[False]
+                    def manager(unit):
+                        if unit==installed_window.SERVICE:
+                            return {'LoadState':'loaded','UnitFileState':'static','ActiveState':'inactive',
+                                    'MainPID':'0','ControlGroup':'','Job':''}
+                        active=timer_active[0]if unit==installed_window.TIMER else restore_created[0]
+                        return {'LoadState':'loaded'if unit==installed_window.TIMER or restore_created[0]else'not-found',
+                                'ActiveState':'active'if active else'inactive','UnitFileState':'enabled','Job':''}
+                    def modeled_native(owned,root,label,argv,*args,**kwargs):
+                        if label=='backstop':restore_created[0]=True
+                        elif label=='pause-renewal':timer_active[0]=False
+                        elif label=='restore-renewal':timer_active[0]=True
+                        elif label=='retire-backstop':restore_created[0]=False
+                        else:self.fail('unexpected modeled operation '+label)
+                        return {'MODELED_EXTERNAL_COMMAND':True}
+                    def recovery_frame(inputs):
+                        fd=os.open(mutex,os.O_RDONLY|os.O_NOFOLLOW)
+                        try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                        finally:os.close(fd)
+                        return model_frame()
+                    def pre_media_frame(inputs):
+                        frame=model_frame();frame.update(networkReachable=True,runnerOnline=False,
+                            hostGraphics='INTEL_HOST_NVIDIA_GUEST_ONLY',workerLockFree=True)
+                        frame['control']['state']='absent';return frame
+                    def modeled_client(*args):
+                        if vm_first[0]:raise RuntimeError('explicit modeled VM FIRST')
+                        return {'MODELED_EXTERNAL_VM_RESULT':True,'guestAcceptanceClaimed':False}
+                    def finally_modules(ref,name):
+                        value=actual_module(ref,name)
+                        if name in ('media_window_common','runner_return_common'):
+                            value.manager=manager;value.native=modeled_native
+                        elif name=='media_current_machine_probe':value.observe=pre_media_frame
+                        elif name=='runner_return_actual_probe':value.observe=recovery_frame
+                        elif name=='media_normal_client':value.execute=modeled_client
+                        return value
+                    for failed in (False,True):
+                        clock[0]=0.0;model_live[0]=True;vm_first[0]=failed;actual_attempt=uuid.uuid4().hex
+                        created.append(Path(profile['evidenceRoot'])/actual_attempt)
+                        with mock.patch.object(installed_window,'ROOT',modeled_root), \
+                             mock.patch.object(installed_window,'module',side_effect=finally_modules), \
+                             mock.patch.object(installed_window.time,'monotonic',side_effect=lambda:clock[0]), \
+                             mock.patch.object(installed_window.time,'time',side_effect=lambda:wall+clock[0]), \
+                             mock.patch.object(installed_window.time,'sleep',side_effect=sleep):
+                            if failed:
+                                with self.assertRaisesRegex(RuntimeError,'explicit modeled VM FIRST'):
+                                    installed_window.execute(sealed['windowProfilePin'],actual_attempt)
+                            else:installed_window.execute(sealed['windowProfilePin'],actual_attempt)
+                        final=json.loads((Path(profile['evidenceRoot'])/actual_attempt/'final.json').read_bytes())
+                        self.assertTrue(final['runnerRecovery']['runnerRecoveryVerified'])
+                        self.assertEqual(final['runnerRecovery']['windowFirst'],final['first'])
+                        self.assertEqual(final['first'],'explicit modeled VM FIRST'if failed else None)
+                        self.assertTrue(timer_active[0]);self.assertFalse(restore_created[0])
         finally:
             if parent_identity is not None:
                 self.assertEqual(media.identity(os.lstat(public_parent)),parent_identity)

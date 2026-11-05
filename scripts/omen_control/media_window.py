@@ -89,6 +89,7 @@ def execute(profile_pin, attempt):
     profile = json.loads(read(profile_pin))
     need(profile['kind'] == 'OPEMOS_INSTALLED_MEDIA_WINDOW_V1'
          and profile['maximumWindowSeconds'] == 2700, 'installed finite operation profile')
+    window_deadline = time.monotonic() + profile['maximumWindowSeconds']
     for ref in profile['localSources'].values(): read(ref)
     need(profile['localSources']['media_window']['path'] == str(Path(__file__).absolute()),
          'actual installed window entry')
@@ -180,14 +181,22 @@ def execute(profile_pin, attempt):
                 command('restore-renewal',['/usr/bin/systemctl','start',TIMER])
                 need(W.manager(TIMER)['ActiveState']=='active','normal recovery timer restored')
             except BaseException as error: closure_errors.append(str(error))
+        os.close(lock)
+        record('window-closure.json',{'first':None if first is None else str(first),'cleanup':closure_errors})
+        recovery = None
+        if paused and not closure_errors:
+            try: recovery = verify_runner_return(profile_pin, attempt, window_deadline)
+            except BaseException as error:
+                recovery = {'runnerRecoveryVerified':False,'first':{'type':type(error).__name__,'reason':str(error)}}
         if backstop and not closure_errors:
             try: command('retire-backstop',['/usr/bin/systemctl','stop',restore+'.timer'])
             except BaseException as error: closure_errors.append(str(error))
-        os.close(lock)
         record('final.json',{'first':None if first is None else str(first),'cleanup':closure_errors,
                              'diagnosticErrors':errors,'guestAcceptanceClaimed':False,
-                             'runnerRecovery':'RESTORE_REQUESTED_NOT_YET_VERIFIED_AFTER_HEAVY'})
+                             'runnerRecovery':recovery})
         if closure_errors and first is None: raise RuntimeError('restoration unknown; finite backstop preserved: '+repr(closure_errors))
+        if recovery is not None and recovery['runnerRecoveryVerified']is not True and first is None:
+            raise RuntimeError('normal runner return unverified: '+repr(recovery['first']))
 
 
 def runner_return_cut(value, policy, now):
@@ -224,42 +233,28 @@ def runner_return_cut(value, policy, now):
             'boot':value['boot'],'publication':pub}
 
 
-def verify_runner_return(profile_pin, attempt, completed_heavy_pin):
-    """Read-only after the owned diagnostic heavy command exits; never a tick."""
+def verify_runner_return(profile_pin, attempt, window_deadline=None):
+    """Read-only after releasing recovery.lock; never a tick or remote unlock."""
     need(os.getuid()==os.geteuid()==0 and re.fullmatch('[0-9a-f]{32}',attempt),'Root typed return observation')
-    need(not any('/'+name+'/'in Path('/proc/self/cgroup').read_text()
-                 for name in('opemos-heavy.slice','opemos-windows-vm.slice')),
-         'runner return observation must follow released diagnostic heavy custody')
-    profile=json.loads(read(profile_pin));completion=json.loads(read(completed_heavy_pin))
+    profile=json.loads(read(profile_pin))
     need(profile['kind']=='OPEMOS_INSTALLED_MEDIA_WINDOW_V1'and profile['maximumWindowSeconds']==2700,
          'installed finite return-observation profile')
     for ref in profile['localSources'].values():read(ref)
-    need(completion['schema']=='opemos-owned-command-v2'and completion['lifecycleClosed']is True
-         and completion['reaped']is True and completion['childSetRestored']is True
-         and completion['stdoutEOF']is True and completion['stderrEOF']is True
-         and completion['fd']['restored']is True and completion['fd']['closeErrors']==[]
-         and completion['tailUNKNOWN']is False and type(completion['numericExit'])is int
-         and completion['stdin']['closed']is True and completion['stdin']['complete']is True
-         and completion['errors']==[],
-         'actual completed owned heavy command EOF/reap/group/FD receipt')
-    argv=completion['argv'];entry=profile['localSources']['media_window']['path']
-    need(entry==str(Path(__file__).absolute())and type(argv)is list and 0<len(argv)<=64
-         and all(type(arg)is str for arg in argv)and argv.count(entry)==1
-         and any(Path(arg).name=='heavy.sh'for arg in argv)
-         and argv.count('--attempt')==1 and argv[argv.index('--attempt')+1]==attempt
-         and argv.count('--profile-pin-json')==1 and json.loads(argv[argv.index('--profile-pin-json')+1])==profile_pin,
-         'completed heavy command bound to exact installed window/profile/attempt')
+    need(profile['localSources']['media_window']['path']==str(Path(__file__).absolute()),
+         'actual installed runner return entry')
     W=module(profile['localSources']['window_common'],'runner_return_common')
     probe=module(profile['currentProbePin'],'runner_return_actual_probe')
     policy=json.loads(read(profile['controlPolicyPin'],modes=(0o400,0o444,0o600)))
     evidence=Path(profile['evidenceRoot'])/attempt
     st=os.lstat(evidence);need(stat.S_ISDIR(st.st_mode)and st.st_uid==st.st_gid==0
                               and stat.S_IMODE(st.st_mode)==0o700,'original protected diagnostic evidence')
-    original,_=W.held(evidence/'final.json');original=json.loads(original)
+    original,_=W.held(evidence/'window-closure.json');original=json.loads(original)
     need(original['cleanup']==[],'normal timer restoration must already be known')
     timer=W.manager(TIMER)
     need(timer['ActiveState']=='active'and timer['UnitFileState']=='enabled','normal recovery timer restored')
-    end=time.monotonic()+300;cuts=[];witnesses=[];epoch=None;last=None;advances=0;first=None
+    end=time.monotonic()+300
+    if window_deadline is not None:end=min(end,window_deadline)
+    cuts=[];witnesses=[];epoch=None;last=None;advances=0;first=None
     try:
         while True:
             need(time.monotonic()<end,'bounded natural runner recovery before observation')
@@ -269,6 +264,9 @@ def verify_runner_return(profile_pin, attempt, completed_heavy_pin):
                 time.sleep(min(.5,remaining));continue
             need(time.monotonic()<end,'bounded natural runner recovery after observation')
             W.put(evidence,'runner-return-cut-'+str(len(cuts)).zfill(3)+'.json',value);cuts.append(value)
+            need(value['unknownReservations']==[]and value['otherActiveJobs']==[]
+                 and value['guestActive']is False and value['gpuLeaseActive']is False,
+                 'normal runner return held by actual queue/native ownership; no forced release')
             observed=runner_return_cut(value,policy,time.time())
             if observed is not None:
                 current=(observed['jobId'],observed['boot'],observed['leaseExpiresUnix'])
@@ -281,9 +279,9 @@ def verify_runner_return(profile_pin, attempt, completed_heavy_pin):
             remaining=end-time.monotonic();need(remaining>0,'bounded natural advancing runner heartbeat')
             time.sleep(min(15,remaining))
     except BaseException as error:first={'type':type(error).__name__,'reason':str(error)}
-    result={'kind':'ACTUAL_POST_HEAVY_NORMAL_RUNNER_RETURN','runnerRecoveryVerified':first is None and advances>=2,
+    result={'kind':'ACTUAL_POST_WINDOW_NORMAL_RUNNER_RETURN','runnerRecoveryVerified':first is None and advances>=2,
             'first':first,'naturalHeartbeatAdvances':advances,'witnesses':witnesses,
-            'diagnosticCompletionPin':completed_heavy_pin,'windowFirst':original['first'],
+            'windowFirst':original['first'],
             'effects':[],'guestAcceptanceClaimed':False}
     W.put(evidence,'runner-return-result.json',result)
     return result
@@ -291,9 +289,5 @@ def verify_runner_return(profile_pin, attempt, completed_heavy_pin):
 
 if __name__ == '__main__':
     ap=argparse.ArgumentParser();ap.add_argument('--profile-pin-json',required=True)
-    ap.add_argument('--attempt',required=True);ap.add_argument('--completed-heavy-pin-json');a=ap.parse_args()
-    if a.completed_heavy_pin_json:
-        result=verify_runner_return(json.loads(a.profile_pin_json),a.attempt,json.loads(a.completed_heavy_pin_json))
-        print(json.dumps(result,sort_keys=True),flush=True)
-        sys.exit(0 if result['runnerRecoveryVerified'] else 1)
+    ap.add_argument('--attempt',required=True);a=ap.parse_args()
     execute(json.loads(a.profile_pin_json),a.attempt)
