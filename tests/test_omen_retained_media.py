@@ -1032,6 +1032,51 @@ except peer.Refused as error:
             # The same production recovery record must remain consumable by
             # later historical admission. Only machine facts below are modeled;
             # the producer ABI, immutable files, locks and reader are real.
+            def gpu_history_inventory(current_queue,row,expected_error=None):
+                # SAME actual producer -> Root GPU inventory -> choose.
+                # PCI topology/boot files are modeled, immutable Root records,
+                # source loading, locks and complete recovery validation are real.
+                from unittest import mock
+                gpu={"__name__":"fixture_gpu_inventory"}
+                exec(compile(current_queue.GPU_GROUP_OBSERVER_SOURCE,'<actual-gpu-source>','exec'),gpu)
+                modeled=fixture/'modeled-gpu-machine';sysroot=modeled/'sys';procroot=modeled/'proc'
+                group=sysroot/'kernel/iommu_groups/1/devices';group.mkdir(parents=True)
+                for device in gpu['MEMBERS']:(group/device).mkdir()
+                for device,identifier in [('0000:01:00.0','0x1f15'),('0000:01:00.1','0x10f9'),
+                                          ('0000:01:00.2','0x1ada'),('0000:01:00.3','0x1adb')]:
+                    base=sysroot/'bus/pci/devices'/device;base.mkdir(parents=True)
+                    (base/'vendor').write_text('0x10de\n');(base/'device').write_text(identifier+'\n')
+                bootfile=procroot/'sys/kernel/random/boot_id';bootfile.parent.mkdir(parents=True);bootfile.write_text(boot)
+                actorfile=procroot/str(os.getpid())/'stat';actorfile.parent.mkdir(parents=True)
+                actorfile.write_text(Path('/proc/self/stat').read_text())
+                baseline=set(os.listdir('/proc/self/fd'))
+                if expected_error is not None:
+                    try:
+                        with self.assertRaisesRegex(Exception,expected_error):
+                            gpu['observe']('/run',str(sysroot),str(procroot),implementation_definition=implementation['sourceContractPin'])
+                        self.assertEqual(set(os.listdir('/proc/self/fd')),baseline)
+                    finally:shutil.rmtree(modeled)
+                    return
+                with mock.patch.object(sys,'argv',['gpu',current_queue.GPU_GROUP_OBSERVER_SHA256]):
+                    proof=gpu['observe']('/run',str(sysroot),str(procroot),implementation_definition=implementation['sourceContractPin'])
+                current_queue.validate_gpu_group_observation(proof,proof['startedMonotonic'])
+                self.assertTrue(proof['gpuAvailable']and proof['allOwnedDescriptorsClosed'])
+                pending=dict(row,state='pending',cpus=None,unit=None,started=None,finished=None,result=None)
+                cfg={'cpu_ids':list(range(10)),'memory_bytes':32*1024**3}
+                with mock.patch.object(current_queue,'observe_gpu_group',return_value=proof), \
+                     mock.patch.object(current_queue,'nvidia_wait_reason',return_value=None):
+                    selected,blocked=current_queue.choose([pending],cfg)
+                self.assertEqual([x[0]['id']for x in selected],[pending['id']]);self.assertEqual(blocked,[])
+                for fault in ('hash','owner','escape','missing'):
+                    wrong=copy.deepcopy(implementation['sourceContractPin'])
+                    if fault=='hash':wrong['sha256']='0'*64
+                    elif fault=='owner':wrong['identity']['st_uid']=1000
+                    elif fault=='escape':wrong['path']='/run/../tmp/installed-controller.json'
+                    else:wrong=None
+                    with self.subTest(gpuImplementation=fault),self.assertRaises(Exception):
+                        gpu['observe']('/run',str(sysroot),str(procroot),implementation_definition=wrong)
+                self.assertEqual(set(os.listdir('/proc/self/fd')),baseline)
+                shutil.rmtree(modeled)
             def recovered_history_fixture(active_peer,current_queue,row,bound):
                 history_root=Path('/run/opemos-libvirt-queue-'+request['jobToken'])
                 terminal_root=Path('/run/opemos-libvirt-results-'+nonce)
@@ -1072,43 +1117,7 @@ except peer.Refused as error:
                     full=active_peer.historical_lease_provenance(str(lease_root),[history_row],history_binding,current_queue,boot)
                     self.assertEqual(full['queueRequestSHA256'],hashlib.sha256(active_peer.canon(request)).hexdigest())
                     self.assertIsNone(full['historicalQMPClosed'])
-                    # SAME actual producer -> Root GPU inventory -> choose.
-                    # PCI topology/boot files are modeled, immutable Root records,
-                    # source loading, locks and complete recovery validation are real.
-                    from unittest import mock
-                    gpu={"__name__":"fixture_gpu_inventory"}
-                    exec(compile(current_queue.GPU_GROUP_OBSERVER_SOURCE,'<actual-gpu-source>','exec'),gpu)
-                    modeled=fixture/'modeled-gpu-machine';sysroot=modeled/'sys';procroot=modeled/'proc'
-                    group=sysroot/'kernel/iommu_groups/1/devices';group.mkdir(parents=True)
-                    for device in gpu['MEMBERS']:(group/device).mkdir()
-                    for device,identifier in [('0000:01:00.0','0x1f15'),('0000:01:00.1','0x10f9'),
-                                              ('0000:01:00.2','0x1ada'),('0000:01:00.3','0x1adb')]:
-                        base=sysroot/'bus/pci/devices'/device;base.mkdir(parents=True)
-                        (base/'vendor').write_text('0x10de\n');(base/'device').write_text(identifier+'\n')
-                    bootfile=procroot/'sys/kernel/random/boot_id';bootfile.parent.mkdir(parents=True);bootfile.write_text(boot)
-                    actorfile=procroot/str(os.getpid())/'stat';actorfile.parent.mkdir(parents=True)
-                    actorfile.write_text(Path('/proc/self/stat').read_text())
-                    baseline=set(os.listdir('/proc/self/fd'))
-                    with mock.patch.object(sys,'argv',['gpu',current_queue.GPU_GROUP_OBSERVER_SHA256]):
-                        proof=gpu['observe']('/run',str(sysroot),str(procroot),implementation_definition=implementation['sourceContractPin'])
-                    current_queue.validate_gpu_group_observation(proof,proof['startedMonotonic'])
-                    self.assertTrue(proof['gpuAvailable']and proof['allOwnedDescriptorsClosed'])
-                    pending=dict(row,state='pending',cpus=None,unit=None,started=None,finished=None,result=None)
-                    cfg={'cpu_ids':list(range(10)),'memory_bytes':32*1024**3}
-                    with mock.patch.object(current_queue,'observe_gpu_group',return_value=proof), \
-                         mock.patch.object(current_queue,'nvidia_wait_reason',return_value=None):
-                        selected,blocked=current_queue.choose([pending],cfg)
-                    self.assertEqual([x[0]['id']for x in selected],[pending['id']]);self.assertEqual(blocked,[])
-                    for fault in ('hash','owner','escape','missing'):
-                        wrong=copy.deepcopy(implementation['sourceContractPin'])
-                        if fault=='hash':wrong['sha256']='0'*64
-                        elif fault=='owner':wrong['identity']['st_uid']=1000
-                        elif fault=='escape':wrong['path']='/run/../tmp/installed-controller.json'
-                        else:wrong=None
-                        with self.subTest(gpuImplementation=fault),self.assertRaises(Exception):
-                            gpu['observe']('/run',str(sysroot),str(procroot),implementation_definition=wrong)
-                    self.assertEqual(set(os.listdir('/proc/self/fd')),baseline)
-                    shutil.rmtree(modeled)
+                    gpu_history_inventory(current_queue,row)
                     with active_peer.RootFiles(history_root)as journals,journals.lock():
                         self.assertTrue(active_peer._complete_historical_libvirt_closed(historical,request,journals))
                         self.assertEqual(details['secondary'],classification['result']['secondary'])
@@ -1162,6 +1171,12 @@ except peer.Refused as error:
                 req=current_queue.libvirt_request(hr,hb)
                 qroot=Path('/run/opemos-libvirt-queue-'+jt);lroot=Path('/run/opemos-vfio-'+hn)
                 producer.create_root(str(qroot));producer.create_root(str(lroot))
+                context_root=Path(hp['runtimeRoot']);producer.create_root(str(context_root))
+                with active_peer.RootFiles(context_root)as f:
+                    ap=producer.put(f,'assignment.json',{'kind':'ROOT_CANONICAL_QUEUE_LIBVIRT_ASSIGNMENT_R4',
+                        'request':req,'runtimeAuthorized':False,'proof':{'externalSQLFacts':'MODELED'}})
+                    producer.put(f,'context.json',{'kind':'ROOT_LIBVIRT_R4_RUNTIME_CONTEXT','runtimeAuthorized':True,
+                        'MODEL_ONLY':False,'candidate':h,'sourceRoles':pt['sourceRoles'],'parentPin':pref,'assignmentPin':ap})
                 try:
                     restored=[]
                     expected={'working-parent':hp['mountRoot'],'working':work['path'],'runtime-parent':h['run'],
@@ -1197,6 +1212,9 @@ except peer.Refused as error:
                     result=active_peer.historical_lease_provenance(str(lroot),[hr],bindings,current_queue,boot)
                     self.assertEqual(result['jobID'],hr['id']);self.assertIsNone(result['historicalQMPClosed'])
                     self.assertFalse(os.path.lexists(work['path']),'completed historical mount stays absent')
+                    # SAME actual Root GPU inventory -> current queue choose,
+                    # including immediate retained closure, not recovered-only.
+                    gpu_history_inventory(current_queue,hr)
                     run=object.__new__(normal_entry.Run);run.c={'jobId':'fresh-unused-'+uuid.uuid4().hex};run.profile={};run.boot=boot
                     run.mount=Path('/run/unused-fixture-mount');run.placement_root=Path('/run/unused-fixture-placement')
                     class ReachedFreshPreparation(Exception):pass
@@ -1221,8 +1239,13 @@ except peer.Refused as error:
                             with self.subTest(historicalRetainedFault=fault),self.assertRaises(Exception):
                                 active_peer._complete_historical_libvirt_closed(bad,badreq,f)
                     self.assertEqual(set(os.listdir('/proc/self/fd')),fds)
+                    # A foreign original context cannot be replaced by the
+                    # current implementation or a permissive owner rule.
+                    os.chown(context_root/'context.json',1000,1000)
+                    gpu_history_inventory(current_queue,hr,'Root exact leaf custody/cap')
+                    self.assertEqual(set(os.listdir('/proc/self/fd')),fds)
                 finally:
-                    for root in(qroot,lroot,historical_placement):shutil.rmtree(root)
+                    for root in(qroot,lroot,context_root,historical_placement):shutil.rmtree(root)
                     Path(hp['parentPath']).unlink()
             self.assertFalse(os.path.lexists('/run/opemos-vfio-'+nonce))
             # Complete actual renderer -> installed libvirt schema. The paths
