@@ -230,16 +230,18 @@ class Pipeline:
     """Actual native observations and QMP input in the same owned Ubuntu VM."""
     def __init__(self,binding,config,q,observer,ready,root):
         self.binding=binding;self.cfg=config;self.q=q;self.observer=observer;self.ready=ready
-        self.root=root;self.sequence=0;self.actions=[];self.observations=[]
-        self.end=time.monotonic()+config['whole_seconds'];self.app=ready['app']
+        self.root=root;self.sequence=0;self.actions=[];self.observations=[];self.observation_bytes=0
+        self.end=time.monotonic()+config['whole_seconds'];self.app=ready['app'];self.check=lambda:None
         need(binding['nonce']==config['nonce']==ready['nonce'] and
              binding['artifact_source']==config['source_commit'] and
              binding['package_sha256']==config['package_sha256'] and
              ready['process']['pid']==self.app['pid'] and
-             ready['process']['inherited_nonce']==binding['nonce'],
+             ready['process']['inherited_nonce']==binding['nonce']and
+             ready['process'].get('exe_sha256')==config['native_executable_sha256'],
              'same admitted candidate/app birth/normal operation')
 
     def request(self,kind,**operands):
+        self.check()
         remaining=self.end-time.monotonic();need(remaining>0 and self.sequence<256,'original GUI operation clock/request bound')
         process(self.binding);self.sequence+=1;self.observer.settimeout(remaining)
         request={'nonce':self.binding['nonce'],'sequence':self.sequence,'kind':kind,**operands}
@@ -249,7 +251,10 @@ class Pipeline:
              response.get('nonce')==request['nonce'] and response.get('sequence')==self.sequence and
              response.get('request_kind')==kind and response.get('process')==self.ready['process'],
              'ordered same native app observation within original clock')
-        self.observations.append(response);return response
+        self.observations.append(response)
+        self.observation_bytes+=len(json.dumps(response,separators=(',',':')).encode())
+        need(self.observation_bytes<=32*1024*1024,'complete bounded native observation history; first crossing retained')
+        return response
 
     def windows(self):return self.request('WINDOWS')['value']['windows']
 
@@ -268,7 +273,7 @@ class Pipeline:
              control['enabled']is True and control['visible']is True and control['readOnlyObservation']is True,
              'current genuine native control process/window/state')
         before=frame(self.q,self.root/(str(len(self.actions)).zfill(3)+'-'+name+'-before.png'))
-        process(self.binding);need(time.monotonic()<self.end,'original deadline before actual pointer')
+        self.check();process(self.binding);need(time.monotonic()<self.end,'original deadline before actual pointer')
         rect=control['rect'];need(rect[0]<=point['x']<rect[0]+rect[2]<=before['width']and
             rect[1]<=point['y']<rect[1]+rect[3]<=before['height'],'actual native target and observed display point')
         record={'action':name,'nativeControl':target,'beforeFrame':before,'actualQMPInput':[],

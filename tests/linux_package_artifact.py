@@ -4,13 +4,45 @@ import tempfile
 import unittest
 import shutil
 
-from scripts.stage_linux_packages import stage
+from scripts.stage_linux_packages import stage, stage_native_executable
 
 
 COMMIT = "a" * 40
 
 
 class LinuxPackageArtifactTests(unittest.TestCase):
+    def test_actual_inner_elf_copy_and_same_package_provenance(self):
+        import hashlib,os
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        temporary,root,_,app=self.fixture();self.addCleanup(temporary.cleanup)
+        (root/'src-tauri/Cargo.toml').write_text('[package]\nname="current-native"\n')
+        header=bytearray(20);header[:6]=b'\x7fELF\x02\x01';header[18:20]=(62).to_bytes(2,'little')
+        native=bytes(header)+b'native application DATA'
+        def extract(argv,**kw):
+            self.assertEqual(argv,[str(app),'--appimage-extract'])
+            target=Path(kw['cwd'])/'squashfs-root/usr/bin/current-native';target.parent.mkdir(parents=True)
+            target.write_bytes(native);target.chmod(0o755)
+            return SimpleNamespace(returncode=0)
+        env={'GITHUB_ACTIONS':'true','GITHUB_REPOSITORY':'CorniiDog/OPEMOS.EXE'}
+        with patch.dict(os.environ,env),patch('scripts.stage_linux_packages.subprocess.run',side_effect=extract):
+            result=stage(root,root/'artifact',COMMIT,include_native_executable=True)
+        proof=result['nativeExecutable'];self.assertEqual(proof['sha256'],hashlib.sha256(native).hexdigest())
+        self.assertEqual(proof['packageSHA256'],hashlib.sha256(app.read_bytes()).hexdigest())
+        self.assertEqual((root/'artifact/current-native').read_bytes(),native)
+        self.assertNotEqual(proof['sha256'],proof['packageSHA256'])
+        self.assertEqual(len(result['packages']),2)
+
+    def test_native_extraction_is_never_an_omen_candidate_execution_route(self):
+        import os
+        from unittest.mock import patch
+        temporary,root,_,app=self.fixture();self.addCleanup(temporary.cleanup)
+        with patch.dict(os.environ,{'GITHUB_ACTIONS':'false'}), \
+             patch('scripts.stage_linux_packages.subprocess.run')as execute, \
+             self.assertRaisesRegex(SystemExit,'confined to the hosted'):
+            stage_native_executable(root,app,root/'artifact')
+        execute.assert_not_called()
+
     def test_bad_pinned_appliance_refuses_before_creating_artifact(self):
         temporary, root, _, _ = self.fixture()
         self.addCleanup(temporary.cleanup)

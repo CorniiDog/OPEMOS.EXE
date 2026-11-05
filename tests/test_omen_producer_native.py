@@ -87,6 +87,34 @@ class NativeProducerCustody(unittest.TestCase):
                 path.chmod(0o600)
                 os.chdir(previous)
 
+    def test_ubuntu_descriptor_binds_package_and_actual_inner_executable_separately(self):
+        import json
+        with tempfile.TemporaryDirectory()as directory:
+            root=Path(directory).resolve();previous=Path.cwd();os.chdir(root)
+            try:
+                artifact=root/'linux-package-artifact';artifact.mkdir()
+                package=artifact/'current.AppImage';package.write_bytes(b'actual package representation')
+                native=artifact/'current-native-application';native.write_bytes(b'actual inner executable representation')
+                package_sha=hashlib.sha256(package.read_bytes()).hexdigest()
+                native_sha=hashlib.sha256(native.read_bytes()).hexdigest()
+                proof={'sourceCommit':'a'*40,'nativeExecutable':{'name':native.name,'bytes':native.stat().st_size,
+                    'sha256':native_sha,'packageName':package.name,'packageSHA256':package_sha,
+                    'method':'actual-built-AppImage-extraction'}}
+                (artifact/'provenance.json').write_text(json.dumps(proof))
+                env={'GITHUB_REPOSITORY':'CorniiDog/OPEMOS.EXE','GITHUB_RUN_ID':'101','GITHUB_RUN_ATTEMPT':'2',
+                    'GITHUB_WORKFLOW_REF':'CorniiDog/OPEMOS.EXE/'+M.PRODUCERS['ubuntu']['workflow']+'@refs/heads/current',
+                    'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/heads/current'}
+                with patch.dict(os.environ,env):
+                    value=M.record('ubuntu','a'*40,'201','actual-fixture-artifact','b'*64,'producer-result')
+                    self.assertEqual(value['package_sha256'],package_sha)
+                    self.assertEqual(value['executable_sha256'],native_sha)
+                    self.assertNotEqual(value['package_sha256'],value['executable_sha256'])
+                    native.write_bytes(b'changed inner application')
+                    with self.assertRaisesRegex(ValueError,'native executable/package byte identity'):
+                        M.record('ubuntu','a'*40,'201','actual-fixture-artifact','b'*64,'refused-producer')
+                    self.assertFalse((root/'refused-producer').exists())
+            finally:os.chdir(previous)
+
     def test_actual_hardlink_is_refused(self):
         with tempfile.TemporaryDirectory() as root:
             path = Path(root).resolve() / 'producer.exe'

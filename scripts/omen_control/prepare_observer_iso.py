@@ -28,6 +28,7 @@ media=/media/opemosgui/OPROBOT
 package='/media/opemosgui/OPKG197/package/OPEMOS EXE Linux Test_0.1.0_amd64.AppImage'
 owned="$HOME/opemos-robot-$nonce"
 mkdir -m 700 -- "$owned"
+mkdir -m 700 -- "$owned/output"
 phase=port_custody
 port_ready=0
 on_exit() {
@@ -157,7 +158,7 @@ def extract_candidate(archive_ref,descriptor,destination,expanded_limit):
     # The existing candidate-archive admission is2GiB. Keep the same bound;
     # verify all bytes before interpreting the central directory as DATA.
     directory=Path(destination);directory.mkdir(mode=0o700)
-    seen=set();total=0;members=[];executable=None
+    seen=set();total=0;members=[];executable=None;package=None
     with candidate_archive(archive_ref)as stream,zipfile.ZipFile(stream)as archive:
         entries=archive.infolist()
         if not 1<=len(entries)<=4096:raise ValueError('bounded producer member count')
@@ -189,18 +190,24 @@ def extract_candidate(archive_ref,descriptor,destination,expanded_limit):
             finally:os.close(fd)
             if size!=item.file_size:raise ValueError('short producer member')
             record={'name':item.filename,'bytes':size,'sha256':digest.hexdigest()};members.append(record)
+            if target.name==descriptor['package_name']:
+                if package is not None:raise ValueError('ambiguous producer package')
+                if (record['sha256']!=descriptor['package_sha256']or
+                    size!=descriptor.get('package_bytes',descriptor['executable_bytes'])):
+                    raise ValueError('exact actual AppImage bytes')
+                package=record
             if target.name==descriptor['executable_name']:
                 if executable is not None:raise ValueError('ambiguous producer executable')
-                if (size!=descriptor['executable_bytes']or record['sha256']!=descriptor['executable_sha256']or
-                    descriptor['package_name']!=descriptor['executable_name']or
-                    descriptor['package_sha256']!=record['sha256']):raise ValueError('exact actual AppImage bytes')
+                if size!=descriptor['executable_bytes']or record['sha256']!=descriptor['executable_sha256']:
+                    raise ValueError('exact actual native/AppImage bytes')
                 executable=record
-    if executable is None:raise ValueError('actual producer AppImage absent')
-    companion=str(Path(executable['name']).parent/(Path(executable['name']).name+'.runtime'))
+    if package is None or executable is None:raise ValueError('actual producer package/executable absent')
+    companion=str(Path(package['name']).parent/(Path(package['name']).name+'.runtime'))
     if not any(item['name'].startswith(companion+'/appliance/')for item in members):
         raise ValueError('actual package companion appliance missing')
-    return {'members':members,'expandedBytes':total,'executable':executable,
+    return {'members':members,'expandedBytes':total,'package':package,'executable':executable,
             'archiveSHA256':archive_ref['sha256'],'source_commit':descriptor['source_commit']}
+
 
 
 def pipeline_medium(config):
@@ -220,12 +227,13 @@ def pipeline_medium(config):
     operation=config['guest_operation']
     if (operation['nonce']!=nonce or operation['source_commit']!=descriptor['source_commit']or
         operation['package_sha256']!=descriptor['package_sha256']or
-        operation['usb_serial']!='opemos-'+nonce):raise ValueError('whole guest config/actual producer binding')
+        operation['usb_serial']!='opemos-'+nonce or
+        operation['native_executable_sha256']!=descriptor['executable_sha256']):raise ValueError('whole guest config/actual producer binding')
     operation_raw=(json.dumps(operation,sort_keys=True,separators=(',',':'))+'\n').encode()
     if len(operation_raw)>65536:raise ValueError('finite guest operation config')
     create_file(root/'operation.json',operation_raw,0o444)
-    package='/media/opemosgui/OPROBOT/candidate/'+candidate['executable']['name']
-    basename=Path(candidate['executable']['name']).name
+    package='/media/opemosgui/OPROBOT/candidate/'+candidate['package']['name']
+    basename=Path(candidate['package']['name']).name
     # Existing disposable guest login/udev provision owns port access. No host
     # credentials, Root state, pointer activation or build commands are here.
     start='''#!/bin/bash
@@ -235,6 +243,7 @@ nonce='''+shlex.quote(nonce)+'''
 media=/media/opemosgui/OPROBOT
 owned="$HOME/opemos-robot-$nonce"
 mkdir -m 700 -- "$owned"
+mkdir -m 700 -- "$owned/output"
 node=$(readlink -f -- /dev/virtio-ports/opemos.robot.observer)
 [[ "$node" == /dev/vport* && -c "$node" ]]
 [[ "$(cat "/sys/class/virtio-ports/${node##*/}/name")" == opemos.robot.observer ]]

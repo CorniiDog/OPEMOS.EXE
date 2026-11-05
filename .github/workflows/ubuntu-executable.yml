@@ -58,7 +58,7 @@ jobs:
       - name: Stage packages with checksums, source provenance and pinned appliance
         run: |
           python3 scripts/acquire_appliance_windows.py --output build/appliance/linux
-          python3 scripts/stage_linux_packages.py --source-commit "${{ github.event.pull_request.head.sha || github.sha }}" --appliance-image build/appliance/linux/fedora-builder.qcow2
+          python3 scripts/stage_linux_packages.py --source-commit "${{ github.event.pull_request.head.sha || github.sha }}" --appliance-image build/appliance/linux/fedora-builder.qcow2 --include-native-executable
       - name: Retain Ubuntu executable packages
         id: executable
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

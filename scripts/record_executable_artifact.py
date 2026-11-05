@@ -141,7 +141,19 @@ def record(platform, source, artifact_id, artifact_name, artifact_sha, output):
     elif platform == "ubuntu":
         packages = list((root / "linux-package-artifact").glob("*.AppImage"))
         require(len(packages) == 1, "Exactly one actual Ubuntu AppImage is required")
-        executable = package = packages[0]
+        package = packages[0]
+        _, raw = held(root / "linux-package-artifact/provenance.json", 1024**2, keep=True)
+        provenance=json.loads(raw);native=provenance.get('nativeExecutable')
+        require(provenance.get('sourceCommit')==source and type(native)is dict and
+                native.get('packageName')==package.name and native.get('method')=='actual-built-AppImage-extraction',
+                "Actual same-package native application identity missing")
+        require(type(native.get('name'))is str and Path(native['name']).name==native['name'],
+                "Native executable must be one artifact basename")
+        executable=root/"linux-package-artifact"/native['name']
+        proof,_=held(executable,1024**3);package_proof,_=held(package,60_000_000_000)
+        require(proof=={k:native[k]for k in('name','bytes','sha256')}and
+                native['packageSHA256']==package_proof['sha256'],
+                "Actual native executable/package byte identity differs")
     else:
         _, raw = held(root / "build/macos-arm64-evidence/receipt.json", 1024**2, keep=True)
         receipt = json.loads(raw)

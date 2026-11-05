@@ -51,15 +51,16 @@ class RunnerTest(unittest.TestCase):
         spec=importlib.util.spec_from_file_location('normal_ubuntu_candidate_medium',
             Path(__file__).resolve().parents[1]/'scripts/omen_control/prepare_observer_iso.py')
         medium=importlib.util.module_from_spec(spec);spec.loader.exec_module(medium)
-        package=b'actual package DATA, never executed'
+        package=b'actual package DATA, never executed';native=b'actual inner native DATA, never executed'
         fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
         with tempfile.TemporaryDirectory(prefix='opemos-candidate-medium-') as directory:
             root=Path(directory);root.chmod(0o700)
-            def archive(name,fault=None):
+            def archive(name,fault=None,separate=False):
                 stream=io.BytesIO()
                 with zipfile.ZipFile(stream,'w')as out:
                     member=zipfile.ZipInfo('package/candidate.AppImage');member.external_attr=(stat.S_IFREG|0o755)<<16
                     out.writestr(member,package)
+                    if separate:out.writestr('package/native-app',native)
                     out.writestr('package/candidate.AppImage.runtime/appliance/appliance-manifest.json',b'{}')
                     if fault=='escape':out.writestr('../escaped',b'bad')
                     if fault=='link':
@@ -72,6 +73,13 @@ class RunnerTest(unittest.TestCase):
                 'artifact_archive_sha256':ref['sha256'],'executable_name':'candidate.AppImage',
                 'package_name':'candidate.AppImage','executable_bytes':len(package),
                 'package_sha256':hashlib.sha256(package).hexdigest(),'executable_sha256':hashlib.sha256(package).hexdigest()}
+            newref=archive('native-producer.zip',separate=True)
+            newdesc=dict(descriptor,artifact_archive_sha256=newref['sha256'],package_bytes=len(package),
+                         executable_name='native-app',executable_bytes=len(native),
+                         executable_sha256=hashlib.sha256(native).hexdigest())
+            separated=medium.extract_candidate(newref,newdesc,root/'native-extracted',1048576)
+            self.assertNotEqual(separated['package']['sha256'],separated['executable']['sha256'])
+            self.assertEqual(separated['package']['name'],'package/candidate.AppImage')
             result=medium.extract_candidate(ref,descriptor,root/'extracted',1048576)
             self.assertEqual(result['executable']['sha256'],descriptor['package_sha256'])
             self.assertEqual((root/'extracted/package/candidate.AppImage').read_bytes(),package)
@@ -91,9 +99,9 @@ class RunnerTest(unittest.TestCase):
         spec=importlib.util.spec_from_file_location('ubuntu_connection_control',
             Path(__file__).resolve().parents[1]/'scripts/omen_control/connection_control.py')
         control=importlib.util.module_from_spec(spec);spec.loader.exec_module(control)
-        nonce='a'*32;birth={'pid':731,'start_ticks':'241','inherited_nonce':nonce}
+        nonce='a'*32;birth={'pid':731,'start_ticks':'241','inherited_nonce':nonce,'exe_sha256':'e'*64}
         binding={'nonce':nonce,'artifact_source':'c'*40,'package_sha256':'d'*64}
-        cfg={'nonce':nonce,'source_commit':'c'*40,'package_sha256':'d'*64,'whole_seconds':60}
+        cfg={'nonce':nonce,'source_commit':'c'*40,'package_sha256':'d'*64,'whole_seconds':60,'native_executable_sha256':'e'*64}
         ready={'nonce':nonce,'process':birth,'app':{'pid':731,'window_id':412}}
         native={'pid':731,'window_id':412,'enabled':True,'visible':True,'readOnlyObservation':True,
                 'rect':[30,40,100,24],'point':{'x':80,'y':52}}
