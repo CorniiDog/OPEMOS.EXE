@@ -1748,7 +1748,8 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
         closed=dict(old,state='passed');policy={'normalProbeSHA256':'1'*64,
             'recoverySourceSHA256':'2'*64,'queueSourceSHA256':'3'*64,'mainCommit':'4'*40}
         wire=cycle.enc(policy);calls=[]
-        trigger=types.SimpleNamespace(strict=json.loads,validate_policy=lambda value,now:value)
+        trigger=types.SimpleNamespace(strict=json.loads,validate_policy=lambda value,now:value,
+            read_state=lambda:{'lastOutcome':{'controlJobId':old['id'],'dispatcherNonce':'a'*32}})
         probe=types.SimpleNamespace(observe=lambda:{})
         with mock.patch.object(cycle.os,'geteuid',return_value=0), \
              mock.patch.object(cycle.sys,'argv',['normal','--normal-cycle','RECONCILE_CLOSED',nonce,cycle.sha(wire),'5'*64]), \
@@ -1756,6 +1757,7 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
              mock.patch.object(cycle,'module',side_effect=lambda path,digest:probe if path.name=='normal_probe.py'else trigger), \
              mock.patch.object(cycle,'normal_at_use',return_value={'control':{'jobId':old['id'],'workerAlive':False}}), \
              mock.patch.object(cycle,'current_rows',return_value=(old,[],[],[])), \
+             mock.patch.object(cycle,'owning_dispatcher',side_effect=lambda row,p,state:{'unit':state['lastOutcome']['dispatcherNonce']}), \
              mock.patch.object(cycle,'dispatch',side_effect=lambda value,*args:calls.append(value)), \
              mock.patch.object(cycle,'wait_terminal',return_value=(closed,{}))as waited, \
              mock.patch.object(cycle,'manager',return_value={}), \
@@ -1874,7 +1876,7 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                 'normal_cycle.py':b'cycle','normal_probe.py':b'normal-probe','normal-template.json':b'template'}
             remote=dict(kind='ROOT_RUNNER21_REMOTE_ACTION_RESULT_V1',nonce=nonce,action='RESUME_PENDING',
                 mainCommit=policy['mainCommit'],queueSourceSHA256=policy['queueSourceSHA256'],
-                vmAdmission=False,ordinaryRoute=True,jobId=initial['control']['jobId'])
+                vmAdmission=False,ordinaryRoute=True,jobId=initial['control']['jobId'],dispatcherNonce=nonce)
             def held(path,*args):return sources.get(path.name,b'ssh')
             def module(raw,name):return {'reviewed_wrapper':trigger,'reviewed_controller_probe':probe,
                                          'reviewed_current_heartbeat':heartbeat}[name]
@@ -1911,7 +1913,7 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                 ordinaryRoute=True,sourceAccepted=True,runtimeAuthorized=True,vmAdmission=False,
                 jobStartedGuard=True,heartbeatReadbackCurrent=False,newOrExistingJobRoutable=False,
                 noDuplicateControllerListenerWorker=True,jobId=probe['control']['jobId'],
-                phase='RUNNING_RENEWAL_DUE',leaseExpiresUnix=probe['control']['leaseExpiresUnix'])
+                phase='RUNNING_RENEWAL_DUE',leaseExpiresUnix=probe['control']['leaseExpiresUnix'],dispatcherNonce=nonce)
             if fault=='expiry':result['leaseExpiresUnix']-=1
             elif fault=='binding':live['control']['ownUnitBound']=False
             elif fault=='source':result['mainCommit']='0'*40
@@ -1940,6 +1942,71 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                     self.assertLessEqual(state['nextAttemptUnix'],int(time.time())+1)
                     self.assertEqual(saved.call_count,2)
                     self.assertEqual(len(list(Path(directory).glob('resumed-control-*.json'))),1)
+
+    def test_resumed_worker_identity_reaches_wait_materialization_and_proof_consumer(self):
+        from unittest import mock
+        import time
+        cycle,r=self.modules();policy,state,probe,proof,expected=self.pending(r)
+        # A is the old control, D its actual resumed worker, B the new renewal.
+        old=proof['oldRow'];old['unit']='opemos-testq-modeled-old.service'
+        old_id=old['id'];dispatch='d'*32;renewal=state['inflight']
+        self.assertEqual(len({old_id[-32:],dispatch,renewal}),3)
+        unit='opemos-root-robot-dispatcher-'+dispatch+'.service'
+        active=dict(LoadState='loaded',ActiveState='active',MainPID='987654',ControlGroup='/user/'+unit,
+                    InvocationID='e'*32,ExecStart=str(cycle.QUEUE/'queue.sh'))
+        closed=dict(active,ActiveState='failed',MainPID='0',ControlGroup='')
+        actor=dict(pid=987654,start=77,uids=[1000]*4,argv=[],cgroup='0::/user/'+unit)
+        context={'lastOutcome':{'controlJobId':old_id,'dispatcherNonce':dispatch}}
+        with mock.patch.object(cycle,'user_dispatcher',return_value=active),mock.patch.object(cycle,'proc',return_value=actor):
+            actual=cycle.owning_dispatcher(old,policy,context)
+        self.assertEqual(actual['nonce'],dispatch);self.assertNotEqual(actual['nonce'],old_id[-32:])
+        root_closed=dict(ActiveState='inactive',MainPID='0',ControlGroup='')
+        observed=types.SimpleNamespace(current_control=lambda row,p:{'terminalLifecycle':'CLOSED','reservationRetained':False})
+        with mock.patch.object(cycle,'user_dispatcher',side_effect=lambda u:active if u==unit else closed)as queried, \
+             mock.patch.object(cycle,'current_rows',return_value=(old,[],[],{})), \
+             mock.patch.object(cycle,'manager',return_value=root_closed), \
+             mock.patch.object(cycle.time,'monotonic',side_effect=[0,2]),mock.patch.object(cycle.time,'sleep'):
+            with self.assertRaisesRegex(RuntimeError,'actual dispatcher terminal timeout'):
+                cycle.wait_terminal(observed,policy,old_id,1,dispatchers=[actual])
+            with self.assertRaisesRegex(RuntimeError,'actual dispatcher still active'):
+                cycle.closed_receipt(old,root_closed,[actual])
+            self.assertTrue(queried.call_args_list)
+            self.assertEqual({x.args[0]for x in queried.call_args_list},{unit})
+        installer=b'def targets():return {}\ndef full(path):raise AssertionError("no targets")\n'
+        policy.update(currentReleaseTx='f'*32,normalInstallerSHA256=cycle.sha(installer),
+            queueLoggerSHA256='9'*64,controlBrokerSHA256=cycle.sha(b'control.py'),jobStartedSHA256='8'*64)
+        template=dict(kind='ROOT_REVIEWED_ROBOT_CONTROL_MATERIALIZATION_V1',mainCommit=policy['mainCommit'],
+            runnerId=21,queueSourceSHA256=policy['queueSourceSHA256'],queueLoggerSHA256=policy['queueLoggerSHA256'],
+            sources={'control.py':{'hex':b'control.py'.hex(),'sha256':policy['controlBrokerSHA256']},
+                     'job-started.sh':{'sha256':policy['jobStartedSHA256']}},
+            policy=dict(sourceCommit=policy['mainCommit'],queueSourceSHA256=policy['queueSourceSHA256'],
+                        queueLoggerSHA256=policy['queueLoggerSHA256']))
+        raw=cycle.enc(template);policy['normalTemplateSHA256']=cycle.sha(raw)
+        real_path=Path
+        with tempfile.TemporaryDirectory()as directory, \
+             mock.patch.object(cycle,'Path',side_effect=lambda value:real_path(directory)if str(value)=='/proc'else real_path(value)), \
+             mock.patch.object(cycle,'user_dispatcher',return_value=closed), \
+             mock.patch.object(cycle,'proc',side_effect=FileNotFoundError), \
+             mock.patch.object(cycle,'current_rows',return_value=(old,[],[],{})), \
+             mock.patch.object(cycle,'manager',return_value=root_closed), \
+             mock.patch.object(cycle,'REMOTE_TEMPLATE_HEX',raw.hex(),create=True):
+            row,_=cycle.wait_terminal(observed,policy,old_id,time.monotonic()+1,dispatchers=[actual])
+            source=types.SimpleNamespace(pin_source=lambda *args:(installer,{}))
+            payload,_=cycle.materialize(policy,source,renewal,row,root_closed,dispatchers=[actual])
+        produced=json.loads(payload);closure=json.loads(bytes.fromhex(produced['oldControl']['closedReceiptHex']))
+        self.assertEqual(closure['normalDispatchers'],[actual])
+        proof.update(oldRow=old,oldManager=root_closed,oldOuter=closed,oldOuters=[closed],closure=closure)
+        proof['preflight']['oldControl']=produced['oldControl']
+        with mock.patch.object(r,'materialized_source_roles',return_value=expected):
+            r.validate_materialized_renewal(proof,policy,state,probe,time.time(),pending=True)
+            for fault in ('live-worker','invocation','control','source'):
+                bad=copy.deepcopy(proof)
+                if fault=='live-worker':bad['oldOuters'][0]=active;bad['oldOuter']=active
+                elif fault=='invocation':bad['oldOuters'][0]['InvocationID']='0'*32
+                elif fault=='control':bad['closure']['normalDispatchers'][0]['jobId']='wrong'
+                else:bad['closure']['normalDispatchers'][0]['queueSourceSHA256']='0'*64
+                with self.subTest(fault=fault),self.assertRaises(RuntimeError):
+                    r.validate_materialized_renewal(bad,policy,state,probe,time.time(),pending=True)
 
 
 if __name__ == '__main__': unittest.main()

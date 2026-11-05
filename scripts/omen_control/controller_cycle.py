@@ -92,6 +92,8 @@ def run(action,nonce,policy_sha,probe_sha):
              remote.get('vmAdmission') is False and remote.get('ordinaryRoute') is True,
              'exact current remote action receipt')
         job=remote['jobId']
+        dispatcher_nonce=remote.get('dispatcherNonce')
+        need(dispatcher_nonce==nonce,'same actual ordinary dispatcher operation nonce')
         deadline=time.monotonic()+180
         while time.monotonic()<deadline:
             latest=cp.observe();c=latest['control']
@@ -103,6 +105,8 @@ def run(action,nonce,policy_sha,probe_sha):
         else:raise RuntimeError('new existing Runner21 control not live within bounded current observation')
     else:
         latest=initial;job=initial['control']['jobId']
+        dispatcher_nonce=state['lastOutcome'].get('dispatcherNonce') or job.removeprefix('root-github-robot-control-')
+        need(re.fullmatch('[0-9a-f]{32}',dispatcher_nonce),'current normal dispatcher context')
     now=int(time.time())
     trigger.validate_probe(latest,p,now)
     c=latest['control']
@@ -133,7 +137,7 @@ def run(action,nonce,policy_sha,probe_sha):
             'ordinaryRoute':True,'sourceAccepted':True,'runtimeAuthorized':True,
             'vmAdmission':False,'jobStartedGuard':True,
             'heartbeatReadbackCurrent':not renewal_due,'newOrExistingJobRoutable':not renewal_due,
-            'noDuplicateControllerListenerWorker':True,'jobId':job,
+            'noDuplicateControllerListenerWorker':True,'jobId':job,'dispatcherNonce':dispatcher_nonce,
             'phase':'RUNNING_RENEWAL_DUE' if renewal_due else 'RUNNING',
             **({'leaseExpiresUnix':c['leaseExpiresUnix']} if renewal_due else {})}
 

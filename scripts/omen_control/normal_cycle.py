@@ -152,66 +152,103 @@ def completion_dispatch_nonce(nonce):
     need(value!=nonce,'distinct normal finalizer and successor identities')
     return value
 
-def wait_terminal(probe_module,policy,job_id,deadline,dispatcher_nonce=None):
+def user_dispatcher(unit):
+    need(re.fullmatch('opemos-root-robot-dispatcher-[0-9a-f]{32}\\.service',unit),
+         'typed normal dispatcher unit')
+    value=run(USER_ENV+['/usr/bin/systemctl','--user','show',unit,'-p','LoadState',
+        '-p','ActiveState','-p','MainPID','-p','ControlGroup','-p','InvocationID','-p','ExecStart'],
+        timeout=10,cap=8192)
+    need(value.returncode==0 and value.stderr==b'','actual normal dispatcher manager')
+    return dict(x.split('=',1)for x in value.stdout.decode().splitlines()if'='in x)
+
+def owning_dispatcher(row,policy,state):
+    old=state['lastOutcome'];tx=old.get('dispatcherNonce')
+    if tx is None:tx=row['id'].removeprefix('root-github-robot-control-')
+    need(old.get('controlJobId')==row['id']and re.fullmatch('[0-9a-f]{32}',tx),
+         'protected normal current dispatcher/control join')
+    unit='opemos-root-robot-dispatcher-'+tx+'.service';m=user_dispatcher(unit)
+    ref={'kind':'NORMAL_CONTROL_DISPATCHER_IDENTITY_V1','jobId':row['id'],
+         'nonce':tx,'unit':unit,'queueSourceSHA256':policy['queueSourceSHA256'],
+         'invocation':m.get('InvocationID'),'pid':int(m.get('MainPID','0')),'start':None}
+    need(m.get('LoadState')=='loaded'and re.fullmatch('[0-9a-f]{32}',ref['invocation']or'')and
+         str(QUEUE/'queue.sh')in m.get('ExecStart',''),'current source-bound normal dispatcher')
+    if ref['pid']:
+        actor=proc(ref['pid']);need(actor['uids']==[1000]*4 and unit in actor['cgroup']and
+             unit in m.get('ControlGroup',''),'actual normal dispatcher leader/source group')
+        ref['start']=actor['start']
+    else:
+        need(m.get('ControlGroup')==''and m.get('ActiveState')in('inactive','failed'),
+             'quiescent exact old dispatcher identity')
+    return ref
+
+def dispatcher_closed(ref):
+    m=user_dispatcher(ref['unit'])
+    need(m.get('LoadState')=='not-found'or m.get('InvocationID')==ref['invocation'],
+         'same actual dispatcher invocation, never historical substitution')
+    if not(m.get('MainPID')=='0'and m.get('ControlGroup')==''and
+           m.get('ActiveState')in('inactive','failed')):return False
+    if ref['pid']:
+        try:actor=proc(ref['pid'])
+        except(FileNotFoundError,ProcessLookupError):actor=None
+        need(actor is None or actor['start']!=ref['start'],'original dispatcher leader still exists')
+    for root in Path('/proc').iterdir():
+        if not root.name.isdecimal():continue
+        try:need(ref['unit']not in(root/'cgroup').read_text(),'actual dispatcher group still has an actor')
+        except(FileNotFoundError,ProcessLookupError):continue
+    return True
+
+def wait_terminal(probe_module,policy,job_id,deadline,dispatcher_nonce=None,dispatchers=None):
     while time.monotonic()<deadline:
         row,_,_,_=current_rows(probe_module,policy)
         need(row and row['id']==job_id,'same exact canonical control changed')
-        if row['state'] in ('passed','failed','timed_out','blocked','unknown','output_limit'):
+        if row['state']in('passed','failed','timed_out','blocked','unknown','output_limit'):
             control=probe_module.current_control(row,policy)
-            need(control['terminalLifecycle']=='CLOSED' and
-                 control['reservationRetained'] is False,
+            need(control['terminalLifecycle']=='CLOSED'and control['reservationRetained']is False,
                  'canonical current terminal not CLOSED')
-            m=manager(row['unit'])
-            need(m.get('MainPID')=='0' and m.get('ControlGroup')=='' and
-                 m.get('ActiveState') in ('inactive','failed'),
-                 'current own unit still active after terminal')
-            tx=job_id.removeprefix('root-github-robot-control-')
-            outer='opemos-root-robot-dispatcher-'+(dispatcher_nonce or tx)+'.service'
-            while time.monotonic()<deadline:
-                outer_state=run(USER_ENV+['/usr/bin/systemctl','--user','show',outer,
-                    '-p','LoadState','-p','ActiveState','-p','MainPID','-p','ControlGroup'],timeout=10,cap=8192)
-                need(outer_state.returncode==0 and outer_state.stderr==b'', 'old dispatcher current manager evidence')
-                fields=dict(x.split('=',1) for x in outer_state.stdout.decode().splitlines() if '=' in x)
-                if fields.get('MainPID')=='0' and fields.get('ControlGroup')=='' and fields.get('ActiveState') in ('inactive','failed'):
-                    return row,m
-                time.sleep(2)
-            raise RuntimeError('outer dispatcher did not close before materialization')
+            m=manager(row['unit']);need(m.get('MainPID')=='0'and m.get('ControlGroup')==''and
+                m.get('ActiveState')in('inactive','failed'),'current own unit still active after terminal')
+            if dispatchers is not None:
+                if all(dispatcher_closed(ref)for ref in dispatchers):return row,m
+            else:
+                tx=dispatcher_nonce or job_id.removeprefix('root-github-robot-control-')
+                outer=user_dispatcher('opemos-root-robot-dispatcher-'+tx+'.service')
+                if outer.get('MainPID')=='0'and outer.get('ControlGroup')==''and outer.get('ActiveState')in('inactive','failed'):return row,m
         time.sleep(2)
-    raise RuntimeError('current ordinary canonical terminal timeout; retain nonce')
+    raise RuntimeError('current ordinary canonical/actual dispatcher terminal timeout; retain nonce')
 
-def closed_receipt(row,m):
-    need(row['unit'] and row['state'] in
-         ('passed','failed','timed_out','blocked','unknown','output_limit'),
+def closed_receipt(row,m,dispatchers=None):
+    need(row['unit']and row['state']in('passed','failed','timed_out','blocked','unknown','output_limit'),
          'exact old canonical closed row')
     tx=row['id'].removeprefix('root-github-robot-control-')
-    need(re.fullmatch(r'[0-9a-f]{32}',tx),'exact historical control tx')
-    unit='opemos-root-robot-dispatcher-'+tx+'.service'
-    remote=run(USER_ENV+['/usr/bin/systemctl','--user','show',unit,
-                       '-p','LoadState','-p','ActiveState','-p','MainPID',
-                       '-p','ControlGroup'],timeout=10,cap=8192)
-    need(remote.returncode==0 and remote.stderr==b'',
-         'old dispatcher current manager evidence')
-    d=dict(x.split('=',1) for x in remote.stdout.decode().splitlines() if '=' in x)
-    need(d.get('MainPID')=='0' and d.get('ControlGroup')=='' and
-         d.get('ActiveState') in ('inactive','failed'),
-         'old dispatcher still active')
-    for procroot in Path('/proc').iterdir():
-        if not procroot.name.isdecimal():continue
+    need(re.fullmatch('[0-9a-f]{32}',tx),'exact historical control tx')
+    if dispatchers is None:
+        unit='opemos-root-robot-dispatcher-'+tx+'.service';d=user_dispatcher(unit)
+        need(d.get('MainPID')=='0'and d.get('ControlGroup')==''and
+             d.get('ActiveState')in('inactive','failed'),'old dispatcher still active')
+        units=[unit]
+    else:
+        need(dispatchers and len({r['unit']for r in dispatchers})==len(dispatchers)and
+             all(r['jobId']==row['id']and r['queueSourceSHA256']==dispatchers[0]['queueSourceSHA256']
+                 for r in dispatchers),
+             'same exact predecessor/actual dispatcher set')
+        for ref in dispatchers:need(dispatcher_closed(ref),'actual dispatcher still active')
+        units=[ref['unit']for ref in dispatchers]
+    for root in Path('/proc').iterdir():
+        if not root.name.isdecimal():continue
         try:
-            cgroup=(procroot/'cgroup').read_text()
-            need(row['unit'] not in cgroup and unit not in cgroup,
-                 'old exact control/dispatcher actor still present')
-            argv=(procroot/'cmdline').read_bytes()[:131073]
-            need(len(argv)<=131072 and b'Runner.Listener' not in argv and
-                 (b'/releases/'+tx.encode()+b'/control.py') not in argv,
+            group=(root/'cgroup').read_text()
+            need(row['unit']not in group and not any(u in group for u in units),
+                 'old exact control/actual dispatcher actor still present')
+            argv=(root/'cmdline').read_bytes()[:131073]
+            need(len(argv)<=131072 and b'Runner.Listener'not in argv and
+                 (b'/releases/'+tx.encode()+b'/control.py')not in argv,
                  'old or orphan listener/controller still present')
-        except (FileNotFoundError,ProcessLookupError):continue
-    return {'currentManager':m,'oldDispatcherAbsent':True,
-            'oldListenerAbsent':True,'fullUID0Group':{'absent':True},
-            'oldRowId':row['id'],'oldRowSHA256':sha(enc(row)),
-            'atUnix':int(time.time())}
+        except(FileNotFoundError,ProcessLookupError):continue
+    return {'currentManager':m,'oldDispatcherAbsent':True,'oldListenerAbsent':True,
+            'fullUID0Group':{'absent':True},'oldRowId':row['id'],'oldRowSHA256':sha(enc(row)),
+            'atUnix':int(time.time()),**({'normalDispatchers':dispatchers}if dispatchers is not None else{})}
 
-def materialize(policy,probe_module,nonce,old_row,old_manager):
+def materialize(policy,probe_module,nonce,old_row,old_manager,dispatchers=None):
     if 'REMOTE_TEMPLATE_HEX' in globals():
         template_raw=bytes.fromhex(REMOTE_TEMPLATE_HEX)
     else:
@@ -225,7 +262,9 @@ def materialize(policy,probe_module,nonce,old_row,old_manager):
     installer=types.ModuleType('reviewed_normal_installer')
     installer.__file__=str(CONTROL/'releases'/tx/'install_remote.py')
     exec(compile(installer_raw,installer.__file__,'exec'),installer.__dict__)
-    receipt=closed_receipt(old_row,old_manager)
+    need(dispatchers is None or all(ref['queueSourceSHA256']==policy['queueSourceSHA256']for ref in dispatchers),
+         'actual predecessor dispatcher binds this exact queue source')
+    receipt=closed_receipt(old_row,old_manager,dispatchers)
     data=dict(template)
     need(data.get('kind')=='ROOT_REVIEWED_ROBOT_CONTROL_MATERIALIZATION_V1' and
          data.get('mainCommit')==policy['mainCommit'] and
@@ -521,6 +560,12 @@ def main():
     current=normal_at_use(action,nonce,policy,probe_module.observe(),trigger)
     selected,_,_,_=current_rows(probe_module,policy)
     job_id=current['control']['jobId']
+    dispatchers=None;dispatcher_nonce=None
+    if action in('GRACEFUL_RENEW','RECONCILE_CLOSED'):
+        dispatchers=[owning_dispatcher(selected,policy,trigger.read_state())]
+    elif action=='CREATE'and trigger.read_state()['lastOutcome'].get('dispatcherNonce')is not None:
+        dispatchers=[owning_dispatcher(selected,policy,trigger.read_state())]
+        selected,_=wait_terminal(probe_module,policy,job_id,time.monotonic()+180,dispatchers=dispatchers)
     if action=='REFRESH_HEARTBEAT':
         need('REMOTE_POLICY_RAW' not in globals(),
              'heartbeat effect only in authenticated controller')
@@ -531,27 +576,29 @@ def main():
     else:
         if action=='GRACEFUL_RENEW':
             retire_listener(selected,current,policy)
-            selected,_=wait_terminal(probe_module,policy,job_id,time.monotonic()+180)
+            selected,_=wait_terminal(probe_module,policy,job_id,time.monotonic()+180,dispatchers=dispatchers)
         elif action=='RECONCILE_CLOSED':
             need(selected and selected['id']==job_id and
                  selected['state']=='running' and not current['control']['workerAlive'],
                  'only exact stopped current job may reconcile')
             finalizer=completion_dispatch_nonce(nonce)
             dispatch(finalizer,policy,probe_module)
+            context={'lastOutcome':{'controlJobId':job_id,'dispatcherNonce':finalizer}}
+            dispatchers.append(owning_dispatcher(selected,policy,context))
             selected,_=wait_terminal(probe_module,policy,job_id,time.monotonic()+180,
-                                     dispatcher_nonce=finalizer)
+                                     dispatcher_nonce=finalizer,dispatchers=dispatchers)
         if action in ('CREATE','GRACEFUL_RENEW','RECONCILE_CLOSED'):
             need(selected and selected['state'] in
                  ('passed','failed','timed_out','blocked','unknown','output_limit'),
                  'existing canonical closed predecessor required')
             old_m=manager(selected['unit'])
-            payload,installer=materialize(policy,probe_module,nonce,selected,old_m)
+            payload,installer=materialize(policy,probe_module,nonce,selected,old_m,dispatchers=dispatchers)
             result=install(payload,installer,policy)
             new_job='root-github-robot-control-'+nonce
             need(result['job'].endswith('/robot-control-'+nonce+'/job.json'),
                  'exact installed new job path')
             submit(Path(result['job']),policy,probe_module)
-            dispatch(nonce,policy,probe_module)
+            dispatch(nonce,policy,probe_module);dispatcher_nonce=nonce
         else:
             need(action=='RESUME_PENDING' and selected and
                  selected['id']==job_id and selected['state']=='pending',
@@ -564,7 +611,7 @@ def main():
             need(current['control']['leaseExpiresUnix'] is not None and
                  current['control']['leaseExpiresUnix']>time.time(),
                  'pending control lease expired; never extend or replay it')
-            dispatch(nonce,policy,probe_module)
+            dispatch(nonce,policy,probe_module);dispatcher_nonce=nonce
         if 'REMOTE_POLICY_RAW' in globals():
             phase='SUBMITTED_OR_DISPATCHED_AWAIT_CONTROLLER_GITHUB_READBACK'
         else:
@@ -595,7 +642,8 @@ def main():
          'heartbeatReadbackCurrent':'REMOTE_POLICY_RAW' not in globals() and phase=='RUNNING',
          'newOrExistingJobRoutable':phase=='RUNNING',
          'noDuplicateControllerListenerWorker':True,
-         'jobId':new_job,'phase':phase}
+         'jobId':new_job,'phase':phase,
+         **({'dispatcherNonce':dispatcher_nonce}if dispatcher_nonce is not None else{})}
     print(enc(out).decode(),end='')
 
 if __name__=='__main__':
