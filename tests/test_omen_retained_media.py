@@ -1049,6 +1049,39 @@ except peer.Refused as error:
                     bound={'job_id':row['id'],'unit':row['unit'],'specSHA256':request['specSHA256'],
                            'invocation':request['invocation'],'cpus':request['cpus']}
                     self.assertEqual(current_queue.libvirt_request(row,bound),request)
+                    # SAME normal health selector uses a separate authenticated
+                    # implementation. The original request/observer stays DATA.
+                    original_request=copy.deepcopy(request)
+                    installed_body=Path(installed['queuePrograms'][0]['path']).read_bytes()
+                    old_modules={name:sys.modules.get(name) for name in
+                        ('source_contract','libvirt_peer','queue_assignment')}
+                    with normal_probe.health_queue(installed_body,implementation['sourceContractPin']) as health:
+                        self.assertEqual(health.__file__,implementation['queuePrograms'][0]['path'])
+                        health_request=health.libvirt_request(row,bound)
+                        self.assertEqual(health_request,original_request)
+                        self.assertEqual(health_request['observer'],observer)
+                        backend=health.SystemdBackend(Path('/run'),{})
+                        backend.terminal_implementation_pin=implementation['sourceContractPin']
+                        with self.assertRaisesRegex(Exception,'original subject accepted for actual CLOSED observation only'):
+                            health.observe_queue_libvirt(health_request,
+                                terminal_implementation_pin=backend.terminal_implementation_pin)
+                        if prior_version:
+                            with self.assertRaisesRegex(Exception,'original subject actual CLOSED/current implementation only'):
+                                health.validate_libvirt_observation(captures[-1]['proof'],health_request,
+                                    time.monotonic(),implementation['sourceContractPin'])
+                        missing=copy.deepcopy(health_request);missing.pop('currentControl')
+                        with self.assertRaises(Exception):
+                            health.observe_queue_libvirt(missing,
+                                terminal_implementation_pin=implementation['sourceContractPin'])
+                    self.assertEqual(request,original_request)
+                    self.assertEqual({name:sys.modules.get(name) for name in old_modules},old_modules)
+                    for fault in ('hash','path','definition'):
+                        wrong=copy.deepcopy(implementation['sourceContractPin'])
+                        if fault=='hash':wrong['sha256']='0'*64
+                        elif fault=='path':wrong['path']='/run/../tmp/installed-controller.json'
+                        else:wrong=copy.deepcopy(installed['operationProfilePin'])
+                        with self.assertRaises(Exception):
+                            with normal_probe.health_queue(installed_body,wrong):pass
                     with self.assertRaises(Exception):current_queue.libvirt_request(dict(row,id='foreign-job'),dict(bound,job_id='foreign-job'))
                     # Real ordinary UID->Root adapter reaches the CLOSED-only
                     # predicate and refuses this genuine NOT_PREPARED fixture.

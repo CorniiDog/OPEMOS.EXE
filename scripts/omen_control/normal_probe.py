@@ -5,7 +5,7 @@ No original queue SQLite connection is made. The existing source-verified
 queue validator operates on a bounded private DB/WAL copy only. Every error
 refuses a cycle; an unreachable GitHub API is a typed offline observation.
 """
-import fcntl, hashlib, json, os, re, shutil, sqlite3, stat, subprocess, sys, tempfile, time
+import contextlib, fcntl, hashlib, json, os, re, shutil, sqlite3, stat, subprocess, sys, tempfile, time, types
 from pathlib import Path
 
 ROOT=Path('/var/lib/opemos-robot-control-r1/auto-recovery')
@@ -206,7 +206,80 @@ def current_github(p,route_only=False):
             'actionsQueued':None if route_only else queued['total_count'],'heartbeatCurrent':current,
             'heartbeatNonce':nonce}
 
-def private_queue(source_raw,observer_capture=None,pool_capture=None):
+def health_source(ref):
+    """Authenticate executable bytes before imports, using their real paths."""
+    fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+    need(type(ref) is dict and set(ref)=={'path','bytes','sha256','identity'} and
+         type(ref['identity']) is dict and set(ref['identity'])==set(fields),
+         'complete health implementation pin')
+    path=Path(ref['path']);need(path.is_absolute() and '..' not in path.parts,
+                               'absolute health implementation path')
+    descriptors=[]
+    try:
+        fd=os.open('/',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);descriptors.append(fd)
+        for part in path.parent.parts[1:]:
+            fd=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd);descriptors.append(fd)
+            st=os.fstat(fd)
+            need(st.st_uid==st.st_gid==0 and not st.st_mode&0o022,
+                 'Root nofollow health implementation ancestry')
+        fd=os.open(path.name,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd);descriptors.append(fd)
+        before=os.fstat(fd);identity=lambda s:{k:getattr(s,k) for k in fields}
+        need(stat.S_ISREG(before.st_mode) and before.st_uid==before.st_gid==0 and
+             stat.S_IMODE(before.st_mode)==0o444 and before.st_nlink==1 and
+             0<before.st_size<=1048576,'immutable bounded health implementation')
+        raw=b''
+        while block:=os.read(fd,65536):
+            raw+=block;need(len(raw)<=1048576,'health implementation cap')
+        need(identity(before)==ref['identity']==identity(os.fstat(fd))==identity(os.lstat(path)) and
+             len(raw)==ref['bytes'] and sha(raw)==ref['sha256'],
+             'held/named health implementation full9/bytes/hash')
+        return raw
+    finally:
+        for fd in reversed(descriptors):os.close(fd)
+
+@contextlib.contextmanager
+def health_queue(source_raw,implementation_pin=None):
+    """Installed listener identity and readonly observer implementation differ."""
+    if implementation_pin is None:
+        q=types.ModuleType('authenticated_installed_queue');q.__file__=str(QUEUE/'test_queue.py')
+        exec(compile(source_raw,q.__file__,'exec'),q.__dict__)
+        yield q
+        return
+    definition=json.loads(health_source(implementation_pin))
+    root=Path(implementation_pin['path']).parent
+    need(root.parent==Path('/run') and re.fullmatch('opemos-media-source-[0-9a-f]{32}',root.name) and
+         implementation_pin['path']==str(root/'installed-controller.json'),
+         'existing confined health implementation definition')
+    roles=definition['sourceRoles']
+    names=('libvirt_storage','retained_media','source_contract','libvirt_peer',
+           'libvirt_access','guest_firmware_probe','libvirt_native','queue_assignment')
+    bodies={}
+    for name in names:
+        need(roles[name]['path']==str(root/(name+'.py')),'same health implementation source root')
+        bodies[name]=health_source(roles[name])
+    # The pinned definition is DATA; authenticate every executable in its
+    # existing graph before interpreting any member of that graph.
+    for ref in [*roles.values(),*definition['preparationRoles'].values(),*definition['queuePrograms']]:
+        health_source(ref)
+    missing=object();previous={name:sys.modules.get(name,missing) for name in names}
+    try:
+        for name in names:
+            m=types.ModuleType(name);m.__file__=roles[name]['path'];sys.modules[name]=m
+        for name in names:
+            m=sys.modules[name];exec(compile(bodies[name],m.__file__,'exec'),m.__dict__)
+        shared=sys.modules['source_contract']
+        need(shared.read_definition(implementation_pin)==definition,'same health implementation definition')
+        shared.validate(roles,definition['queuePrograms'],implementation_pin)
+        q=sys.modules['queue_assignment'].load_queue(definition['queuePrograms'][0],
+                                                    implementation_definition=implementation_pin)
+        yield q
+        shared.validate(roles,definition['queuePrograms'],implementation_pin)
+    finally:
+        for name,old in previous.items():
+            if old is missing:sys.modules.pop(name,None)
+            else:sys.modules[name]=old
+
+def private_queue(source_raw,observer_capture=None,pool_capture=None,implementation_pin=None):
     state=QUEUE/'state'; names=['queue.sqlite3','queue.sqlite3-wal',
                                 'queue.sqlite3-shm','queue.sqlite3-journal']
     limits=[MAX_DB,8*1024*1024,1024*1024,8*1024*1024]
@@ -250,14 +323,14 @@ def private_queue(source_raw,observer_capture=None,pool_capture=None):
             config=[dict(x) for x in db.execute('SELECT * FROM config ORDER BY rowid')]
             need(db.total_changes==0 and len(rows)<=4096 and len(bindings)<=4096 and
                  len(config)==1,'bounded canonical private queue relation')
-            q={'__name__':'authenticated_current_queue','__file__':str(QUEUE/'test_queue.py')}
-            exec(compile(source_raw,str(QUEUE/'test_queue.py'),'exec'),q)
-            backend=q['SystemdBackend'](state,json.loads(config[0]['value']))
-            if observer_capture is not None:
-                need(type(observer_capture)is list and len(observer_capture)==0,'fresh bounded readonly observer capture buffer')
-                backend.observer_captures=observer_capture
-            proof=backend.validate_pool(
-                q['pool_rows'](db,db.execute('SELECT * FROM jobs ORDER BY rowid').fetchall()))
+            with health_queue(source_raw,implementation_pin) as q:
+                backend=q.SystemdBackend(state,json.loads(config[0]['value']))
+                if implementation_pin is not None:backend.terminal_implementation_pin=implementation_pin
+                if observer_capture is not None:
+                    need(type(observer_capture)is list and len(observer_capture)==0,'fresh bounded readonly observer capture buffer')
+                    backend.observer_captures=observer_capture
+                proof=backend.validate_pool(
+                    q.pool_rows(db,db.execute('SELECT * FROM jobs ORDER BY rowid').fetchall()))
             need(proof.get('admitted') is True and
                  type(proof.get('unknownReservationsRetained')) is list and
                  proof['unknownReservationsRetained']==[],
@@ -420,7 +493,8 @@ def observe(route_only=False):
     p=root_policy();sources,release,queue_source=local_sources(p)
     github=current_github(p,route_only=route_only)
     pool_capture=[]
-    rows,bindings,config=private_queue(queue_source,pool_capture=pool_capture if route_only else None)
+    rows,bindings,config=private_queue(queue_source,pool_capture=pool_capture if route_only else None,
+        implementation_pin=p.get('healthImplementationDefinitionPin'))
     selected,foreign,unknown=classify_rows(rows,bindings,p)
     relevant=actors();ctl=current_control(selected,p)
     broker_sha=ctl.pop('brokerSHA256',None)
