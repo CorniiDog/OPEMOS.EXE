@@ -213,8 +213,8 @@ def verify_inputs(request,io,boot,include_context=True):
  need(type(parent['candidate'].get('installer'))is dict and parent['candidate']['installer'].get('kind')in('AUTHENTICATED_F9AA_RAW_RECOVERY_USB_FIRSTBOOT','AUTHENTICATED_RETAINED_F9AA_READONLY_USB')and parent['candidate']['installer'].get('noInstallTarget')is True,'this reviewed source branch admits only the retained installer/no target')
  need(parent['issuedUnix']<parent['startBeforeUnix']<=parent['issuedUnix']+300 and parent['wholeDeadlineUnix']<=parent['issuedUnix']+900,'original finite parent scope retained; readonly closed observation does not reissue authority')
  roles=parent['sourceRoles'];need(set(roles)==ROLES,'complete source12 membership');compat=io.implementationPin is not None
- if compat:need(roles['libvirt_peer']['sha256']in(CLOSED_SUBJECT_PEERS|{PEER_SHA:PEER_BYTES})and roles['libvirt_peer']['bytes']==(CLOSED_SUBJECT_PEERS|{PEER_SHA:PEER_BYTES})[roles['libvirt_peer']['sha256']],'exact enrolled original subject peer')
- need((roles['libvirt_peer']['bytes'],roles['libvirt_peer']['sha256'])in(tuple((n,h)for h,n in(CLOSED_SUBJECT_PEERS|{PEER_SHA:PEER_BYTES}).items())if compat else((PEER_BYTES,PEER_SHA),(ORIGINAL_PEER_BYTES,ORIGINAL_PEER_SHA))) and (roles['libvirt_access']['bytes'],roles['libvirt_access']['sha256'])in((ACCESS_BYTES,ACCESS_SHA),(ORIGINAL_ACCESS_BYTES,ORIGINAL_ACCESS_SHA)),'frozen reviewed peer/access implementation')
+ if compat:need(io.currentControl is not None and parent['installedSourceContractPin']==io.definitionPin and roles==io.definition['sourceRoles']and parent['queuePrograms']==io.definition['queuePrograms'],'whole authenticated original V2 source/queue graph remains data')
+ need(compat or (roles['libvirt_peer']['bytes'],roles['libvirt_peer']['sha256'])in((PEER_BYTES,PEER_SHA),(ORIGINAL_PEER_BYTES,ORIGINAL_PEER_SHA))and (roles['libvirt_access']['bytes'],roles['libvirt_access']['sha256'])in((ACCESS_BYTES,ACCESS_SHA),(ORIGINAL_ACCESS_BYTES,ORIGINAL_ACCESS_SHA)),'frozen reviewed peer/access implementation')
  need(request['observer']=={k:roles['libvirt_peer'][k]for k in('path','bytes','sha256')}and request['jobId']==parent['jobId'],'exact original request observer/job')
  source={}
  for name,ref in sorted(roles.items()):
@@ -222,7 +222,7 @@ def verify_inputs(request,io,boot,include_context=True):
   if not compat:compile(source[name],ref['path'],'exec')
  spec=parent_spec(parent,parentRef);bound=spec['libvirt_domain'];need(bound=={'leaseNonce':NONCE,'name':request['domainName'],'observer':request['observer'],'uuid':request['domainUUID']}and hashlib.sha256(canonical(spec).encode()).hexdigest()==request['specSHA256'],'complete final normalized spec/hash/domain identity')
  original=roles['libvirt_peer']['sha256']==ORIGINAL_PEER_SHA
- need((roles['libvirt_access']['sha256'],roles['libvirt_access']['bytes'])==((ORIGINAL_ACCESS_SHA,ORIGINAL_ACCESS_BYTES)if original else(ACCESS_SHA,ACCESS_BYTES)),'one coherent original/current peer/access pair')
+ need(compat or (roles['libvirt_access']['sha256'],roles['libvirt_access']['bytes'])==((ORIGINAL_ACCESS_SHA,ORIGINAL_ACCESS_BYTES)if original else(ACCESS_SHA,ACCESS_BYTES)),'one coherent original/current peer/access pair')
  need(str(Path(roles['libvirt_peer']['path']).parent)==(ORIGINAL_SOURCE_ROOT if original else SOURCE_ROOT),'same declared original/current source namespace')
  need(not original or context is None,'original R107 input supports no-grant qualification only')
  need(original or roles['libvirt_peer']['path']==SOURCE_ROOT+'/libvirt_peer.py','current request requires exact new source namespace')
@@ -254,12 +254,12 @@ def _bind_placement(peer,parent,parent_ref,context,verify_access,implementation_
  if 'operationContext'in candidate:__import__('source_contract').bind_scope(peer,parent)
  peer.need(peer.SOURCE_PLACEMENT_NONCE==nonce and candidate['nonce']==nonce and __import__('queue_assignment').execution_job(candidate,parent)==parent['jobId'],'D23 unused scope only; D22 is consumed')
  peer.need(parent['RootIssued']is True and parent['kind']=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'and parent['bootID']==candidate['hostBoot']and parent_ref['path']==__import__('source_contract').parent_paths(parent)['parentPath'],'existing exact Root parent/boot/source scope')
- __import__('source_contract').validate(roles,parent['queuePrograms'],parent['installedSourceContractPin'])
+ subject=__import__('source_contract').validate(roles,parent['queuePrograms'],parent['installedSourceContractPin'])
  if implementation_definition is not None:
   definition=__import__('source_contract').read_definition(implementation_definition)
   __import__('source_contract').validate(definition['sourceRoles'],definition['queuePrograms'],implementation_definition)
   peer.need(peer.__file__==definition['sourceRoles']['libvirt_peer']['path']and definition['sourceRoles']['libvirt_peer']['sha256']==PEER_SHA,'actual separately authenticated current placement implementation')
-  peer.need(roles['libvirt_peer']['sha256']in(CLOSED_SUBJECT_PEERS|{PEER_SHA:PEER_BYTES})and roles['libvirt_peer']['bytes']==(CLOSED_SUBJECT_PEERS|{PEER_SHA:PEER_BYTES})[roles['libvirt_peer']['sha256']]and (roles['libvirt_access']['sha256'],roles['libvirt_access']['bytes'])==(ACCESS_SHA,ACCESS_BYTES),'enrolled original subject peer/access pair remains data')
+  peer.need(roles==subject['sourceRoles']and parent['queuePrograms']==subject['queuePrograms'],'whole authenticated original subject graph remains data')
  else:peer.need((roles['libvirt_peer']['sha256'],roles['libvirt_peer']['bytes'])in((PEER_SHA,PEER_BYTES),(ORIGINAL_PEER_SHA,ORIGINAL_PEER_BYTES))and (roles['libvirt_access']['sha256'],roles['libvirt_access']['bytes'])in((ACCESS_SHA,ACCESS_BYTES),(ORIGINAL_ACCESS_SHA,ORIGINAL_ACCESS_BYTES)),'frozen exact D23 peer and unchanged access bytes')
  for name,ref in roles.items():peer.need(ref['path']==str(Path(roles['libvirt_peer']['path']).parent/(name+'.py'))and str(Path(roles['libvirt_peer']['path']).parent)in(SOURCE_ROOT,ORIGINAL_SOURCE_ROOT)and ref['identity']['st_uid']==ref['identity']['st_gid']==0 and stat.S_IMODE(ref['identity']['st_mode'])==0o444 and ref['identity']['st_nlink']==1,'same immutable Root source12 namespace')
  ref=parent['sourcePlacementPin'];qr=parent['placementQualificationPin'];root=placement_root(candidate)
@@ -351,7 +351,7 @@ def run(request,io,boot):
  need(snapshot['readLockClosed']is True,'actual runtime read lock closed');need(len(canonical(result).encode())+1<=1048576,'unchanged whole Root1MiB envelope');return result
 
 def main():
- compat=len(sys.argv)==6 and sys.argv[4]=='--implementation-definition-pin-json'and sys.argv[1]in(CLOSED_SUBJECT_PEERS|{PEER_SHA:PEER_BYTES})
+ compat=len(sys.argv)==6 and sys.argv[4]=='--implementation-definition-pin-json'and re.fullmatch('[0-9a-f]{64}',sys.argv[1])is not None
  need(os.getuid()==0 and (compat or len(sys.argv)==4 and sys.argv[1]in(PEER_SHA,ORIGINAL_PEER_SHA))and sys.argv[2]=='--queue-libvirt-request-json','exact existing Root standalone queue argv')
  request=json.loads(sys.argv[3]);before=set(os.listdir('/proc/self/fd'))
  with RootInputs(request.get('currentControl'),json.loads(sys.argv[5])if compat else None)as io:result=run(request,io,Path('/proc/sys/kernel/random/boot_id').read_text().strip())
