@@ -1701,10 +1701,13 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             sourceCommit=policy['mainCommit'],queueSourceSHA256=policy['queueSourceSHA256'],
             leaseExpiresUnix=now+21600,**{k:False for k in actors})
         probe=dict(kind='ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1',boot='modeled-boot',control=control,
+            mainCommit=policy['mainCommit'],protectedMainCommit=policy['mainCommit'],
+            heartbeatCurrent=False,heartbeatNonce=None,
             networkReachable=True,protectedMain=True,queueKnown=True,workerLockFree=True,
             runnerOnline=False,runnerBusy=False,actionsInProgress=0,sourceOwnerBusy=False,
             otherActiveJobs=[],unknownReservations=[],guestActive=False,gpuLeaseActive=False)
-        state=dict(inflight=nonce,lastOutcome={'action':'RECONCILE_CLOSED','nonce':nonce,
+        state=dict(kind='RUNNER21_AUTO_RECOVERY_STATE_V1',renewals=4,epochExpiresUnix=now+7*86400,
+            inflight=nonce,lastOutcome={'action':'RECONCILE_CLOSED','nonce':nonce,
             'controlJobId':prior,'first':'original remote result retained'},
             completedCycles=4,totalCycles=257,failureCount=0,nextAttemptUnix=now)
         old={'id':prior,'state':'passed','finished':now-1}
