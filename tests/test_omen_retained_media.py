@@ -1318,6 +1318,9 @@ except peer.Refused as error:
                     import time
                     started=time.monotonic()
                     actual=queue.observe_queue_libvirt(request,captures=captures)
+                    if not prior_version:
+                        same=queue.observe_queue_libvirt(request,terminal_implementation_pin=installed['sourceContractPin'])
+                        self.assertEqual(same['phase'],'NOT_PREPARED','same authenticated live implementation is not a historical CLOSED-only route')
                     if prior_version:
                         with self.assertRaisesRegex(Exception,'original subject actual CLOSED/current implementation only'):
                             normal_queue.validate_libvirt_observation(captures[-1]['proof'],request,started,implementation['sourceContractPin'])

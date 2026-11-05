@@ -433,7 +433,7 @@ def validate_readonly_fd_custody(value,proof,request):
                 if request['observer']['sha256']!=BORROWED_PEER_INPUT_SHA:
                     require(set(p['epochs'])=={'snapshot','anchored','named','held'}and p['epochs']['snapshot']==r['identity'],'all raw run epochs retained')
                     for e in p['epochs'].values():identity(e);require(all(e[k]==r['identity'][k]for k in('st_dev','st_ino','st_mode','st_uid','st_gid')),'same positively anchored run epoch core')
-                require(path.name=='libvirt_peer.py'and path.parent.parent==Path('/run')and (path.parent==Path(closed_subject_source_root(request))if request['observer']['sha256']in CLOSED_SUBJECT_PEERS else path.parent in(Path(current_source_root()),Path(R109_ORIGINAL_SOURCE_ROOT))if request['observer']['sha256']in(R109_PEER_SHA,R109_ORIGINAL_PEER_SHA)else re.fullmatch('opemos-steamos-source-[0-9a-f]{32}',path.parent.name)is not None) and stat.S_ISDIR(parent['st_mode'])and parent['st_uid']==parent['st_gid']==0 and not parent['st_mode']&0o022,'protected source ancestry')
+                require(path.name=='libvirt_peer.py'and path.parent.parent==Path('/run')and (path.parent==Path(closed_subject_source_root(request))if 'currentControl'in request or request['observer']['sha256']in CLOSED_SUBJECT_PEERS else path.parent in(Path(current_source_root()),Path(R109_ORIGINAL_SOURCE_ROOT))if request['observer']['sha256']in(R109_PEER_SHA,R109_ORIGINAL_PEER_SHA)else re.fullmatch('opemos-steamos-source-[0-9a-f]{32}',path.parent.name)is not None) and stat.S_ISDIR(parent['st_mode'])and parent['st_uid']==parent['st_gid']==0 and not parent['st_mode']&0o022,'protected source ancestry')
     snapshot(value['before'],'readonly-observe-before',True);snapshot(value['after'],'readonly-observe-after',True)
     require(value['before']['atUnix']<=value['after']['atUnix'],'ordered actual FD cuts')
     changes=borrowed_fd_changes(value['before'],value['after']);require(value['changes']==changes==dict(added=[],removed=[],replaced=[]),'all FD lifetime identities stable; only proven shared-run epochs')
@@ -449,14 +449,27 @@ def closed_subject_source_root(request):
     definition=__import__('source_contract').validate(parent['sourceRoles'],parent['queuePrograms'],control['definitionPin'])
     candidate=parent['candidate'];paths=__import__('source_contract').candidate_paths(candidate)
     require(candidate['operationContext']['deploymentId']==definition['deployment']['id']and candidate['lineageNonce']==definition['guestNonce']and control['parentPin']['path']==paths['parentPath'],'same authenticated original deployment/guest/operation namespace')
-    ref=parent['sourceRoles']['libvirt_peer'];sha=request['observer']['sha256']
-    require(sha in(CLOSED_SUBJECT_PEERS|{R109_PEER_SHA:R109_PEER_BYTES})and ref['bytes']==(CLOSED_SUBJECT_PEERS|{R109_PEER_SHA:R109_PEER_BYTES})[sha]and request['observer']=={k:ref[k]for k in('path','bytes','sha256')},'enrolled unchanged original subject observer')
+    ref=parent['sourceRoles']['libvirt_peer']
+    require(0<ref['bytes']<=65536 and request['observer']=={k:ref[k]for k in('path','bytes','sha256')},'whole authenticated unchanged original V2 observer')
+    template=json.loads(json.dumps(parent['normalizedSpecTemplate']));require(template['approval']=='EXACT_PARENT_MINIMAL_PIN'and template['command'][-1]=='EXACT_PARENT_FULL_PIN_JSON','original V2 parent late slots');template['approval']={k:control['parentPin'][k]for k in('path','bytes','sha256')};template['command'][-1]=canonical(control['parentPin'])
+    require(template['id']==request['jobId']and hashlib.sha256(canonical(template).encode()).hexdigest()==request['specSHA256']and template['libvirt_domain']=={'uuid':request['domainUUID'],'name':request['domainName'],'leaseNonce':request['leaseNonce'],'observer':request['observer']},'whole original V2 job/spec/domain binding')
     return definition['deployment']['paths']['sourceRoot']
+
+def closed_subject_implementation(request,implementation_pin):
+    """One classification for structured original DATA and current code."""
+    if 'currentControl'not in request:return request['observer']['sha256']in CLOSED_SUBJECT_PEERS
+    closed_subject_source_root(request)
+    current=__import__('source_contract').current_from_queue(__file__)
+    require(current is not None,'actual current queue V2 implementation')
+    subject=request['currentControl']['definitionPin']
+    require(subject==current[0]or implementation_pin is not None,'explicit current implementation for original V2 subject')
+    if implementation_pin is not None:require(implementation_pin==current[0],'separately pinned actual current V2 implementation')
+    return subject!=current[0]
 
 def validate_libvirt_observation(proof,request,started,implementation_definition_pin=None):
     fields={'kind','request','bootID','producer','sourceSHA256','startedMonotonic','completedMonotonic','phase','scope','leader','intentPin','intentParentPin','lease','domainUUID','persistent','noNIC','fullDomainEnumeration','allOwnedDescriptorsClosed','effects'}
     current_raw=request['observer']['sha256']in(R109_PEER_SHA,R109_ORIGINAL_PEER_SHA)
-    compat=request['observer']['sha256']in CLOSED_SUBJECT_PEERS or implementation_definition_pin is not None and request['observer']['sha256']==R109_PEER_SHA
+    compat=closed_subject_implementation(request,implementation_definition_pin)
     if compat:
         require(implementation_definition_pin is not None,'explicit current implementation for closed subject observation')
         definition=__import__('source_contract').read_definition(implementation_definition_pin)
@@ -870,7 +883,7 @@ def validate_borrowed_run_custody(v):
 def validate_installer_peer_envelope(value, request, upstream_full_pin, implementation_definition_pin=None):
     require(set(value) == {'kind', 'upstreamObserver', 'implementation', 'proof', 'effects'} and value['kind'] == 'ROOT_REVIEWED_LIBVIRT_PEER_INPUT_AND_IMPLEMENTATION' and (value['effects'] == []), 'exact readonly implementation envelope')
     peer = value['upstreamObserver']
-    compat=implementation_definition_pin is not None and type(request.get('currentControl'))is dict or peer['sha256']in CLOSED_SUBJECT_PEERS
+    compat=closed_subject_implementation(request,implementation_definition_pin)
     current=compat or peer['sha256']in(R109_PEER_SHA,R109_ORIGINAL_PEER_SHA)
     old247=peer['sha256']==SOURCE247_PEER_INPUT_SHA
     borrowed=peer['sha256']==BORROWED_PEER_INPUT_SHA
@@ -968,7 +981,7 @@ def observe_queue_libvirt(request,deadline=None,captures=None,terminal_implement
     require(not use_reviewed or observer['bytes']==REVIEWED_PEER_INPUTS[observer['sha256']],'Exact admitted upstream peer bytes')
     use_d22=observer['sha256']==REVIEWED_PEER_D22_SHA256
     require(not use_d22 or observer['bytes']==REVIEWED_PEER_D22_BYTES,'Exact frozen D22 upstream peer bytes')
-    compat=terminal_implementation_pin is not None and type(request.get('currentControl'))is dict or observer['sha256']in CLOSED_SUBJECT_PEERS
+    compat=closed_subject_implementation(request,terminal_implementation_pin)
     current=compat or observer['sha256']in(R109_PEER_SHA,R109_ORIGINAL_PEER_SHA)
     use_installer=observer['sha256']in(INSTALLER_PEER_SHA,SOURCE201_PEER_SHA,BORROWED_PEER_INPUT_SHA,SOURCE247_PEER_INPUT_SHA)
     require(not use_installer or observer['bytes']==(BORROWED_PEER_INPUT_BYTES if observer['sha256']==BORROWED_PEER_INPUT_SHA else SOURCE247_PEER_INPUT_BYTES if observer['sha256']==SOURCE247_PEER_INPUT_SHA else SOURCE201_PEER_BYTES if observer['sha256']==SOURCE201_PEER_SHA else INSTALLER_PEER_BYTES),'exact installer upstream peer')
