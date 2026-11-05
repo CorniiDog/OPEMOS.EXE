@@ -68,9 +68,13 @@ def from_values(value,prior,c,g,queue,parent=None):
  p.need(request['domainName']==c['name']and request['domainUUID']==c['guestUUID']and request['leaseNonce']==c['nonce']and request['observer']==g['observerPin'],'same exact domain/lease/source scope')
  return request,{'ownRowSHA256':hashlib.sha256(p.canon(row)).hexdigest(),'ownBindingSHA256':hashlib.sha256(bindings[row['id']].encode()).hexdigest(),'priorRawSHA256':g['priorHistorySHA256'],'priorCounts':counts,'currentRawSHA256':hashlib.sha256(p.canon(value)).hexdigest(),'currentCounts':{k:len(v)for k,v in value.items()}}
 
-def load_queue(ref,source=None):
- if source is None:p.need(not __import__('pathlib').Path(ref['path']).parent.name.startswith('opemos-media-queue-'),'current media queue requires authenticated definition, no legacy fallback')
+def load_queue(ref,source=None,implementation_definition=None):
+ if source is None and implementation_definition is None:p.need(not __import__('pathlib').Path(ref['path']).parent.name.startswith('opemos-media-queue-'),'current media queue requires authenticated definition, no legacy fallback')
  expected=QUEUE_SHA
+ if implementation_definition is not None:
+  p.need(source is None,'one current implementation definition or candidate subject, never relabel either')
+  shared=__import__('source_contract');definition=shared.read_definition(implementation_definition);shared.validate(definition['sourceRoles'],definition['queuePrograms'],implementation_definition)
+  p.need(ref==definition['queuePrograms'][0],'actual current implementation queue member');expected=ref['sha256']
  if source is not None:
   p.need(ref==source['queuePrograms'][0],'same exact queue member from parent/expectation');expected=__import__('libvirt_preflight').paired_queue_sha(source)
  p.need(ref['sha256']==expected,'exact reviewed paired live-export queue source');raw=held(ref,1048576);q=types.ModuleType('held_live_export_queue_R6');q.__file__=ref['path'];sys.modules[q.__name__]=q

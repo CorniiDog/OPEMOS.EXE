@@ -705,6 +705,12 @@ class RetainedMediaContract(unittest.TestCase):
                 '--recovery-nonce',uuid.uuid4().hex],capture_output=True,timeout=15,preexec_fn=deny_connect)
             self.assertNotEqual(refused_recovery.returncode,0)
             self.assertIn('original failed runtime context data',refused_recovery.stderr.decode())
+            refused_closed=subprocess.run(['/usr/bin/python3','-I','-B',str(source_root/'run_current_media.py'),
+                '--profile-pin-json',json.dumps(installed['operationProfilePin']),'--complete-closed-context-pin-json',json.dumps(invalid_recovery),
+                '--recovery-nonce',uuid.uuid4().hex],capture_output=True,timeout=15,preexec_fn=deny_connect)
+            self.assertNotEqual(refused_closed.returncode,0)
+            self.assertIn('original actual closed runtime context data',refused_closed.stderr.decode())
+
             self.assertFalse(os.path.lexists('/run/opemos-vfio-'+nonce))
             parent_ref=installer.put(public_parent,installer.canon(parent),0o444)
             parent_identity=parent_ref['identity']
@@ -912,11 +918,70 @@ except peer.Refused as error:
                 queue=importlib.util.module_from_spec(queue_spec);sys.modules[queue_spec.name]=queue
                 try:
                     queue_spec.loader.exec_module(queue)
+                    # Actual held /run checks exceed the former4096 transcript
+                    # counter; only the current native witness is authoritative.
+                    baseline=set(os.listdir('/proc/self/fd'))
+                    with adapter.RootInputs(request['currentControl'])as repeated:
+                        for _ in range(4100):repeated.borrowed_run()
+                    self.assertEqual(set(os.listdir('/proc/self/fd')),baseline)
+                    queue.validate_borrowed_run_custody(repeated.runProof)
+                    self.assertLess(len(installer.canon(repeated.runProof)),32768)
+                    for fault in ('inode','mount','namespace','flags','close'):
+                        wrong=copy.deepcopy(repeated.runProof)
+                        if fault=='inode':wrong['lastCheck']['namedPath']['st_ino']+=1
+                        elif fault=='mount':wrong['lastCheck']['mountRow']='foreign'
+                        elif fault=='namespace':wrong['lastCheck']['namespaceAfter']='mnt:[1]'
+                        elif fault=='flags':wrong['lastCheck']['named']['descriptorFlags']=0
+                        else:wrong['scopeDescriptorsClosed']=False
+                        with self.assertRaises(Exception):queue.validate_borrowed_run_custody(wrong)
+                    import queue_assignment
+                    controller_queue=queue_assignment.load_queue(installed['queuePrograms'][0],implementation_definition=installed['sourceContractPin'])
+                    self.assertEqual(controller_queue.__file__,installed['queuePrograms'][0]['path'])
+                    wrong_queue=copy.deepcopy(installed['queuePrograms'][0]);wrong_queue['sha256']='0'*64
+                    with self.assertRaises(Exception):queue_assignment.load_queue(wrong_queue,implementation_definition=installed['sourceContractPin'])
+                    # Real nonzero native child -> same completion FIRST emitter;
+                    # a broken optional stream cannot replace that child failure.
+                    import libvirt_native as child_native,time
+                    python=str(Path('/usr/bin/python3').resolve())
+                    failed=child_native.native_child([python,'-c','import sys;print("native stdout");print("native stderr",file=sys.stderr);sys.exit(7)'],time.time()+5,installer.pin(python))
+                    self.assertEqual(failed['numeric'],7)
+                    first=RuntimeError('genuine native fixture failure');first.nativeChildEvidence=failed
+                    target=io.BytesIO();normal_entry.emit_completion_first(first,target)
+                    captured=json.loads(target.getvalue());self.assertEqual(captured['nativeChildEvidence']['numeric'],7)
+                    self.assertIn('native stderr',captured['nativeChildEvidence']['stderr'])
+                    class BrokenOptionalStream:
+                        def write(self,value):raise OSError('modeled unwritable diagnostic stream')
+                    normal_entry.emit_completion_first(first,BrokenOptionalStream())
+                    self.assertTrue(any('Optional native FIRST emission failed'in x for x in first.__notes__))
                     captures=[]
                     actual=queue.observe_queue_libvirt(request,captures=captures)
                     self.assertEqual(actual['phase'],'NOT_PREPARED')
                     self.assertTrue(captures)
                     self.assertTrue(captures[-1]['proof']['allOwnedDescriptorsClosed'])
+                    # A second immutable controller deployment consumes the
+                    # original request as DATA. No executable/source relabel.
+                    implementation_id=uuid.uuid4().hex
+                    implementation_layout=source_contract.deployment_paths(implementation_id)
+                    implementation_payload=copy.deepcopy(payload)
+                    implementation_payload.update(deploymentId=implementation_id,
+                        queueRoot=implementation_layout['queueRoot'],drainRoot=implementation_layout['drainRoot'])
+                    implementation=installer.install(implementation_payload)
+                    for key in ('sourceRoot','queueRoot','drainRoot'):created.append(Path(implementation_layout[key]))
+                    current_queue=queue_assignment.load_queue(implementation['queuePrograms'][0],
+                        implementation_definition=implementation['sourceContractPin'])
+                    row={'id':request['jobId'],'unit':request['unit'],'spec':queue.canonical(actual_spec),
+                         'cpus':queue.canonical(request['cpus'])}
+                    bound={'job_id':row['id'],'unit':row['unit'],'specSHA256':request['specSHA256'],
+                           'invocation':request['invocation'],'cpus':request['cpus']}
+                    self.assertEqual(current_queue.libvirt_request(row,bound),request)
+                    with self.assertRaises(Exception):current_queue.libvirt_request(dict(row,id='foreign-job'),dict(bound,job_id='foreign-job'))
+                    # Real ordinary UID->Root adapter reaches the CLOSED-only
+                    # predicate and refuses this genuine NOT_PREPARED fixture.
+                    # This is no native CLOSED/VM success; actual external unit,
+                    # domain and lease facts are deliberately absent here.
+                    with self.assertRaisesRegex(Exception,'original subject accepted for actual CLOSED observation only'):
+                        current_queue.observe_queue_libvirt(request,terminal_implementation_pin=implementation['sourceContractPin'])
+
                 finally:sys.modules.pop(queue_spec.name,None)
                 for wrong in (dict(request,specSHA256='0'*64),dict(request,jobId='foreign-job'),
                               dict(request,observer=dict(observer,sha256=adapter.ORIGINAL_PEER_SHA))):

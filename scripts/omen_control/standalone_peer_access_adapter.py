@@ -5,11 +5,12 @@ Queue owner must independently adopt exact bytes and consumer contract.
 import contextlib,copy,hashlib,json,os,re,stat,sys,time,traceback,types
 from pathlib import Path
 ORIGINAL_SOURCE_ROOT='/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r107b'
-PEER_SHA='224aa4a8b06999e318350267195cc681a095aaf2a2b5e407552f8811673a8614'
+PEER_SHA='e6703942b7f471b1535e0b1f8e716f9a265ca448051467d91803392eb0a3819a'
 F=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns');CORE=F[:6]
 NONCE='cd9ef0826364409da287f6f3e3830c95';CONTRACT='R109_CURRENT_NORMAL_QUEUE_FULL_PHASE_READONLY'
-PEER_BYTES=61400
+PEER_BYTES=63527
 ORIGINAL_PEER_SHA='7e1663f8351247b9643b7c14419119449b0bd0722a46b80ae0f8ea34a9f9816a';ORIGINAL_PEER_BYTES=64727
+CLOSED_SUBJECT_PEERS={'9e5516fcdf57624d786a91741066998605045fe145ce60fbe8bde68f5b494bdd':61355,'224aa4a8b06999e318350267195cc681a095aaf2a2b5e407552f8811673a8614':61400}
 SOURCE_ROOT=None
 SOURCE_CONTRACT_SHA='4cb604515bbb577e6448283a7b785249929c73216e890a06ca5c531e25bd6e5d'
 CURRENT_DEFINITION=None
@@ -35,20 +36,21 @@ def decode(raw):
   for key,item in pairs:need(key not in value,'duplicate protected JSON key');value[key]=item
   return value
  value=json.loads(raw,object_pairs_hook=unique);need(canonical(value).encode()==raw,'whole canonical protected metadata, no dropped/trailing fields');return value
-def record_run_epoch(proof,event):
- raw=(lambda x:canonical(x).encode())(event);last=proof['events'][-1]if proof['events']else None
- if last is not None and last['event']==event:last['count']+=1
- else:proof['events'].append({'event':event,'count':1})
- proof['eventCount']+=1;proof['eventChainSHA256']=hashlib.sha256(bytes.fromhex(proof['eventChainSHA256'])+raw).hexdigest();need(0<proof['eventCount']<=4096 and len(proof['events'])<=256 and len((lambda x:canonical(x).encode())(proof))<=262144,'bounded lossless borrowed run epoch runs')
+def record_run_check(proof,event):
+ # All native FD/name/core/mount/namespace predicates run before this call.
+ # Keep only the current witness; diagnostic transcript growth is no authority.
+ proof['lastCheck']=event
+
 class RootInputs:
  """One readonly bounded held-nofollow /run graph; owns and closes all FDs."""
- def __init__(self,control=None):self.fds=[];self.dirs={};self.currentControl=control
+ def __init__(self,control=None,implementation=None):self.fds=[];self.dirs={};self.currentControl=control;self.implementationPin=implementation;self.implementationRoot=None
  def __enter__(self):
   self.root=os.open('/',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);self.fds.append(self.root)
   try:
    self.run=os.open('run',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=self.root);self.fds.append(self.run)
-   self.dirs={'/':(self.root,ident(os.fstat(self.root)),False),'/run':(self.run,ident(os.fstat(self.run)),False)};self.runBirth=self.run_row(self.run);rows=[x for x in Path('/proc/self/mountinfo').read_text().splitlines()if x.split()[0]==str(self.runBirth['mountID'])];need(len(rows)==1,'exact initial run mount');self.runProof={'kind':'ROOT_BORROWED_RUN_ANCESTRY_R257','path':'/run','birth':self.runBirth,'namespace':os.readlink('/proc/self/ns/mnt'),'mountRow':rows[0],'events':[],'eventCount':0,'eventChainSHA256':'0'*64,'scopeDescriptorsClosed':False,'closeOutcomes':[]};self.check()
+   self.dirs={'/':(self.root,ident(os.fstat(self.root)),False),'/run':(self.run,ident(os.fstat(self.run)),False)};self.runBirth=self.run_row(self.run);rows=[x for x in Path('/proc/self/mountinfo').read_text().splitlines()if x.split()[0]==str(self.runBirth['mountID'])];need(len(rows)==1,'exact initial run mount');self.runProof={'kind':'ROOT_BORROWED_RUN_CURRENT_CUSTODY_V1','path':'/run','birth':self.runBirth,'namespace':os.readlink('/proc/self/ns/mnt'),'mountRow':rows[0],'lastCheck':None,'scopeDescriptorsClosed':False,'closeOutcomes':[]};self.check()
    if self.currentControl is not None:self.bind_definition(self.currentControl)
+   if self.implementationPin is not None:self.bind_implementation(self.implementationPin)
    return self
   except BaseException:
    self.__exit__(*sys.exc_info());raise
@@ -81,7 +83,7 @@ class RootInputs:
    if errors:
     if primary is not None:primary.ownedRootInputClosureErrors=errors
     else:raise RuntimeError(canonical({'ownedRootInputClosureErrors':errors}))
-  event['temporaryDescriptorsClosed']=True;record_run_epoch(self.runProof,event);return event
+  event['temporaryDescriptorsClosed']=True;record_run_check(self.runProof,event);return event
  def check(self):
   for path,(fd,a,exclusive)in self.dirs.items():
    if path=='/run':self.borrowed_run();continue
@@ -89,7 +91,7 @@ class RootInputs:
    if not(x==named and all(x[k]==a[k]for k in(CORE if not exclusive else F))):
     error=RuntimeError('held/named declared directory identity/epoch');error.evidence={'path':path,'role':'exclusive'if exclusive else'shared-ancestor','birth':a,'held':x,'named':named,'monotonic':time.monotonic()};raise error
    need(stat.S_ISDIR(x['st_mode'])and x['st_uid']==x['st_gid']==0,'Root directory nofollow custody')
-   need(stat.S_IMODE(x['st_mode'])in((0o755,0o777)if path=='/'else(0o755,)if path=='/run'else(0o555,)if path==SOURCE_ROOT else(0o755,)if path.startswith('/run/opemos-steamos-source-')else(0o700,)),'exact role-specific directory mode')
+   need(stat.S_IMODE(x['st_mode'])in((0o755,0o777)if path=='/'else(0o755,)if path=='/run'else(0o555,)if path in(SOURCE_ROOT,self.implementationRoot) else(0o755,)if path.startswith('/run/opemos-steamos-source-')else(0o700,)),'exact role-specific directory mode')
  def bind_definition(self,control):
   global SOURCE_ROOT,NONCE,CURRENT_DEFINITION
   need(type(control)is dict and set(control)=={'definitionPin','parentPin'},'closed protected current control input')
@@ -102,8 +104,17 @@ class RootInputs:
   value=module.read_definition(ref);need(value['sourceRoles']['source_contract']==helper,'same held definition implementation pin')
   need(value['deployment']['paths']['sourceRoot']==SOURCE_ROOT and re.fullmatch('[0-9a-f]{32}',value['guestNonce']),'typed protected deployment/guest lineage')
   self.definition=value;self.definitionPin=ref;NONCE=value['guestNonce'];CURRENT_DEFINITION=module
+ def bind_implementation(self,ref):
+  need(self.currentControl is not None and CURRENT_DEFINITION is not None,'original authenticated subject definition first')
+  root=Path(ref['path']).parent;need(ref['path']==str(root/'installed-controller.json')and root.parent==Path('/run')and re.fullmatch('opemos-media-source-[0-9a-f]{32}',root.name),'separate normal immutable implementation definition')
+  self.implementationRoot=str(root)
+  raw,actual=self.read_path(ref['path'],0o444,1048576);need(actual==ref,'held separate implementation definition')
+  value=CURRENT_DEFINITION.read_definition(ref);CURRENT_DEFINITION.validate(value['sourceRoles'],value['queuePrograms'],ref)
+  need(value['deployment']['paths']['sourceRoot']==str(root),'same typed implementation root')
+  helper=value['sourceRoles']['source_contract'];need(helper['sha256']==SOURCE_CONTRACT_SHA and self.read(helper,0o444,65536),'unchanged reviewed shared definition implementation')
+  self.implementationDefinition=value
  def directory(self,path):
-  allowed={SOURCE_ROOT,ORIGINAL_SOURCE_ROOT,getattr(self,'runtimeRoot','/run/opemos-libvirt-runtime-'+NONCE),getattr(self,'placementRoot','/run/opemos-steamos-placement-'+NONCE)}
+  allowed={SOURCE_ROOT,ORIGINAL_SOURCE_ROOT,self.implementationRoot,getattr(self,'runtimeRoot','/run/opemos-libvirt-runtime-'+NONCE),getattr(self,'placementRoot','/run/opemos-steamos-placement-'+NONCE)}
   need(path in allowed,'declared finite source/context/placement root only')
   if path not in self.dirs:
    fd=os.open(Path(path).name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=self.run);self.fds.append(fd);self.dirs[path]=(fd,ident(os.fstat(fd)),True)
@@ -201,8 +212,9 @@ def verify_inputs(request,io,boot,include_context=True):
  if context is not None:need(context['parentPin']==parentRef and context['kind']=='ROOT_LIBVIRT_R4_RUNTIME_CONTEXT'and context['runtimeAuthorized']is True and context.get('MODEL_ONLY')is False and context['candidate']==parent['candidate']and context['sourceRoles']==parent['sourceRoles'],'Root context/candidate/source12 equality; no model promotion')
  need(type(parent['candidate'].get('installer'))is dict and parent['candidate']['installer'].get('kind')in('AUTHENTICATED_F9AA_RAW_RECOVERY_USB_FIRSTBOOT','AUTHENTICATED_RETAINED_F9AA_READONLY_USB')and parent['candidate']['installer'].get('noInstallTarget')is True,'this reviewed source branch admits only the retained installer/no target')
  need(parent['issuedUnix']<parent['startBeforeUnix']<=parent['issuedUnix']+300 and parent['wholeDeadlineUnix']<=parent['issuedUnix']+900,'original finite parent scope retained; readonly closed observation does not reissue authority')
- roles=parent['sourceRoles'];need(set(roles)==ROLES,'complete source12 membership')
- need((roles['libvirt_peer']['bytes'],roles['libvirt_peer']['sha256'])in((PEER_BYTES,PEER_SHA),(ORIGINAL_PEER_BYTES,ORIGINAL_PEER_SHA)) and (roles['libvirt_access']['bytes'],roles['libvirt_access']['sha256'])in((ACCESS_BYTES,ACCESS_SHA),(ORIGINAL_ACCESS_BYTES,ORIGINAL_ACCESS_SHA)),'frozen reviewed peer/access implementation')
+ roles=parent['sourceRoles'];need(set(roles)==ROLES,'complete source12 membership');compat=io.implementationPin is not None
+ if compat:need(roles['libvirt_peer']['sha256']in(CLOSED_SUBJECT_PEERS|{PEER_SHA:PEER_BYTES})and roles['libvirt_peer']['bytes']==(CLOSED_SUBJECT_PEERS|{PEER_SHA:PEER_BYTES})[roles['libvirt_peer']['sha256']],'exact enrolled original subject peer')
+ need((roles['libvirt_peer']['bytes'],roles['libvirt_peer']['sha256'])in(tuple((n,h)for h,n in(CLOSED_SUBJECT_PEERS|{PEER_SHA:PEER_BYTES}).items())if compat else((PEER_BYTES,PEER_SHA),(ORIGINAL_PEER_BYTES,ORIGINAL_PEER_SHA))) and (roles['libvirt_access']['bytes'],roles['libvirt_access']['sha256'])in((ACCESS_BYTES,ACCESS_SHA),(ORIGINAL_ACCESS_BYTES,ORIGINAL_ACCESS_SHA)),'frozen reviewed peer/access implementation')
  need(request['observer']=={k:roles['libvirt_peer'][k]for k in('path','bytes','sha256')}and request['jobId']==parent['jobId'],'exact original request observer/job')
  source={}
  for name,ref in sorted(roles.items()):
@@ -213,11 +225,12 @@ def verify_inputs(request,io,boot,include_context=True):
  need(str(Path(roles['libvirt_peer']['path']).parent)==(ORIGINAL_SOURCE_ROOT if original else SOURCE_ROOT),'same declared original/current source namespace')
  need(not original or context is None,'original R107 input supports no-grant qualification only')
  need(original or roles['libvirt_peer']['path']==SOURCE_ROOT+'/libvirt_peer.py','current request requires exact new source namespace')
- implRaw,implRef=io.read_path(SOURCE_ROOT+'/libvirt_peer.py',0o444,65536)
+ implementationRoot=io.implementationRoot if compat else SOURCE_ROOT
+ implRaw,implRef=io.read_path(implementationRoot+'/libvirt_peer.py',0o444,65536)
  need(implRef['sha256']==PEER_SHA and implRef['bytes']==PEER_BYTES,'separate exact current peer implementation')
- accessRaw,accessRef=io.read_path(SOURCE_ROOT+'/libvirt_access.py',0o444,65536)
+ accessRaw,accessRef=io.read_path(implementationRoot+'/libvirt_access.py',0o444,65536)
  need(accessRef['sha256']==ACCESS_SHA and accessRef['bytes']==ACCESS_BYTES,'separate exact current access implementation')
- need(original or roles['libvirt_access']==accessRef,'new parent access is exact current implementation')
+ need(compat or original or roles['libvirt_access']==accessRef,'new parent access is exact current implementation')
  assignmentRef=grantRef=None;assignment=grant=None
  if context is not None:
   assignmentRef=context['assignmentPin'];need(assignmentRef['path']==getattr(io,'runtimeRoot','/run/opemos-libvirt-runtime-'+NONCE)+'/assignment.json'and context['grantPin']['path']==getattr(io,'runtimeRoot','/run/opemos-libvirt-runtime-'+NONCE)+'/child-grant.json','two exact same-scope child control leaves');assignment=decode(io.read(assignmentRef,0o400,1048576));grantRef=context['grantPin'];grant=decode(io.read(grantRef,0o400,1048576))
@@ -298,10 +311,11 @@ def run(request,io,boot):
    v=verify_inputs(request,io,boot);need(v['parentPin']==v0['parentPin']and v['source']==v0['source'],'unchanged immutable sources across runtime SH acquisition')
    with contextlib.ExitStack()as custody:
     heldPlacement=custody.enter_context(io.hold_placement(v['parent']['sourcePlacementPin']));heldQualification=custody.enter_context(io.hold_placement(v['parent']['placementQualificationPin']))
-    peer.validate_request(request);binding=bind_observer_placement(peer,v['parent'],v['parentPin'],v['context']);need(binding['placementPin']==heldPlacement['ref']and binding['qualificationPin']==heldQualification['ref'],'binding consumes the two retained exact placement pins')
+    if io.implementationPin is None:peer.validate_request(request)
+    binding=bind_observer_placement(peer,v['parent'],v['parentPin'],v['context']);need(binding['placementPin']==heldPlacement['ref']and binding['qualificationPin']==heldQualification['ref'],'binding consumes the two retained exact placement pins')
     parent=v['parent'];candidate=parent['candidate']
     def custody(phase,intent,reg,state,files):return access.verify_phase(candidate,parent['preparedAccessPin'],parent['preparedDiskPins'],phase,intent,reg,state,files)
-    proof=peer.observe(request,custody=custody)
+    proof=peer.observe_closed_subject(request,io.implementationPin,custody=custody)if io.implementationPin is not None else peer.observe(request,custody=custody)
     need(not v['originalInputOnly']or proof['phase']=='NOT_PREPARED','old R107 request cannot adopt a current runtime phase')
     need(proof.get('accessCustody',{}).get('phase')==proof['phase'],'actual locked phase access custody required')
     proof['accessCustody']={'kind':'ROOT_PHASE_PREPARED_ACCESS_CUSTODY_R1','phase':proof['phase'],'nonce':NONCE,'bootID':boot,'requestSHA256':hashlib.sha256(peer.canon(request)).hexdigest(),'parentPin':v['parentPin'],'preparedAccessPin':parent['preparedAccessPin'],'preparedDiskPins':parent['preparedDiskPins'],'sourceGraphSHA256':binding['sourceGraphSHA256'],'placementPin':binding['placementPin'],'qualificationPin':binding['qualificationPin'],'stage':access.prepared_lineage(candidate,parent['preparedAccessPin'],parent['preparedDiskPins']),'stageRawBase64':__import__('base64').b64encode(__import__('libvirt_native').held(parent['preparedAccessPin'],1048576)).decode('ascii'),'data':proof['accessCustody']}
@@ -318,14 +332,16 @@ def run(request,io,boot):
      else:raise RuntimeError('context absence changed during exact NOT_PREPARED observation; no retry')
     heldPlacement['recheck']();heldQualification['recheck']()
     result={'kind':'ROOT_REVIEWED_LIBVIRT_PEER_INPUT_AND_IMPLEMENTATION','upstreamObserver':v['parent']['sourceRoles']['libvirt_peer'],'implementation':{'actualAccessImplementation':v['implementationAccessPin'],'actualPeerImplementation':v['implementationPeerPin'],'contract':CONTRACT,'peer':v['parent']['sourceRoles']['libvirt_peer'],'access':v['parent']['sourceRoles']['libvirt_access'],'sourceRoles':v['parent']['sourceRoles'],'parent':v['parentPin'],'context':v['contextPin'],'assignment':v['assignmentPin'],'grant':v['grantPin'],'placementBinding':binding,'runtimePublication':snapshot,'borrowedRunCustody':io.runProof},'proof':proof,'effects':[]}
+    if io.implementationPin is not None:result['implementation'].update(contract='CURRENT_NORMAL_CLOSED_SUBJECT_V1',implementationDefinitionPin=io.implementationPin)
     need(io.read(v['implementationPeerPin'],0o444,65536)==v['implementationPeerRaw']and io.read(v['implementationAccessPin'],0o444,65536)==v['implementationAccessRaw'],'held current pair reread after full observation')
     io.check()
  need(snapshot['readLockClosed']is True,'actual runtime read lock closed');need(len(canonical(result).encode())+1<=1048576,'unchanged whole Root1MiB envelope');return result
 
 def main():
- need(os.getuid()==0 and len(sys.argv)==4 and sys.argv[1]in(PEER_SHA,ORIGINAL_PEER_SHA) and sys.argv[2]=='--queue-libvirt-request-json','exact existing Root standalone queue argv')
+ compat=len(sys.argv)==6 and sys.argv[4]=='--implementation-definition-pin-json'and sys.argv[1]in(CLOSED_SUBJECT_PEERS|{PEER_SHA:PEER_BYTES})
+ need(os.getuid()==0 and (compat or len(sys.argv)==4 and sys.argv[1]in(PEER_SHA,ORIGINAL_PEER_SHA))and sys.argv[2]=='--queue-libvirt-request-json','exact existing Root standalone queue argv')
  request=json.loads(sys.argv[3]);before=set(os.listdir('/proc/self/fd'))
- with RootInputs(request.get('currentControl'))as io:result=run(request,io,Path('/proc/sys/kernel/random/boot_id').read_text().strip())
+ with RootInputs(request.get('currentControl'),json.loads(sys.argv[5])if compat else None)as io:result=run(request,io,Path('/proc/sys/kernel/random/boot_id').read_text().strip())
  need(before==set(os.listdir('/proc/self/fd')),'adapter full owned FD closure');print(canonical(result),flush=True)
 if __name__=='__main__':
  try:main()

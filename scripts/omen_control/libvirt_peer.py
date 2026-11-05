@@ -27,11 +27,11 @@ def process(pid):
   v={'pid':pid,'start':int(parts[19]),'uid':int(ids[0].split()[1]),'tgid':int(tg[0].split()[1]),'ppid':int(parts[1]),'cgroup':cg[3:],'argv':[os.fsdecode(x)for x in argv]};need(read('stat').decode().rsplit(')',1)[1].split()[19]==str(v['start'])and Path(p).is_dir(),'original proc start remained present')
   return v
  finally:os.close(fd)
-def record_run_epoch(proof,event):
- raw=canon(event);last=proof['events'][-1]if proof['events']else None
- if last is not None and last['event']==event:last['count']+=1
- else:proof['events'].append({'event':event,'count':1})
- proof['eventCount']+=1;proof['eventChainSHA256']=hashlib.sha256(bytes.fromhex(proof['eventChainSHA256'])+raw).hexdigest();need(0<proof['eventCount']<=4096 and len(proof['events'])<=256 and len(canon(proof))<=262144,'bounded lossless borrowed run epoch runs')
+def record_run_check(proof,event):
+ # All native FD/name/core/mount/namespace predicates run before this call.
+ # Keep only the current witness; diagnostic transcript growth is no authority.
+ proof['lastCheck']=event
+
 class RootFiles:
  """Held nofollow ancestry; real FD/name/core and private full9 custody."""
  def __init__(self,path):self.path=Path(path);self.fds=[];self.chain=[];self.fd=None
@@ -42,7 +42,7 @@ class RootFiles:
     fd=os.open(n,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd);self.fds.append(fd);path=self.chain[-1][0]/n;st=os.fstat(fd)
     need(st.st_uid==st.st_gid==0 and stat.S_ISDIR(st.st_mode),'Root ancestor type/owner');self.chain.append((path,fd,core(st)))
     if path==Path('/run'):
-     self.runFD=fd;self.runBirth=self.run_row(fd);rows=[x for x in Path('/proc/self/mountinfo').read_text().splitlines()if x.split()[0]==str(self.runBirth['mountID'])];need(len(rows)==1,'exact initial kernel run mount');self.runProof={'kind':'ROOT_BORROWED_RUN_ANCESTRY_R257','path':'/run','birth':self.runBirth,'namespace':os.readlink('/proc/self/ns/mnt'),'mountRow':rows[0],'events':[],'eventCount':0,'eventChainSHA256':'0'*64,'scopeDescriptorsClosed':False,'closeOutcomes':[]}
+     self.runFD=fd;self.runBirth=self.run_row(fd);rows=[x for x in Path('/proc/self/mountinfo').read_text().splitlines()if x.split()[0]==str(self.runBirth['mountID'])];need(len(rows)==1,'exact initial kernel run mount');self.runProof={'kind':'ROOT_BORROWED_RUN_CURRENT_CUSTODY_V1','path':'/run','birth':self.runBirth,'namespace':os.readlink('/proc/self/ns/mnt'),'mountRow':rows[0],'lastCheck':None,'scopeDescriptorsClosed':False,'closeOutcomes':[]}
    self.fd=fd;st=os.fstat(fd);need(stat.S_IMODE(st.st_mode)==0o700,'private Root0700');self.private=ident(st);self.check();return self
   except BaseException:self.__exit__(*sys.exc_info());raise
  def run_row(self,fd):
@@ -75,7 +75,7 @@ class RootFiles:
      if primary is not None:primary.ownedRootInputClosureErrors=errors
      else:
       failure=Refused(canon({'ownedRootInputClosureErrors':errors}).decode());failure.ownedRootInputClosureErrors=errors;failure.evidence={'kind':'BORROWED_RUN_CLOSE_REFUSAL_R258','birth':initial,'event':event,'ownedRootInputClosureErrors':errors};raise failure
-   event['temporaryDescriptorsClosed']=True;record_run_epoch(self.runProof,event);return event
+   event['temporaryDescriptorsClosed']=True;record_run_check(self.runProof,event);return event
  def check(self):
   for p,fd,initial in self.chain:
    if p==Path('/run'):self.borrowed_run();continue
@@ -157,8 +157,36 @@ def verify_historical_lease_set(expected,rows,binding_pairs,queue,boot):
   value=historical_lease_provenance(str(Path(prior['headPin']['path']).parent),rows,binding_pairs,queue,boot);need(value==prior,'entire locked historical backend provenance unchanged')
   observed.append(value)
  return observed
+_CLOSED_SUBJECT=None
+
+def observe_closed_subject(request,definition_ref,custody=None):
+ """Current readonly implementation; immutable original request stays DATA."""
+ global _CLOSED_SUBJECT
+ import source_contract
+ from libvirt_native import held
+ need(os.getuid()==0 and _CLOSED_SUBJECT is None,'one Root readonly original subject')
+ definition=source_contract.read_definition(definition_ref);source_contract.validate(definition['sourceRoles'],definition['queuePrograms'],definition_ref)
+ need(definition['sourceRoles']['libvirt_peer']['path']==str(Path(__file__).absolute()),'actual separate readonly implementation identity')
+ control=request['currentControl'];ref=control['parentPin'];raw=held(ref,1048576);parent=json.loads(raw)
+ need(parent['installedSourceContractPin']==control['definitionPin']and parent['jobId']==request['jobId']and parent['candidate']['jobId']==request['jobId'],'same protected original readonly subject')
+ source_contract.validate(parent['sourceRoles'],parent['queuePrograms'],control['definitionPin'])
+ _CLOSED_SUBJECT={'pid':os.getpid(),'request':request,'parent':parent,'parentRef':ref}
+ try:
+  proof=observe(request,custody=custody);need(proof['phase']=='CLOSED'and proof['lease']['closed']is True and proof['lease']['restored']is True,'original subject accepted for actual CLOSED observation only')
+  need(held(ref,1048576)==raw,'original readonly subject remains exact');return proof
+ finally:_CLOSED_SUBJECT=None
+
+def bind_request_source(r):
+ import source_contract
+ if _CLOSED_SUBJECT is None:return source_contract.bind_request(sys.modules[__name__],r)
+ value=_CLOSED_SUBJECT;parent=value['parent'];control=r.get('currentControl')
+ need(value['pid']==os.getpid()and r==value['request']and control=={'definitionPin':parent['installedSourceContractPin'],'parentPin':value['parentRef']},'same Root readonly subject context')
+ _,paths=source_contract.bind_scope(sys.modules[__name__],parent)
+ need(value['parentRef']['path']==paths['parentPath']and parent['contextPath']==paths['runtimeRoot']+'/context.json'and parent['candidate']['nonce']==r['leaseNonce']and r['observer']=={k:parent['sourceRoles']['libvirt_peer'][k]for k in('path','bytes','sha256')},'original request paths/observer/scope remain original, never relabeled')
+ return parent
+
 def validate_request(r):
- fields={'jobId','jobToken','unit','invocation','specSHA256','domainUUID','domainName','leaseNonce','cpus','controllerMemory','domainMemory','reservationMemory','vmSlice','partition','gpuGroup','observer'};need(type(r)is dict and set(r)in(fields,fields|{'currentControl'}),'exact upstream request schema');__import__('source_contract').bind_request(sys.modules[__name__],r)
+ fields={'jobId','jobToken','unit','invocation','specSHA256','domainUUID','domainName','leaseNonce','cpus','controllerMemory','domainMemory','reservationMemory','vmSlice','partition','gpuGroup','observer'};need(type(r)is dict and set(r)in(fields,fields|{'currentControl'}),'exact upstream request schema');bind_request_source(r)
  t=r['jobToken'];need(re.fullmatch('[0-9a-f]{32}',t)is not None and r['unit'].endswith('-'+t+'.service'),'exact queue token/unit')
  need(re.fullmatch('[0-9a-f]{32}',r['invocation'])is not None and re.fullmatch('[0-9a-f]{64}',r['specSHA256'])is not None,'queue immutable invocation/spec');need(r['vmSlice']=='opemos-vm-pool-libvirt'+t+'.slice' and r['partition']=='/opemos/vm/pool/libvirt'+t,'derived per-job partition')
  need(r['controllerMemory']==2*1024**3 and r['domainMemory']==8*1024**3 and r['reservationMemory']==10*1024**3,'one10GiB split2+8');need(type(r['cpus'])is list and len(r['cpus'])==len(set(r['cpus']))==4 and all(type(n)is int and 0<=n<10 for n in r['cpus']),'same exact assigned four CPUs')
@@ -177,7 +205,7 @@ def read_lease(files,request,boot):
  need(s['nonce']==request['leaseNonce']and s['jobID']==request['jobId']and s['currentBoot']==boot and s['requestSHA256']==hashlib.sha256(canon(request)).hexdigest(),'same request/job/boot lease');need(type(s['closed'])is bool and type(s['restored'])is bool and type(s['changed'])is list and s['backend']=='libvirt','typed libvirt lease')
  return s,{'group':GROUP,'nonce':s['nonce'],'jobId':s['jobID'],'headPin':hp,'statePin':sp,'closed':s['closed'],'restored':s['restored'],'currentBoot':boot},(raw,b)
 def run_anchor(n,r,o):
- p=Path(o['path']);current=p==Path(__file__).absolute();need(p.name=='libvirt_peer.py'and p.parent.parent==Path('/run')and(current or p.parent in (Path('/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r107b'),Path('/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r118'))),'run ancestry');fds=[];ns=os.readlink('/proc/self/ns/mnt')
+ p=Path(o['path']);current=p==Path(__file__).absolute()or _CLOSED_SUBJECT is not None and _CLOSED_SUBJECT['pid']==os.getpid()and o==_CLOSED_SUBJECT['request']['observer']and str(p)==_CLOSED_SUBJECT['parent']['sourceRoles']['libvirt_peer']['path'];need(p.name=='libvirt_peer.py'and p.parent.parent==Path('/run')and(current or p.parent in (Path('/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r107b'),Path('/run/opemos-steamos-source-cd9ef0826364409da287f6f3e3830c95-r118'))),'run ancestry');fds=[];ns=os.readlink('/proc/self/ns/mnt')
  try:
   if current:
    refpath=p.parent/'installed-controller.json';f=os.open(refpath,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC);fds.append(f);st=ident(os.fstat(f));need(stat.S_ISREG(st['st_mode'])and st['st_uid']==st['st_gid']==0 and stat.S_IMODE(st['st_mode'])==0o444 and st['st_nlink']==1,'immutable installed source namespace');raw=b''

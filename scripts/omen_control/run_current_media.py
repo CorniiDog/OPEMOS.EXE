@@ -455,7 +455,7 @@ class Run:
         self.loop = None
 
 
-def finish_failed_queue(parent_ref):
+def finish_failed_queue(parent_ref,current_profile):
     """Original owning queue APIs, one failed target; never dispatch other work."""
     import fcntl
     p.need(os.getuid()==os.geteuid()==1000,'ordinary queue owner only')
@@ -463,7 +463,10 @@ def finish_failed_queue(parent_ref):
     contract=source_contract.validate(parent['sourceRoles'],parent['queuePrograms'],parent['installedSourceContractPin'])
     root=Path(parent['queueStateRoot']);p.need(root.is_dir()and not root.is_symlink()and root.stat().st_uid==1000,'existing owned original queue only')
     dbpath=root/'queue.sqlite3';st=dbpath.lstat();p.need(stat.S_ISREG(st.st_mode)and st.st_uid==1000 and st.st_nlink==1,'existing original queue DB; never initialize')
-    queue=load_current_queue(parent['candidate'],{'sourceRoles':parent['sourceRoles'],'queuePrograms':parent['queuePrograms'],'installedSourceContractPin':parent['installedSourceContractPin']})
+    # Controller implementation and original immutable subject are distinct.
+    implementation=source_contract.validate(current_profile['sourceRoles'],current_profile['queuePrograms'],current_profile['installedSourceContractPin'])
+    ref=implementation['queuePrograms'][0]
+    queue=__import__('queue_assignment').load_queue(ref,implementation_definition=current_profile['installedSourceContractPin'])
     fd=os.open(root/'worker.lock',os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC)
     try:
         before=p.ident(os.fstat(fd));p.need(before==p.ident(os.lstat(root/'worker.lock'))and before['st_uid']==before['st_gid']==1000 and before['st_nlink']==1 and stat.S_ISREG(before['st_mode']),'held/named original worker lock')
@@ -471,7 +474,7 @@ def finish_failed_queue(parent_ref):
         heavy=heavy_custody(parent['queuePrograms'][2])
         root,db=queue.connect(root)
         try:
-            before_ledger=queue.diagnostic_ledger(db);cfg=queue.config(db);backend=queue.SystemdBackend(root,cfg)
+            before_ledger=queue.diagnostic_ledger(db);cfg=queue.config(db);backend=queue.SystemdBackend(root,cfg);backend.terminal_implementation_pin=current_profile['installedSourceContractPin']
             rows,pool=queue.fresh_pool_epoch(db,backend,'failed-prepared-completion')
             targets=[row for row in rows if row['id']==parent['jobId']];p.need(len(targets)==1,'exact existing target only');row=targets[0]
             from postqueue_issuer import expected_spec
@@ -553,6 +556,34 @@ def complete_failed_media(profile_pin,transaction_ref):
             'VMOrGPUActivation':False,'originalFailureReinterpretedAsSuccess':False}
 
 
+def complete_closed_media_context(profile_pin,context_ref,recovery_nonce):
+    """Continue queue/mount ownership after the logical writer already closed."""
+    p.need(os.getuid()==os.geteuid()==0 and re.fullmatch('[0-9a-f]{32}',recovery_nonce),'Root confined closed-completion identity')
+    cfg=protected(profile_pin,0o444);definition=source_contract.validate(cfg['sourceRoles'],cfg['queuePrograms'],cfg['installedSourceContractPin'])
+    p.need(definition['preparationRoles']['run_current_media']['path']==str(Path(__file__).absolute()),'actual current closed-completion implementation')
+    context=protected(context_ref,0o400)
+    p.need(context.get('kind')=='ROOT_LIBVIRT_R4_RUNTIME_CONTEXT'and context.get('runtimeAuthorized')is True and context.get('MODEL_ONLY')is False,'original actual closed runtime context data')
+    parent=protected(context['parentPin'],0o444)
+    old=source_contract.validate(parent['sourceRoles'],parent['queuePrograms'],parent['installedSourceContractPin']);c=context['candidate'];paths=source_contract.candidate_paths(c)
+    p.need(context['kind']=='ROOT_LIBVIRT_R4_RUNTIME_CONTEXT'and context['runtimeAuthorized']is True and context['MODEL_ONLY']is False and context['candidate']==parent['candidate']and context['sourceRoles']==parent['sourceRoles']and c['hostBoot']==Path('/proc/sys/kernel/random/boot_id').read_text().strip(),'same actual original closed subject, not a new grant')
+    heavy_custody(parent['queuePrograms'][2]);source_contract.bind_scope(p,parent)
+    request=json.loads(held(context['assignmentPin'],1048576))['request']
+    with p.RootFiles('/run/opemos-libvirt-queue-'+request['jobToken'])as files,files.lock(False,time.monotonic()+10),p.RootFiles('/run/opemos-vfio-'+request['leaseNonce'])as leases,leases.lock(False,time.monotonic()+10):
+        h=json.loads(files.read('phase-head.json')[0]);phase_raw,phase_pin=files.read(h['record']);phase=json.loads(phase_raw)
+        state,binding,_=p.read_lease(leases,request,c['hostBoot'])
+        p.need(h['sha256']==phase_pin['sha256']and phase['phase']=='CLOSED'and phase['requestSHA256']==hashlib.sha256(p.canon(request)).hexdigest()and phase['bootID']==c['hostBoot']and state['closed']and state['restored']and state['changed']==[],'actual logical closure prerequisite; never append lease/phase again')
+    now=time.time();old_profile=pin(Path(old['deployment']['paths']['sourceRoot'])/'operation-profile.json',1048576)
+    with p.RootFiles(paths['operationRoot'])as files,files.lock(True,time.monotonic()+10):
+        cleanup_pin=producer.put(files,'recovery-'+recovery_nonce+'-mount-completion.json',{'kind':'ROOT_CLOSED_MEDIA_MOUNT_COMPLETION_V1','contextPin':context_ref,'operationProfilePin':old_profile,'recoveryNonce':recovery_nonce,'issuedUnix':now,'startBeforeUnix':now+300})
+    argv=['/usr/bin/sudo','-n','-u','connor','/usr/bin/env','XDG_RUNTIME_DIR=/run/user/1000','DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus','OPEMOS_QUEUE_HEAVY_ENTRY=1','/usr/bin/python3','-I','-B',str(Path(__file__).absolute()),'--profile-pin-json',p.canon(profile_pin).decode(),'--finish-failed-parent-pin-json',p.canon(context['parentPin']).decode()]
+    result=native_queue_worker(argv,min(now+300,time.time()+120),cfg['nativeTools']['/usr/bin/sudo'])
+    if result['numeric']!=0:
+        error=p.Refused('normal original CLOSED target finalizer refused');error.nativeChildEvidence=result;raise error
+    final=json.loads(result['stdout']);p.need(final['jobId']==c['jobId']and final['state']=='failed'and final['finished']is not None and final['terminalLifecycle']['phase']=='CLOSED'and final['terminalLifecycle']['reservationRetained']is False,'actual canonical release before pending own mount completion')
+    cleanup=continue_closed_mount(cleanup_pin)
+    return {'kind':'ACTUAL_CLOSED_MEDIA_COMPLETION_TRANSACTION_V1','logicalAlreadyClosed':True,'lease':binding,'normalQueueCompletion':final,'normalQueueChildEvidence':result,'ownMountCompletion':cleanup,'VMOrGPUActivation':False,'originalFailureReinterpretedAsSuccess':False}
+
+
 def recovery_inputs(root,nonce,closure_input,cleanup_input):
     """Create-only records in the existing charged operation root, no subroot."""
     p.need(re.fullmatch('[0-9a-f]{32}',nonce)is not None,'confined recovery record identity')
@@ -595,8 +626,10 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--profile-pin-json', required=True)
     requests = ap.add_mutually_exclusive_group(required=True)
     requests.add_argument('--request-pin-json'); requests.add_argument('--request-stdin', action='store_true')
-    requests.add_argument('--observe-boot', action='store_true'); requests.add_argument('--complete-prepared-pin-json'); requests.add_argument('--finish-failed-parent-pin-json'); requests.add_argument('--complete-mount-pin-json'); requests.add_argument('--complete-failed-media-pin-json'); requests.add_argument('--complete-failed-context-pin-json'); ap.add_argument('--recovery-nonce'); args = ap.parse_args()
+    requests.add_argument('--observe-boot', action='store_true'); requests.add_argument('--complete-prepared-pin-json'); requests.add_argument('--finish-failed-parent-pin-json'); requests.add_argument('--complete-mount-pin-json'); requests.add_argument('--complete-failed-media-pin-json'); requests.add_argument('--complete-failed-context-pin-json'); requests.add_argument('--complete-closed-context-pin-json'); ap.add_argument('--recovery-nonce'); args = ap.parse_args()
     profile_pin = json.loads(args.profile_pin_json)
+    if args.complete_closed_context_pin_json:
+        print(p.canon(complete_closed_media_context(profile_pin,json.loads(args.complete_closed_context_pin_json),args.recovery_nonce)).decode(),flush=True);return
     if args.complete_failed_context_pin_json:
         print(p.canon(complete_failed_context(profile_pin,json.loads(args.complete_failed_context_pin_json),args.recovery_nonce)).decode(),flush=True);return
     if args.complete_failed_media_pin_json:
@@ -605,7 +638,7 @@ def main():
         cfg=protected(profile_pin,0o444)
         contract=source_contract.validate(cfg['sourceRoles'],cfg['queuePrograms'],cfg['installedSourceContractPin'])
         p.need(contract['preparationRoles']['run_current_media']['path']==str(Path(__file__).absolute()),'actual reviewed completion entry')
-        result=finish_failed_queue(json.loads(args.finish_failed_parent_pin_json))if args.finish_failed_parent_pin_json else continue_closed_mount(json.loads(args.complete_mount_pin_json))
+        result=finish_failed_queue(json.loads(args.finish_failed_parent_pin_json),cfg)if args.finish_failed_parent_pin_json else continue_closed_mount(json.loads(args.complete_mount_pin_json))
         print(p.canon(result).decode(),flush=True);return
     if args.complete_prepared_pin_json:
         cfg=protected(profile_pin,0o444)
@@ -664,4 +697,16 @@ def main():
     print(p.canon(result).decode(), flush=True)
 
 
-if __name__ == '__main__': main()
+def emit_completion_first(error,stream):
+    evidence=getattr(error,'nativeChildEvidence',getattr(error,'evidence',None))
+    if evidence is None:return
+    try:
+        stream.write(p.canon({'kind':'CURRENT_MEDIA_NATIVE_FIRST','type':type(error).__name__,'reason':str(error),'nativeChildEvidence':evidence})+b'\n');stream.flush()
+    except BaseException as diagnostic:error.add_note('Optional native FIRST emission failed: '+repr(diagnostic))
+
+
+if __name__ == '__main__':
+    try:main()
+    except BaseException as error:
+        emit_completion_first(error,sys.stderr.buffer)
+        raise
