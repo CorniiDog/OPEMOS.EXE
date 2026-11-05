@@ -32,7 +32,7 @@ def enrolled_subject_body(name):
     import base64,zlib
     if name=='runtime-entry-before-pending-observer':
         raw=zlib.decompress((Path(__file__).parent/'fixtures/omen/runtime-entry-before-pending-observer.zlib').read_bytes())
-        assert len(raw)==36515 and hashlib.sha256(raw).hexdigest()=='''+repr(hashlib.sha256(raw).hexdigest())+'''
+        assert len(raw)==36515 and hashlib.sha256(raw).hexdigest()=='8d445ce68cfb70f3ff7e626dc8f2687acf58164e817b57b735542d1a710f6a9a'
         return raw
     ref=ENROLLED_SUBJECT_FIXTURE[name]
     raw=zlib.decompress(base64.b85decode(ref['zlibBase85']))
