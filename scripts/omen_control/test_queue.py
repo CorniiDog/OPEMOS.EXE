@@ -3279,6 +3279,113 @@ def read_libvirt_assignment_export(root,job,expectedWorker,expectedSource,expect
     if metrics is not None:metrics.update(archive_metrics,elapsedSeconds=time.monotonic()-started,rows=len(rows),bindings=len(bindings),canonicalBytes=len(raw))
     return value,{'header':hp,'request':header['request'],'producer':header['producer'],'source':header['source'],'bootID':header['bootID'],'canonicalBytes':len(raw),'canonicalSHA256':hashlib.sha256(raw).hexdigest(),'snapshotReadTransactionClosed':True,'RootAuthority':False,'closureOrLeaseReleaseClaimed':False}
 
+def expired_pending_parent(row):
+    """Authenticate a never-allocated structured parent; never execute old code."""
+    require(row['state']=='pending' and all(row[k] is None for k in
+            ('unit','cpus','started','finished','result')),
+            'Expired pending target has never acquired a unit/reservation')
+    spec=json.loads(row['spec'])
+    require('libvirt_domain' in spec and spec['id']==row['id'],
+            'Only an exact structured libvirt pending parent')
+    current=__import__('source_contract').current_from_queue(__file__)
+    require(current is not None,'Separately authenticated current queue implementation')
+    command=spec['command']
+    require(len(command)==7 and command[:4]==['sudo','-n','/usr/bin/python3','-B']
+            and command[5]=='--parent-pin-json','Normal immutable Root entry command')
+    ref=json.loads(command[-1])
+    import postqueue_issuer as issuer
+    parent=issuer.protected(ref,mode=0o444)
+    contract=__import__('source_contract')
+    definition=contract.validate(parent['sourceRoles'],parent['queuePrograms'],
+                                 parent['installedSourceContractPin'])
+    paths=contract.parent_paths(parent)
+    require(parent['kind']=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'
+            and parent['RootIssued'] is True and ref['path']==paths['parentPath']
+            and parent['jobId']==parent['candidate']['jobId']==row['id']
+            and parent['nonce']==parent['candidate']['nonce']
+            and parent['bootID']==parent['candidate']['hostBoot']==
+                Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+            'Same original authenticated parent/job/nonce/current boot')
+    require(issuer.expected_spec(parent,ref)==spec,'Whole original pending spec/parent equality')
+    now=time.time()
+    require(all(type(parent[k])in(int,float) for k in('issuedUnix','startBeforeUnix'))
+            and parent['issuedUnix']<parent['startBeforeUnix']<=parent['issuedUnix']+300
+            and parent['startBeforeUnix']<=now,'Original finite parent must actually be expired')
+    # The old readonly observer may have created its lock-only Root directory.
+    # A separately authenticated current Root reader distinguishes that from
+    # context/assignment/grant publication without opening a device or lease.
+    cfg={'parentPin':ref,'implementationDefinitionPin':current[0]}
+    entry=current[1]['sourceRoles']['runtime_entry']
+    from libvirt_native import native_child
+    started=time.monotonic()
+    capture=native_child(['sudo','-n','/usr/bin/python3','-B',entry['path'],
+        '--observe-expired-pending-json',canonical(cfg)],time.time()+10,parent['sudoPin'])
+    require(capture['numeric']==0 and not capture['stderr'],
+            'Current Root pending observation refused: '+capture.get('stderr','')[:4096])
+    proof=json.loads(capture['stdout'])
+    require(proof['kind']=='ROOT_EXPIRED_PENDING_NO_RUNTIME_PUBLICATION_V1'
+            and proof['request']==cfg and proof['jobId']==row['id']
+            and proof['nonce']==parent['nonce'] and proof['bootID']==parent['bootID']
+            and all(proof[k] is True for k in('physicalLeaseAbsent',
+                'contextAssignmentGrantAbsent','allOwnedDescriptorsClosed'))
+            and proof['effects']==[] and started<=proof['startedMonotonic']<=
+                proof['completedMonotonic']<=time.monotonic()
+            and time.monotonic()-proof['completedMonotonic']<1,
+            'Current source-bound Root pending absence and native lifecycle')
+    return {'parentPin':ref,'definitionPin':parent['installedSourceContractPin'],
+            'nonce':parent['nonce'],'bootID':parent['bootID'],
+            'startBeforeUnix':parent['startBeforeUnix'],'runtimeRoot':paths['runtimeRoot'],
+            'runtimeRootPin':proof['runtimeRootPin'],'lockIdentity':proof['lockIdentity']}
+
+
+def finish_expired_pending(db,backend,job):
+    """Normal worker-only failed disposition, without dispatch or hardware effects."""
+    require(re.fullmatch(r'[A-Za-z0-9_.-]{1,80}',job) is not None,'Exact pending target ID')
+    with immutable_ledger_transaction(db):
+        before=diagnostic_ledger(db)
+        require([r['id']for r in before['rows']if r['state']not in TERMINAL]==[job],
+                'Only the expired target may remain nonterminal; normal owners must close first')
+        row=next(r for r in before['rows']if r['id']==job)
+        require(not any(x[0]==job for x in before['bindings']),
+                'Pending target has no immutable invocation binding')
+        parent=expired_pending_parent(row)
+        check_inputs(json.loads(row['spec']))
+        rows,pool=boundary_pool_epoch(db,backend)
+        require(all(pool.get(k)is True for k in('admitted','includesUID0',
+            'completeBoundedTraversal','allOwnedDescriptorsClosed','currentWholePoolEmpty'))
+            and pool['tasks']==[] and pool['unknownReservationsRetained']==[]
+            and pool['lastKernelWholePoolPopulated']=='0',
+            'Current complete all-UID empty pool; unknown actors retain pending target')
+        history=terminal_history_store(db,terminal_pool_epoch(db,rows,pool),row,None)
+        require(expired_pending_parent(row)==parent and diagnostic_ledger(db)==before,
+                'Original source/parent/whole canonical ledger unchanged')
+        _,final=boundary_pool_epoch(db,backend)
+        require(all(final.get(k)is True for k in('admitted','includesUID0',
+            'completeBoundedTraversal','allOwnedDescriptorsClosed','currentWholePoolEmpty'))
+            and final['tasks']==[] and final['unknownReservationsRetained']==[]
+            and final['lastKernelWholePoolPopulated']=='0',
+            'Final current complete empty pool; no actor or allocation inference')
+        require(expired_pending_parent(row)==parent and diagnostic_ledger(db)==before,
+                'Final original parent and complete ledger equality')
+        result={'kind':'EXPIRED_NEVER_ALLOCATED_LIBVIRT_PENDING_TERMINAL',
+            'reason':'Original finite Root parent expired before normal allocation',
+            'originalParent':parent,'preservedPendingEpoch':history,
+            'runtimeNeverAdmitted':True,'physicalLeaseEverCreated':False,
+            'noVMOrGuestAcceptance':True,'reservationRetained':False,
+            'terminalLifecycle':{'phase':'CLOSED','intendedState':'blocked',
+                'reservationRetained':False,'automaticRetryAuthorized':False}}
+        recent_boundary(final,time.monotonic())
+        db.execute("UPDATE jobs SET state='blocked',finished=?,result=? WHERE id=? AND state='pending' AND unit IS NULL AND started IS NULL AND result IS NULL AND spec=?",
+            (time.time(),canonical(result),job,row['spec']))
+        require(db.execute('SELECT changes()').fetchone()[0]==1,'Exactly one expired pending transition')
+        after=diagnostic_ledger(db)
+        require(len(after['rows'])==len(before['rows']) and all(a==b for a,b in
+            zip(after['rows'],before['rows'])if b['id']!=job)
+            and after['bindings']==before['bindings'] and after['config']==before['config'],
+            'Every other historical row/binding/config preserved')
+    return result
+
+
 def tick(root, db, backend, cfg):
     require(not db.execute("SELECT 1 FROM jobs WHERE state='terminal_cleanup'").fetchone(), "Durable terminal cleanup lease held; no automatic cleanup retry or dispatch")
     rows, pool_proof = fresh_pool_epoch(db, backend,"tick-initial")
@@ -3745,7 +3852,7 @@ def readonly_observer_transaction(root, db, backend):
              # Original primary exception/traceback resumes; no finally masking.
 
 
-def worker(root, db, cfg, reconcile_failed_libvirt=None, _backend=None):
+def worker(root, db, cfg, reconcile_failed_libvirt=None, _backend=None, retire_expired_pending=None):
     with (root / "worker.lock").open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -3771,6 +3878,12 @@ def worker(root, db, cfg, reconcile_failed_libvirt=None, _backend=None):
                     result=reconcile_failed_libvirt_submission(root,db,backend,reconcile_failed_libvirt)
                 print(canonical(result),flush=True)
                 return 1  # the actual submitted job failed; reconciliation is not a pass
+            if retire_expired_pending is not None:
+                require(reconcile_failed_libvirt is None,'One exact normal disposition mode')
+                with readonly_observer_transaction(root,db,backend):
+                    result=finish_expired_pending(db,backend,retire_expired_pending)
+                print(canonical(result),flush=True)
+                return 0  # disposition succeeded; the job is blocked, never passed
             monitor_first=None;monitor_count=0
             diagnostic_only = bool(DIAGNOSTIC_TERMINAL_INPUTS)
             while True:
@@ -4050,6 +4163,7 @@ def main(argv=None):
     commands.add_parser("plan")
     status_parser=commands.add_parser("status");status_parser.add_argument("--job-id")
     run_parser=commands.add_parser("run");run_parser.add_argument("--collected-proof",type=Path);run_parser.add_argument("--collected-approval",type=Path);run_parser.add_argument("--diagnostic-proof",type=Path);run_parser.add_argument("--diagnostic-approval",type=Path);run_parser.add_argument("--reconcile-failed-libvirt",choices=tuple(FAILED_LIBVIRT_TERMINAL_TARGETS))
+    run_parser.add_argument("--retire-expired-pending")
     args = parser.parse_args(argv)
     if args.action=='run' and args.reconcile_failed_libvirt is not None:
         require(all(getattr(args,k)is None for k in('collected_proof','collected_approval','diagnostic_proof','diagnostic_approval')),
@@ -4063,6 +4177,10 @@ def main(argv=None):
         receipt=collected_read(rp,0,0o444)
         require(receipt['kind']==DIAGNOSTIC_KIND and receipt['jobIds']==list(DIAGNOSTIC_TARGETS),'exact two historical diagnostics only')
         for job in receipt['jobIds']:DIAGNOSTIC_TERMINAL_INPUTS[job]=(rp,ap)
+    if args.action=='run' and args.retire_expired_pending is not None:
+        require(args.reconcile_failed_libvirt is None and all(getattr(args,k)is None for k in
+            ('collected_proof','collected_approval','diagnostic_proof','diagnostic_approval')),
+            'Expired never-allocated pending disposition cannot combine authorities')
     root, db = connect(args.queue)
     if args.action == "init":
         cfg = {"cpu_ids": DEFAULT_CPUS, "memory_bytes": DEFAULT_RAM, "slice": "opemos-vm-pool.slice", "manager": "system"}
@@ -4121,7 +4239,7 @@ def main(argv=None):
         if args.diagnostic_proof is not None:
             try: return worker(root, db, cfg)
             finally: db.close()
-        try:return worker(root, db, cfg, args.reconcile_failed_libvirt)
+        try:return worker(root, db, cfg, args.reconcile_failed_libvirt, retire_expired_pending=args.retire_expired_pending)
         finally:db.close()
     return 0
 

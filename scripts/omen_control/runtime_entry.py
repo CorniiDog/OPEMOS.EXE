@@ -312,6 +312,48 @@ def recover_failed_prepared(profile_ref,definition_ref):
  finally:os.close(fd)
 
 
+def observe_expired_pending(cfg):
+ """Read-only current implementation, original finite parent remains DATA."""
+ import source_contract as contract
+ import postqueue_issuer as issuer
+ import libvirt_access as access
+ peer.need(os.getuid()==os.geteuid()==0 and set(cfg)=={'parentPin','implementationDefinitionPin'},'exact Root pending observation request')
+ before=set(os.listdir('/proc/self/fd'));started=time.monotonic()
+ definition=contract.read_definition(cfg['implementationDefinitionPin'])
+ contract.validate(definition['sourceRoles'],definition['queuePrograms'],cfg['implementationDefinitionPin'])
+ peer.need(definition['sourceRoles']['runtime_entry']['path']==str(Path(__file__).absolute()),'actual separately authenticated implementation entry')
+ parent=issuer.protected(cfg['parentPin'],mode=0o444)
+ contract.validate(parent['sourceRoles'],parent['queuePrograms'],parent['installedSourceContractPin'])
+ paths=contract.parent_paths(parent);nonce=parent['nonce'];boot=Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+ peer.need(parent['RootIssued'] is True and parent['kind']=='ROOT_LIBVIRT_R4_FINITE_QUEUE_PARENT'and parent['bootID']==parent['candidate']['hostBoot']==boot and cfg['parentPin']['path']==paths['parentPath']and nonce==parent['candidate']['nonce'],'exact original parent/boot/nonce')
+ peer.need(parent['issuedUnix']<parent['startBeforeUnix']<=parent['issuedUnix']+300 and parent['startBeforeUnix']<=time.time(),'original authority actually expired')
+ runtime=Path(paths['runtimeRoot']);lease=Path('/run/opemos-vfio-'+nonce)
+ def absent_lease():
+  with access.Held('/run')as run:
+   run.check()
+   try:os.stat(lease.name,dir_fd=run.fd,follow_symlinks=False)
+   except FileNotFoundError:pass
+   else:peer.need(False,'pending original physical lease exists; no closure inference')
+   run.check()
+ absent_lease();runtime_pin=None;lock_pin=None
+ try:os.lstat(runtime)
+ except FileNotFoundError:pass
+ else:
+  with peer.RootFiles(runtime)as files,files.lock(False,time.monotonic()+2):
+   peer.need(sorted(os.listdir(files.fd))==['lock'],'pending runtime contains context/assignment/grant or unknown data')
+   runtime_pin=files.parent_pin();fd=os.open('lock',os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=files.fd)
+   try:
+    lock_pin=peer.ident(os.fstat(fd));peer.need(lock_pin['st_size']==0 and lock_pin==peer.ident(os.stat('lock',dir_fd=files.fd,follow_symlinks=False)),'unchanged empty normal Root lock')
+   finally:os.close(fd)
+   absent_lease();files.check();peer.need(sorted(os.listdir(files.fd))==['lock'],'no runtime publication before observation closes')
+ peer.need(issuer.protected(cfg['parentPin'],mode=0o444)==parent,'same original parent post-use')
+ contract.validate(definition['sourceRoles'],definition['queuePrograms'],cfg['implementationDefinitionPin'])
+ peer.need(before==set(os.listdir('/proc/self/fd')),'Root pending observer all owned descriptors closed')
+ return {'kind':'ROOT_EXPIRED_PENDING_NO_RUNTIME_PUBLICATION_V1','request':cfg,'bootID':boot,'jobId':parent['jobId'],'nonce':nonce,'runtimeRootPin':runtime_pin,'lockIdentity':lock_pin,'physicalLeaseAbsent':True,'contextAssignmentGrantAbsent':True,'effects':[],'allOwnedDescriptorsClosed':True,'startedMonotonic':started,'completedMonotonic':time.monotonic()}
+
+
 if __name__=='__main__':
+ if len(sys.argv)==3 and sys.argv[1]=='--observe-expired-pending-json':
+  print(peer.canon(observe_expired_pending(json.loads(sys.argv[2]))).decode());sys.exit(0)
  if len(sys.argv)!=3 or sys.argv[1]not in('--context-pin-json','--parent-pin-json'):raise ValueError('exact protected context or independent parent pin argv only')
  ref=json.loads(sys.argv[2]);sys.exit(main(await_root_context(ref)if sys.argv[1]=='--parent-pin-json'else ref))

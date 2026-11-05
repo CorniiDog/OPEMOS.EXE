@@ -1457,6 +1457,90 @@ except peer.Refused as error:
                         'installedSourceContractPin':implementation['sourceContractPin']}
                     current_queue=current_issuer.load_pool_queue(postqueue_parent)
                     self.assertEqual(current_queue.currentImplementationDefinitionPin,implementation['sourceContractPin'])
+                    # Normal pending expiry consumes the genuine installed V2
+                    # parent and a real private canonical DB/history store. The
+                    # external whole-pool kernel facts are explicitly MODELED.
+                    pending_nonce=uuid.uuid4().hex
+                    pending_paths=source_contract.operation_paths(deployment_id,pending_nonce)
+                    expired=copy.deepcopy(parent)
+                    pending_id='fixture-expired-e'+pending_nonce[:16]
+                    expired['sudoPin']=installer.pin('/usr/bin/sudo')
+                    expired['contextPath']=pending_paths['runtimeRoot']+'/context.json'
+                    expired.update(jobId=pending_id,nonce=pending_nonce,
+                        issuedUnix=time.time()-601,startBeforeUnix=time.time()-301)
+                    expired['candidate'].update(jobId=pending_id,nonce=pending_nonce,
+                        name='opemos-libvirt-'+pending_nonce,
+                        run=pending_paths['ioRoot']+'/run',output=pending_paths['ioRoot']+'/output',
+                        operationContext={'deploymentId':deployment_id,'attempt':pending_nonce,'paths':pending_paths})
+                    expired['normalizedSpecTemplate'].update(id=pending_id)
+                    expired['normalizedSpecTemplate']['libvirt_domain'].update(
+                        leaseNonce=pending_nonce,name='opemos-libvirt-'+pending_nonce)
+                    pending_parent=Path(pending_paths['parentPath'])
+                    expired_ref=installer.put(pending_parent,installer.canon(expired),0o444)
+                    class ModeledEmptyPool:
+                        unknown=False
+                        def validate_pool(model,rows):
+                            return {'admitted':True,'includesUID0':True,'completeBoundedTraversal':True,
+                                'allOwnedDescriptorsClosed':True,'currentWholePoolEmpty':not model.unknown,
+                                'tasks':[],'unknownReservationsRetained':[],
+                                'lastKernelWholePoolPopulated':'0','completedMonotonic':time.monotonic(),
+                                'MODEL_ONLY':True}
+                    try:
+                        pending_spec=current_issuer.expected_spec(expired,expired_ref)
+                        state=fixture/('pending-state-'+pending_nonce)
+                        root,db=current_queue.connect(state)
+                        try:
+                            with db:db.execute('INSERT INTO config VALUES(1,?)',
+                                (current_queue.canonical({'cpu_ids':current_queue.DEFAULT_CPUS,
+                                    'memory_bytes':current_queue.DEFAULT_RAM,'slice':'opemos-vm-pool.slice','manager':'system'}),))
+                            for i in range(257):
+                                with db:db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',
+                                    ('preserved-'+str(i),'{}','failed',None,None,1.0,2.0,None))
+                            current_queue.enqueue(db,[pending_spec])
+                            before=current_queue.diagnostic_ledger(db)
+                            pending_row=before['rows'][-1]
+                            bound=dict(pending_row,unit='foreign.service')
+                            with self.assertRaisesRegex(ValueError,'never acquired'):
+                                current_queue.expired_pending_parent(bound)
+                            wrong=copy.deepcopy(pending_row);wrong_spec=json.loads(wrong['spec'])
+                            wrong_ref=copy.deepcopy(expired_ref);wrong_ref['sha256']='0'*64
+                            wrong_spec['command'][-1]=current_queue.canonical(wrong_ref)
+                            wrong['spec']=current_queue.canonical(wrong_spec)
+                            with self.assertRaises(Exception):current_queue.expired_pending_parent(wrong)
+                            runtime_path=Path(pending_paths['runtimeRoot']);producer.create_root(str(runtime_path))
+                            installer.put(runtime_path/'context.json',b'{}',0o400)
+                            try:
+                                with self.assertRaisesRegex(ValueError,'Current Root pending observation refused'):
+                                    current_queue.finish_expired_pending(db,ModeledEmptyPool(),pending_id)
+                            finally:(runtime_path/'context.json').unlink()
+                            backend=ModeledEmptyPool();backend.unknown=True
+                            with self.assertRaisesRegex(ValueError,'complete all-UID empty pool'):
+                                current_queue.finish_expired_pending(db,backend,pending_id)
+                            self.assertEqual(current_queue.diagnostic_ledger(db),before)
+                            with db:db.execute('INSERT INTO pool_unit_bindings VALUES(?,?)',(pending_id,'{}'))
+                            try:
+                                with self.assertRaisesRegex(ValueError,'no immutable invocation binding'):
+                                    current_queue.finish_expired_pending(db,ModeledEmptyPool(),pending_id)
+                            finally:
+                                with db:db.execute('DELETE FROM pool_unit_bindings WHERE job_id=?',(pending_id,))
+                            result=current_queue.finish_expired_pending(db,ModeledEmptyPool(),pending_id)
+                            self.assertTrue(result['runtimeNeverAdmitted'])
+                            self.assertFalse(result['physicalLeaseEverCreated'])
+                            self.assertFalse(result['reservationRetained'])
+                            self.assertEqual(result['terminalLifecycle']['phase'],'CLOSED')
+                            self.assertEqual(result['preservedPendingEpoch']['rowCount'],258)
+                            after=current_queue.diagnostic_ledger(db)
+                            self.assertEqual(after['rows'][:-1],before['rows'][:-1])
+                            self.assertEqual(after['bindings'],before['bindings'])
+                            self.assertEqual(after['config'],before['config'])
+                            self.assertEqual(after['rows'][-1]['state'],'blocked')
+                            self.assertIsNone(after['rows'][-1]['unit'])
+                            with self.assertRaises(Exception):
+                                current_queue.finish_expired_pending(db,ModeledEmptyPool(),pending_id)
+                        finally:db.close()
+                    finally:
+                        pending_parent.unlink()
+                        if runtime_path.exists():shutil.rmtree(runtime_path)
                     for fault in ('hash','owner','escape','queue-member'):
                         wrong=copy.deepcopy(postqueue_parent)
                         if fault=='hash':wrong['installedSourceContractPin']['sha256']='0'*64
