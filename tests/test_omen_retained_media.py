@@ -500,6 +500,8 @@ class RetainedMediaContract(unittest.TestCase):
         """Actual installer/isolated entry; external queue helpers and media are MODELED, never executed."""
         import install_media_controller as installer
         import run_current_media as normal_entry
+        import runtime_entry
+        import stat
         import ctypes
         layout = source_contract.deployment_paths(deployment_id)
         paths = source_contract.operation_paths(deployment_id, attempt)
@@ -670,6 +672,31 @@ class RetainedMediaContract(unittest.TestCase):
             self.assertEqual(Path(record['path']).parent,operation)
             with self.assertRaises(Exception):normal_entry.recovery_inputs(str(operation/'foreign'),uuid.uuid4().hex,{}, {})
             with self.assertRaises(Exception):normal_entry.recovery_inputs(str(operation),'../escape',{}, {})
+            # Real normal-queue file creation mode (0666 with umask0002),
+            # held/named full9 and kernel FLOCK; no queue or lease mutation.
+            worker_path=operation/'worker-custody-fixture.lock'
+            oldmask=os.umask(0o002)
+            try:worker_fd=os.open(worker_path,os.O_CREAT|os.O_EXCL|os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC,0o666)
+            finally:os.umask(oldmask)
+            try:
+                os.fchown(worker_fd,1000,1000)
+                worker_ref=normal_entry.pin(worker_path,65536)
+                self.assertEqual(stat.S_IMODE(os.fstat(worker_fd).st_mode),0o664)
+                runtime_entry.recovery_worker_lock(worker_fd,worker_path,worker_ref)
+                other=os.open(worker_path,os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC)
+                try:
+                    with self.assertRaises(BlockingIOError):runtime_entry.recovery_worker_lock(other,worker_path,worker_ref)
+                finally:os.close(other)
+                for fault in ('worldwrite','execute','owner','nonempty','identity'):
+                    bad=copy.deepcopy(worker_ref)
+                    if fault=='worldwrite':os.fchmod(worker_fd,0o666);bad=normal_entry.pin(worker_path,65536)
+                    elif fault=='execute':os.fchmod(worker_fd,0o764);bad=normal_entry.pin(worker_path,65536)
+                    elif fault=='owner':os.fchown(worker_fd,0,0);bad=normal_entry.pin(worker_path,65536)
+                    elif fault=='nonempty':os.write(worker_fd,b'x');bad=normal_entry.pin(worker_path,65536)
+                    else:bad['identity']['st_ino']+=1
+                    with self.assertRaises(Exception):runtime_entry.recovery_worker_lock(worker_fd,worker_path,bad)
+                    os.ftruncate(worker_fd,0);os.fchown(worker_fd,1000,1000);os.fchmod(worker_fd,0o664)
+            finally:os.close(worker_fd)
             # Actual installed recovery entry must reject non-context DATA
             # before any phase/lease or recovery namespace can be created.
             invalid_recovery=save('not-a-runtime-context',{'kind':'NOT_A_RUNTIME_CONTEXT'})

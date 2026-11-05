@@ -222,6 +222,15 @@ def failed_prepared_terminal(terminal,child_start,child_result,context,parent,gr
  peer.need(request['leaseNonce']==c['nonce']==parent['nonce']and c['hostBoot']==parent['bootID']==grant['bootID']and context['candidate']==parent['candidate'],'original same request/candidate/boot, no current source relabel')
  return request
 
+def recovery_worker_lock(fd,path,ref):
+ """The normal queue creates an empty0666 file subject to its user umask."""
+ import fcntl
+ initial=peer.ident(os.fstat(fd))
+ peer.need(str(path)==ref['path']and initial==ref['identity']==peer.ident(os.lstat(path))and initial['st_uid']==initial['st_gid']==1000 and stat.S_ISREG(initial['st_mode'])and not stat.S_IMODE(initial['st_mode'])&0o113 and initial['st_nlink']==1 and initial['st_size']==ref['bytes']==0 and ref['sha256']==hashlib.sha256(b'').hexdigest(),'same original normal worker lock custody')
+ fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+ peer.need(initial==peer.ident(os.fstat(fd))==peer.ident(os.lstat(path)),'worker lock unchanged after actual exclusive admission')
+ return initial
+
 def recover_failed_prepared(profile_ref,definition_ref):
  """One same-boot logical completion. No ACL, VM, driver, signal or SQL effects."""
  import fcntl
@@ -252,8 +261,7 @@ def recover_failed_prepared(profile_ref,definition_ref):
  queue_root=Path(parent['queueStateRoot']);lock=queue_root/'worker.lock';peer.need(str(lock)==cfg['workerLockPin']['path'],'original named worker lock only')
  fd=os.open(lock,os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC)
  try:
-  lock_initial=peer.ident(os.fstat(fd));peer.need(lock_initial==cfg['workerLockPin']['identity']==peer.ident(os.lstat(lock))and lock_initial['st_uid']==lock_initial['st_gid']==1000 and stat.S_ISREG(lock_initial['st_mode'])and stat.S_IMODE(lock_initial['st_mode'])==0o600 and lock_initial['st_nlink']==1 and lock_initial['st_size']==0,'same original worker lock custody')
-  fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+  lock_initial=recovery_worker_lock(fd,lock,cfg['workerLockPin'])
   heavy=entry.heavy_custody(parent['queuePrograms'][2]);stage=access.prepared_lineage(c,grant['preparedAccessPin'],grant['preparedDiskPins'])
   peer.need(peer.SOURCE_PLACEMENT_PIN is None or peer.SOURCE_PLACEMENT_PIN==context['sourcePlacementPin'],'no different source placement binding')
   peer.SOURCE_PLACEMENT_PIN=context['sourcePlacementPin']
