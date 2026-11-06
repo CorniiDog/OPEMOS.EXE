@@ -2732,6 +2732,28 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             payload,_=cycle.materialize(policy,source,renewal,row,root_closed,dispatchers=[actual])
         produced=json.loads(payload);closure=json.loads(bytes.fromhex(produced['oldControl']['closedReceiptHex']))
         self.assertEqual(closure['normalDispatchers'],[actual])
+        # The immutable deployment's original dispatcher source stays distinct
+        # from a later current queue. No old code is executed by this bridge.
+        historical=copy.deepcopy(actual);historical['queueSourceSHA256']='1'*64
+        terminal=dict(old,state='passed',finished=1,result=cycle.enc({
+            'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False}}).decode())
+        previous=dict(closure,oldRowId=terminal['id'],oldRowSHA256=cycle.sha(cycle.enc(terminal)),
+                      normalDispatchers=[historical])
+        previous_raw=cycle.enc(previous)
+        deployment=dict(policy={'kind':'ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1'},
+            oldControl={'closedReceiptHex':previous_raw.hex(),'closedReceiptSHA256':cycle.sha(previous_raw)})
+        with mock.patch.object(cycle,'dispatcher_closed',return_value=True):
+            self.assertEqual(cycle.closed_source_dispatchers(deployment,terminal),[historical])
+            self.assertEqual(historical['queueSourceSHA256'],'1'*64)
+            for fault in ('row','active','hash'):
+                wrong=copy.deepcopy(terminal);bad=copy.deepcopy(deployment)
+                if fault=='row':wrong['spec']='changed immutable original spec'
+                elif fault=='active':wrong.update(state='running',finished=None)
+                else:bad['oldControl']['closedReceiptSHA256']='0'*64
+                with self.subTest(oldDispatcher=fault),self.assertRaises(RuntimeError):
+                    cycle.closed_source_dispatchers(bad,wrong)
+        with mock.patch.object(cycle,'dispatcher_closed',return_value=False),self.assertRaises(RuntimeError):
+            cycle.closed_source_dispatchers(deployment,terminal)
         proof.update(oldRow=old,oldManager=root_closed,oldOuter=closed,oldOuters=[closed],closure=closure,
             oldWorkers=[{'expected':actual['worker'],'processAbsent':True,'scopeEmpty':True}])
         proof['preflight']['oldControl']=produced['oldControl']

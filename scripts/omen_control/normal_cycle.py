@@ -286,6 +286,26 @@ def closed_receipt(row,m,dispatchers=None):
             'fullUID0Group':{'absent':True},'oldRowId':row['id'],'oldRowSHA256':sha(enc(row)),
             'atUnix':int(time.time()),**({'normalDispatchers':dispatchers}if dispatchers is not None else{})}
 
+def closed_source_dispatchers(template,row):
+    """Original closed execution identities remain DATA across a code upgrade."""
+    if template.get('policy',{}).get('kind')!='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1':return None
+    old=template.get('oldControl',{})
+    raw=bytes.fromhex(old.get('closedReceiptHex',''))
+    if not raw:return None
+    need(len(raw)<=65536 and sha(raw)==old.get('closedReceiptSHA256'),'exact current deployment predecessor receipt')
+    proof=json.loads(raw)
+    if proof.get('oldRowId')!=row['id']:return None
+    life=json.loads(row['result'])['terminalLifecycle']
+    need(row['state']in('passed','failed','timed_out','blocked','unknown','output_limit')
+         and row['finished']is not None and life['phase']=='CLOSED'and life['reservationRetained']is False
+         and proof['oldRowSHA256']==sha(enc(row)),'whole actual closed original row, no active source exception')
+    refs=proof['normalDispatchers']
+    need(type(refs)is list and refs and len({r['unit']for r in refs})==len(refs)
+         and all(r['kind']=='NORMAL_CONTROL_DISPATCHER_IDENTITY_V1'and r['jobId']==row['id']
+                 and re.fullmatch('[0-9a-f]{64}',r['queueSourceSHA256'])and dispatcher_closed(r)for r in refs),
+         'exact original source identities and fresh actual dispatcher/worker closure')
+    return refs
+
 def materialize(policy,probe_module,nonce,old_row,old_manager,dispatchers=None):
     if 'REMOTE_TEMPLATE_HEX' in globals():
         template_raw=bytes.fromhex(REMOTE_TEMPLATE_HEX)
@@ -300,8 +320,9 @@ def materialize(policy,probe_module,nonce,old_row,old_manager,dispatchers=None):
     installer=types.ModuleType('reviewed_normal_installer')
     installer.__file__=str(CONTROL/'releases'/tx/'install_remote.py')
     exec(compile(installer_raw,installer.__file__,'exec'),installer.__dict__)
-    need(dispatchers is None or all(ref['queueSourceSHA256']==policy['queueSourceSHA256']for ref in dispatchers),
-         'actual predecessor dispatcher binds this exact queue source')
+    if dispatchers is not None and not all(ref['queueSourceSHA256']==policy['queueSourceSHA256']for ref in dispatchers):
+        need(dispatchers==closed_source_dispatchers(template,old_row),
+             'exact authenticated closed predecessor source, never relabel old execution')
     receipt=closed_receipt(old_row,old_manager,dispatchers)
     data=dict(template)
     need(data.get('kind')=='ROOT_REVIEWED_ROBOT_CONTROL_MATERIALIZATION_V1' and
@@ -610,7 +631,10 @@ def main():
     if action in('GRACEFUL_RENEW','RECONCILE_CLOSED'):
         dispatchers=[owning_dispatcher(selected,policy,trigger.read_state())]
     elif action=='CREATE'and trigger.read_state()['lastOutcome'].get('dispatcherNonce')is not None:
-        dispatchers=[owning_dispatcher(selected,policy,trigger.read_state())]
+        template=(trigger.current_controller_definition(policy)
+                  if policy['mainCommit']!=trigger.REVIEWED_MAIN or policy['queueSourceSHA256']!=trigger.REVIEWED_QUEUE else {})
+        dispatchers=closed_source_dispatchers(template,selected)
+        if dispatchers is None:dispatchers=[owning_dispatcher(selected,policy,trigger.read_state())]
         selected,_=wait_terminal(probe_module,policy,job_id,time.monotonic()+180,dispatchers=dispatchers)
     if action=='REFRESH_HEARTBEAT':
         need('REMOTE_POLICY_RAW' not in globals(),
