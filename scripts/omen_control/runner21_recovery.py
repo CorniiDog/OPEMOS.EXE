@@ -101,7 +101,9 @@ def current_controller_definition(p):
     # Existing normal-template is the single installed deployment definition.
     # Original release/job identities remain immutable data; no copied current
     # revision list or candidate checkout can select privileged implementation.
-    raw=held(ROOT/'normal-template.json',16*1024*1024,0,0o400)
+    raw=(bytes.fromhex(REMOTE_TEMPLATE_HEX) if 'REMOTE_TEMPLATE_HEX' in globals()
+         else held(ROOT/'normal-template.json',16*1024*1024,0,0o400))
+    need(0<len(raw)<=16*1024*1024,'bounded existing normal deployment definition')
     need(sha(raw)==p['normalTemplateSHA256'],'authenticated current normal deployment definition')
     template=strict(raw)
     need(template.get('kind')=='ROOT_REVIEWED_ROBOT_CONTROL_MATERIALIZATION_V1'

@@ -34,6 +34,7 @@ def module(path,digest):
             m.REMOTE_GITHUB=REMOTE_GITHUB
         if path.name=='runner21_recovery.py':
             m.read_state=lambda:REMOTE_STATE
+            if 'REMOTE_TEMPLATE_HEX' in globals():m.REMOTE_TEMPLATE_HEX=REMOTE_TEMPLATE_HEX
         return m
     fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
     try:

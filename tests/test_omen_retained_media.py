@@ -2614,6 +2614,37 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                     self.assertEqual(saved.call_count,2)
                     self.assertEqual(len(list(Path(directory).glob('resumed-control-*.json'))),1)
 
+    def test_remote_current_controller_definition_uses_existing_authenticated_carrier(self):
+        from unittest import mock
+        cycle,r=self.modules()
+        policy={'mainCommit':'a'*40,'queueSourceSHA256':'b'*64,'queueLoggerSHA256':'c'*64}
+        names={'control.py':'controlBrokerSHA256','connection_host.py':'privatePeerSHA256',
+               'install_remote.py':'normalInstallerSHA256','job_guard.py':'jobGuardSHA256',
+               'job-started.sh':'jobStartedSHA256'}
+        sources={}
+        for name,key in names.items():
+            raw=('modeled immutable source DATA '+name).encode();policy[key]=cycle.sha(raw)
+            sources[name]={'hex':raw.hex(),'sha256':policy[key]}
+        template=dict(kind='ROOT_REVIEWED_ROBOT_CONTROL_MATERIALIZATION_V1',runtimeAuthorized=True,
+            mainCommit=policy['mainCommit'],runnerId=21,queueSourceSHA256=policy['queueSourceSHA256'],
+            queueLoggerSHA256=policy['queueLoggerSHA256'],sources=sources,
+            policy=dict(kind='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1',sourceAccepted=True,
+                runtimeAuthorized=True,sourceCommit=policy['mainCommit'],queueSourceSHA256=policy['queueSourceSHA256']))
+        raw=cycle.enc(template);policy['normalTemplateSHA256']=cycle.sha(raw)
+        wrapper=(SOURCE/'runner21_recovery.py').read_bytes()
+        with mock.patch.object(cycle,'REMOTE_MODULES',{'runner21_recovery.py':wrapper.hex()},create=True), \
+             mock.patch.object(cycle,'REMOTE_STATE',{},create=True), \
+             mock.patch.object(cycle,'REMOTE_TEMPLATE_HEX',raw.hex(),create=True):
+            remote=cycle.module(cycle.ROOT/'runner21_recovery.py',cycle.sha(wrapper))
+            with mock.patch.object(remote,'held',side_effect=AssertionError('no remote template file exists')):
+                self.assertEqual(remote.current_controller_definition(policy),template)
+                bad=dict(policy,normalTemplateSHA256='0'*64)
+                with self.assertRaisesRegex(RuntimeError,'authenticated current normal deployment definition'):
+                    remote.current_controller_definition(bad)
+                remote.REMOTE_TEMPLATE_HEX=raw.hex()+'00'
+                with self.assertRaisesRegex(RuntimeError,'authenticated current normal deployment definition'):
+                    remote.current_controller_definition(policy)
+
     def test_resumed_worker_identity_reaches_wait_materialization_and_proof_consumer(self):
         from unittest import mock
         import time
