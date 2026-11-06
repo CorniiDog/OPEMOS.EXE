@@ -286,6 +286,12 @@ baseline=set(os.listdir('/proc/self/fd'));store=storage.Storage(config,C,N,None)
 actual=store.check('real-private-mount');assert actual['device']==Path(config['mount']).stat().st_dev
 assert store.loopfd is not None and stat.S_ISBLK(os.fstat(store.loopfd).st_mode)
 Path(config['mount'],'actual-owned-data').write_bytes(b'actual retained private ext4 data\n')
+readable=root/'user-modules';readable.mkdir(mode=0o755)
+for name,path in(('virtual_usb.py',Path(sys.argv[1])/'virtual_usb.py'),
+                 ('vm_write_ceiling.py',Path(sys.argv[1]).parent/'vm_write_ceiling.py')):
+ source_bytes=path.read_bytes();target=readable/name
+ with target.open('xb')as stream:stream.write(source_bytes);stream.flush();os.fsync(stream.fileno())
+ target.chmod(0o444);assert target.read_bytes()==source_bytes
 def ordinary():
  os.setgroups([]);os.setgid(1000);os.setuid(1000)
 user_code=r"""
@@ -304,7 +310,7 @@ with usb.virtual_usb_backing(sys.argv[2],1048576,0)as(backing,fd):
  assert {k:getattr(s,k)for k in fields}=={k:getattr(Path(backing['path']).lstat(),k)for k in fields}
  print(json.dumps({'uid':os.getuid(),'bytesRead':len(actual),'sha256':hashlib.sha256(actual).hexdigest(),'RootRawRefused':True}))
 """
-user=subprocess.run([sys.executable,'-I','-B','-',sys.argv[1],str(generation/'usb'),config['fixedBacking']],
+user=subprocess.run([sys.executable,'-I','-B','-',str(readable),str(generation/'usb'),config['fixedBacking']],
  input=user_code,text=True,capture_output=True,timeout=15,preexec_fn=ordinary)
 assert user.returncode==0,user.stderr;unprivileged=json.loads(user.stdout)
 assert unprivileged['uid']==1000 and unprivileged['bytesRead']==1048576 and unprivileged['RootRawRefused']is True
