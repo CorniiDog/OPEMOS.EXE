@@ -500,7 +500,8 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
             with patch.object(q,'pool_rows',return_value=[row]),patch.object(q,'ExpectedInvocation',return_value=context),\
                  patch.object(q,'exact_unit_observation',return_value=props),\
                  patch.object(q,'boundary_pool_epoch',return_value=([row],fresh)):
-                return q.monitor_membership_race(db,None,e)
+                backend=types.SimpleNamespace(whole_owned_cgroup=lambda u,p:{'empty':True})
+                return q.monitor_membership_race(db,backend,e)
         result=monitor(error)
         self.assertIs(result['newAdmissionEffectsReleaseForbidden'],True)
         self.assertEqual(result['originalReadonlyMonitor'][-1]['incompleteFirstReadObservation'],typed_first)
@@ -535,7 +536,7 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                           'cgroup':'/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/'+unit},
                'originalFailure':{'type':'FileNotFoundError','reason':'actual reaped fixture child'}}
         error={'firstFailure':{'closeOutcomes':[{'label':'proc-'+str(child.pid),'closed':True}]}}
-        def call(method,typed,observed=None,empty=True,unknown=None):
+        def call(method,typed,observed=None,empty=True,unknown=None,own_empty=True):
             observed=dict(props if observed is None else observed)
             fresh={'admitted':True,'allOwnedDescriptorsClosed':True,'includesUID0':True,
                    'completeBoundedTraversal':True,'unknownReservationsRetained':[]if unknown is None else unknown,
@@ -545,21 +546,110 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
             with patch.object(q,'boundary_pool_epoch',return_value=([row],fresh)),\
                  patch.object(q,'ExpectedInvocation',return_value=context),\
                  patch.object(q,'exact_unit_observation',return_value=observed):
-                return method(None,None,error,typed,[row],[row],records)
+                backend=types.SimpleNamespace(whole_owned_cgroup=lambda u,p:{'empty':own_empty})
+                return method(None,backend,error,typed,[row],[row],records)
         before=set(os.listdir('/proc/self/fd'))
         for method,typed,marker in((q.monitor_first_proc_read_exit,first,'incompleteFirstReadObservation'),
                                   (q.monitor_proc_revalidation_exit,known,'procRevalidationExitObservation')):
-            result=call(method,typed);last=result['originalReadonlyMonitor'][-1]
-            self.assertEqual(last[marker],typed)
-            self.assertIs(last['reservationRetained'],True);self.assertIs(last['operationOrReleaseAuthorized'],False)
-            self.assertIs(result['newAdmissionEffectsReleaseForbidden'],True)
+            for pool_empty in(True,False):
+                result=call(method,typed,empty=pool_empty);last=result['originalReadonlyMonitor'][-1]
+                self.assertEqual(last[marker],typed)
+                self.assertIs(last['reservationRetained'],True);self.assertIs(last['operationOrReleaseAuthorized'],False)
+                self.assertIs(result['newAdmissionEffectsReleaseForbidden'],True)
+                self.assertIs(result['originalReadonlyMonitor'][0]['terminalUnitObservation']['ownedCgroupProof']['empty'],True)
+            with self.assertRaisesRegex(ValueError,'still has owned descendants'):
+                call(method,typed,empty=False,own_empty=False)
             for changed,empty,unknown in((dict(props,InvocationID='f'*32),True,None),
                     (dict(props,ExecMainCode='',ExecMainStatus=''),True,None),
                     (dict(props,SubState='running'),True,None),
-                    (dict(props,ActiveState='inactive'),False,None),(props,True,['foreign'])):
+                    (dict(props,ActiveState='inactive',ExecMainCode=''),False,None),(props,True,['foreign'])):
                 with self.subTest(method=method.__name__,changed=changed,empty=empty,unknown=unknown),self.assertRaises(ValueError):
                     call(method,typed,changed,empty,unknown)
         self.assertEqual(set(os.listdir('/proc/self/fd')),before)
+
+    def test_proc_exit_monitor_then_normal_tick_closes_only_terminal_unit_with_live_peer(self):
+        """Real task exit/SQL/finalizers; external manager/pool facts MODELED."""
+        import time
+        from unittest.mock import patch
+        import test_queue as q
+        child=subprocess.Popen([sys.executable,'-I','-c','import time;time.sleep(.1)'])
+        proc=Path('/proc',str(child.pid));held=os.open(proc,os.O_RDONLY|os.O_DIRECTORY|os.O_CLOEXEC)
+        start=int((proc/'stat').read_text().rsplit(')',1)[1].split()[19])
+        child.wait(timeout=5);os.close(held)
+        self.assertFalse(proc.exists())
+        with tempfile.TemporaryDirectory(prefix='opemos-terminal-proc-peer-')as tmp:
+            base=Path(tmp);state=base/'state'
+            with contextlib.redirect_stdout(io.StringIO()):q.main(['--queue',str(state),'init'])
+            root,db=q.connect(state);cfg=q.config(db);backend=q.SystemdBackend(root,cfg)
+            pool='/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice'
+            own,peer=backend.prefix+'a'*32+'.service',backend.prefix+'b'*32+'.service'
+            invocations={own:'c'*32,peer:'d'*32}
+            marker=base/'input.json';marker.write_text('{}');marker.chmod(0o600)
+            def props(unit):
+                live=unit==peer
+                return dict(LoadState='loaded',ActiveState='active'if live else'failed',
+                    SubState='running'if live else'failed',InvocationID=invocations[unit],
+                    MainPID=str(os.getpid())if live else'0',ControlGroup=pool+'/'+peer if live else'',
+                    Result='success'if live else'exit-code',ExecMainCode='1',ExecMainStatus='0'if live else'1',
+                    AllowedCPUs='1'if live else'0',CPUQuotaPerSecUSec='1s',MemoryMax=str(1024**3),MemorySwapMax='0')
+            try:
+                for index,(job,unit)in enumerate((('failed-ubuntu',own),('live-control',peer))):
+                    spec=q.normalize_job(dict(id=job,platform='fixture',owner='exe',command=['/usr/bin/true'],
+                        cwd=str(base),files=[str(marker)],cores=1,memory=1024**3,timeout_seconds=300,
+                        resources=[job],approval={'path':str(marker),'sha256':hashlib.sha256(marker.read_bytes()).hexdigest()}),base)
+                    db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',
+                        (job,q.canonical(spec),'running',q.canonical([index]),unit,time.time(),None,None))
+                    binding=dict(version=1,job_id=job,unit=unit,invocation=invocations[unit],stateRoot=str(root),
+                        prefix=backend.prefix,specSHA256=hashlib.sha256(q.canonical(spec).encode()).hexdigest(),cpus=[index],memory=1024**3)
+                    db.execute('INSERT INTO pool_unit_bindings VALUES(?,?)',(job,q.canonical(binding)))
+                db.commit();(root/'logs/failed-ubuntu').mkdir(parents=True)
+                (root/'logs/failed-ubuntu/stderr.log').write_text('actual preparation FIRST retained\n')
+                leader=dict(tid=os.getpid(),tgid=os.getpid(),start=123,ppid=1,uids=[os.getuid()]*4,cgroup=pool+'/'+peer)
+                def proof(rows):
+                    return dict(admitted=True,includesUID0=True,completeBoundedTraversal=True,allOwnedDescriptorsClosed=True,
+                        canonicalPool=pool,currentWholePoolEmpty=False,completedMonotonic=time.monotonic(),
+                        systemdPoolProperties={'ControlGroup':pool},unknownReservationsRetained=[],
+                        unitProperties={u:{'known':True,'properties':props(u)}for u in(own,peer)},knownInvocations=invocations.copy(),
+                        positiveMainPIDProofs={peer:{'process':leader.copy(),'invocation':invocations[peer]}},
+                        tasks=[leader.copy()],rootParentCustody=[(pool,[7,8,0o40755,0,0,2,1,1])])
+                backend.validate_pool=proof
+                backend.inspect=lambda unit:('failed',props(unit),True)if unit==own else(None,props(unit),False)
+                backend.whole_owned_cgroup=lambda unit,p:dict(empty=unit==own,includesUID0=True,
+                    completeTraversal=True,derivedPath=pool+'/'+unit,processes=[]if unit==own else[os.getpid()],absent=unit==own)
+                def manager(*args,**kwargs):
+                    self.assertEqual(args[0],'show','monitor/finalizer never stops the live peer')
+                    return props(args[1])
+                typed=dict(type='TransientProcRevalidationObservation',reason='previously observed proc task vanished during revalidation',
+                    errno=2,tid=child.pid,path=str(proc),stage='previous-task-revalidation',
+                    process=dict(tid=child.pid,tgid=child.pid,start=start,ppid=os.getpid(),uids=[os.getuid()]*4,cgroup=pool+'/'+peer),
+                    originalFailure={'type':'FileNotFoundError','reason':'real reaped child'})
+                rows=q.pool_rows(db,db.execute('SELECT * FROM jobs ORDER BY rowid').fetchall())
+                reservations=[dict(unit=r['unit'],cpus=json.loads(r['cpus']),memory=json.loads(r['spec'])['memory'],
+                    resources=json.loads(r['spec'])['resources'],invocation=r['_poolBinding']['invocation'])for r in rows]
+                error=q.PoolAdmissionFailure('actual terminal peer proc observation',dict(admitted=False,
+                    reservationRetained=True,operationOrReleaseAuthorized=False,recordedReservations=reservations,
+                    firstFailure={'firstFailure':typed,'closeOutcomes':[{'label':'proc-'+str(child.pid),'closed':True,'UNKNOWN':False}]}))
+                saved=[tuple(r)for r in db.execute('SELECT * FROM jobs')]
+                peer_before=dict(db.execute("SELECT * FROM jobs WHERE id='live-control'").fetchone())
+                bindings=[tuple(r)for r in db.execute('SELECT * FROM pool_unit_bindings')]
+                with patch.object(q,'_RAW_SYSTEMCTL',side_effect=manager):
+                    observed=q.monitor_membership_race(db,backend,error)
+                    self.assertEqual([tuple(r)for r in db.execute('SELECT * FROM jobs')],saved)
+                    records=observed['originalReadonlyMonitor'];self.assertIs(records[0]['terminalUnitObservation']['ownedCgroupProof']['empty'],True)
+                    self.assertNotIn('terminalUnitObservation',records[1])
+                    self.assertIs(records[-1]['freshWholePoolProof']['currentWholePoolEmpty'],False)
+                    self.assertIs(observed['newAdmissionEffectsReleaseForbidden'],True)
+                    q.tick(root,db,backend,cfg)
+                    final=dict(db.execute("SELECT * FROM jobs WHERE id='failed-ubuntu'").fetchone())
+                    result=json.loads(final['result']);self.assertEqual(final['state'],'failed')
+                    self.assertIsNotNone(final['finished']);self.assertEqual(result['terminalLifecycle']['phase'],'CLOSED')
+                    self.assertIs(result['terminalLifecycle']['reservationRetained'],False)
+                    q.tick(root,db,backend,cfg)  # terminal writer is not invoked a second time
+                    self.assertEqual(dict(db.execute("SELECT * FROM jobs WHERE id='failed-ubuntu'").fetchone()),final)
+                self.assertEqual(dict(db.execute("SELECT * FROM jobs WHERE id='live-control'").fetchone()),peer_before)
+                self.assertEqual([tuple(r)for r in db.execute('SELECT * FROM pool_unit_bindings')],bindings)
+                self.assertEqual((root/'logs/failed-ubuntu/stderr.log').read_text(),'actual preparation FIRST retained\n')
+            finally:db.close()
 
     @unittest.skipUnless(os.geteuid() == 0 and sys.platform == 'linux', 'admitted Linux Root only')
     def test_whole_history_normal_record_to_real_issuer_beyond_metadata_leaf(self):

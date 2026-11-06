@@ -15,7 +15,7 @@ CONFIG = Path.home()/'.config/opemos-ci/robot.json'
 HOOK = '/home/connor/.local/libexec/opemos-robot-job-plan'
 FULL9 = ('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
 SHA = re.compile(r'[0-9a-f]{64}\Z')
-MODULE_PINS={'omen_ci_reader.py': '6b2d97a373001e8835400d5be22cef8c06004dab5c228bc1efbe7078dfe464df', 'omen_ci_executables.py': '0a94a6068019795bbb3698fcacabd60dc632f863b6504fc183791b00aad56440', 'omen_ci_result.py': '5baa682b9bd7b625d817b857befa7b180edf025bf1b8ab60e7de0a77fd456f85', 'omen_ci_stage.py': 'd7095c2ea151118ff35f4ae34ec7aee23a9febe14933f49b548ee948f7903dff', 'omen_ci_inventory.py': 'e8873930651d4e1022fd3851b9bc35400ff54310e1d904f5d01c0f7dd903119e'}
+MODULE_PINS={'omen_ci_reader.py': '6b2d97a373001e8835400d5be22cef8c06004dab5c228bc1efbe7078dfe464df', 'omen_ci_executables.py': '0a94a6068019795bbb3698fcacabd60dc632f863b6504fc183791b00aad56440', 'omen_ci_result.py': '5baa682b9bd7b625d817b857befa7b180edf025bf1b8ab60e7de0a77fd456f85', 'omen_ci_stage.py': 'fc5c44a4f943911911aceffaa956e94ae83b7224c56e9061c05ec714ea7bbfd9', 'omen_ci_inventory.py': 'e8873930651d4e1022fd3851b9bc35400ff54310e1d904f5d01c0f7dd903119e'}
 
 
 def require(value, message):

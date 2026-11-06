@@ -546,9 +546,10 @@ def queue_status(config, diagnostic=None):
             return {row['id']:row for row in jobs}
         try:
             before=os.fstat(fd)
-            core=lambda s:(s.st_dev,s.st_ino,s.st_mode,s.st_uid,s.st_gid,s.st_nlink)
+            core=lambda s:(s.st_dev,s.st_ino,s.st_mode,s.st_uid,s.st_gid,s.st_nlink,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
             require(stat.S_ISREG(before.st_mode)and before.st_uid==os.getuid()and
-                    before.st_nlink==1 and not before.st_mode&0o022,'ordinary worker lock custody')
+                    before.st_gid==os.getgid()and before.st_nlink==1 and before.st_size==0 and
+                    not before.st_mode&0o113,'ordinary worker lock custody')
             try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB);free=True
             except BlockingIOError:free=False
             require(core(before)==core(os.fstat(fd))==core(lock.lstat()),'same actual dispatcher lock')

@@ -154,7 +154,7 @@ class OrdinaryDispatcherStartup(unittest.TestCase):
         self.state=self.root/'state'
         with contextlib.redirect_stdout(io.StringIO()):self.q.main(['--queue',str(self.state),'init'])
         gc.collect()
-        lock=self.state/'worker.lock';lock.write_bytes(b'');lock.chmod(0o600)
+        lock=self.state/'worker.lock';lock.write_bytes(b'');lock.chmod(0o664)
         marker=self.root/'admission.json';marker.write_text('{"fixtureOnly":true}');marker.chmod(0o600)
         self.job={'id':'correlated-unstarted-ubuntu','owner':'exe','platform':'ubuntu',
                   'command':['/usr/bin/true'],'cwd':str(self.root),'files':[str(marker)],
@@ -206,6 +206,22 @@ class OrdinaryDispatcherStartup(unittest.TestCase):
         with self.assertRaises(stage.MetadataConsumerFailure):stage.queue_call(self.config,'fail-unstarted',[wrong_pin])
         row=stage.queue_status(self.config)[self.job['id']]
         self.assertEqual(row['state'],'pending');self.assertIsNone(row['unit'])
+
+    def test_native_empty_worker_lock_accepts_0664_but_refuses_executable_otherwrite_or_content(self):
+        lock=self.state/'worker.lock'
+        cut={};stage.queue_status(self.config,diagnostic=cut)
+        self.assertIs(cut['worker_lock_free'],True)
+        for mode,content in((0o764,b''),(0o666,b''),(0o664,b'not an empty native lock')):
+            with self.subTest(mode=oct(mode),content=bool(content)):
+                lock.write_bytes(content);lock.chmod(mode)
+                with self.assertRaisesRegex(ValueError,'worker lock custody'):
+                    stage.queue_status(self.config,diagnostic={})
+                with self.assertRaises(stage.MetadataConsumerFailure):
+                    stage.queue_call(self.config,'fail-unstarted',[self.pin])
+                self.assertEqual(stage.queue_status(self.config)[self.job['id']]['state'],'pending')
+        lock.write_bytes(b'');lock.chmod(0o664)
+        result=stage.queue_call(self.config,'fail-unstarted',[self.pin])
+        self.assertEqual(result['closed_unstarted'],[self.job['id']])
 
     def test_absent_worker_with_started_or_unknown_work_fails_without_release(self):
         import sqlite3

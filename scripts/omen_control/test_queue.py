@@ -3574,6 +3574,24 @@ def monitor_first_proc_absence(typed):
         require(io.fd_id(root)==meta==io.path_id('/proc'),'held proc root changed after first-read absence proof')
     return {'incompleteOriginalIdentityPreserved':True,'currentPathAbsenceOnly':records,'allOwnedDescriptorsClosed':True,'operationOrReleaseAuthorized':False}
 
+def monitor_current_unit(backend,ctx,props,fresh):
+    # A live peer keeps the pool populated after another unit has exited.
+    # Observe that unit independently; this does not release its reservation.
+    if terminal_observation(props):
+        proof=backend.whole_owned_cgroup(ctx.unit,props)
+        require(proof.get('empty')is True,'terminal monitored unit still has owned descendants')
+        ctx.ledger_current()
+        after=exact_unit_observation(backend,ctx.unit)
+        require(all(after.get(k)==props.get(k)for k in _EFFECT_FIELDS),
+                'terminal monitored invocation changed during own-group observation')
+        return {'properties':props,'ownedCgroupProof':proof,
+                'reservationRetained':True,'operationOrReleaseAuthorized':False}
+    require(fresh.get('currentWholePoolEmpty')is False and
+            props.get('ActiveState')in('activating','active','deactivating','reloading')and
+            (props.get('ActiveState'),props.get('SubState'))!=('active','exited'),
+            'nonterminal monitored unit requires positively owned live invocation')
+    return None
+
 def monitor_first_proc_read_exit(db,backend,error,typed,rows,running,records):
     original=typed['originalFailure'];require(type(original)is dict and set(original)=={'type','reason'} and original['type']in('ProcessLookupError','FileNotFoundError') and type(original['reason'])is str,'original concrete first-read refusal retained')
     require(typed['originalStart']=='UNKNOWN_FIRST_OBSERVATION_INCOMPLETE','no invented first-observation identity')
@@ -3586,8 +3604,8 @@ def monitor_first_proc_read_exit(db,backend,error,typed,rows,running,records):
         row=next(r for r in running if r['id']==record['jobId']);ctx=ExpectedInvocation(backend,db,row);ctx.ledger_current();props=exact_unit_observation(backend,ctx.unit);epoch=fresh['unitProperties'][ctx.unit]['properties']
         require(props.get('LoadState')=='loaded'and props.get('InvocationID')==ctx.invocation and props.get('ControlGroup')in('', '/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/'+ctx.unit)and all(props.get(k)==epoch.get(k)for k in('LoadState','InvocationID','MainPID','ActiveState','SubState','ControlGroup')),'fresh exact original invocation/manager epoch')
         require(int(props.get('MainPID','0'))!=typed['tid'],'known original MainPID absence never positive')
-        if fresh.get('currentWholePoolEmpty')is True:require(terminal_observation(props),'empty pool alone never terminal proof')
-        else:require(props.get('ActiveState')in('activating','active','deactivating','reloading'),'nonempty pool requires positively owned current invocation')
+        terminal=monitor_current_unit(backend,ctx,props,fresh)
+        if terminal is not None:record['terminalUnitObservation']=terminal
     require(0<=time.monotonic()-fresh['completedMonotonic']<=1,'bounded fresh first-read monitoring proof')
     records.append({'incompleteFirstReadObservation':typed,'freshWholePoolProof':fresh,'currentTaskAbsence':absent,'reservationRetained':True,'operationOrReleaseAuthorized':False})
     return {'firstFailure':error,'originalReadonlyMonitor':records,'newAdmissionEffectsReleaseForbidden':True,'originalServiceNotCancelled':True}
@@ -3689,8 +3707,8 @@ def monitor_proc_revalidation_exit(db,backend,error,typed,rows,running,records):
         row=next(r for r in running if r['id']==record['jobId']);ctx=ExpectedInvocation(backend,db,row);ctx.ledger_current();props=exact_unit_observation(backend,ctx.unit);epoch=fresh['unitProperties'][ctx.unit]['properties']
         require(props.get('LoadState')=='loaded' and props.get('InvocationID')==ctx.invocation and props.get('ControlGroup')in('', '/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/'+ctx.unit) and all(props.get(k)==epoch.get(k)for k in ('LoadState','InvocationID','MainPID','ActiveState','SubState','ControlGroup')),'fresh exact original invocation/manager epoch')
         require(int(props.get('MainPID','0'))!=typed['tid'],'known original MainPID missing is not a positive monitoring proof')
-        if fresh.get('currentWholePoolEmpty')is True:require(terminal_observation(props),'empty pool alone never terminal proof')
-        else:require(props.get('ActiveState')in('activating','active','deactivating','reloading'),'nonempty current pool requires still-known invocation')
+        terminal=monitor_current_unit(backend,ctx,props,fresh)
+        if terminal is not None:record['terminalUnitObservation']=terminal
     require(0<=time.monotonic()-fresh['completedMonotonic']<=1,'fresh bounded proc exit observation')
     records.append({'procRevalidationExitObservation':typed,'freshWholePoolProof':fresh,'observedTaskAbsence':absent,'reservationRetained':True,'operationOrReleaseAuthorized':False})
     return {'firstFailure':error,'originalReadonlyMonitor':records,'newAdmissionEffectsReleaseForbidden':True,'originalServiceNotCancelled':True}
@@ -4131,9 +4149,10 @@ def fail_unstarted(root,db,jobs):
     fd=os.open(lock_path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
     try:
         before=os.fstat(fd)
-        core=lambda s:(s.st_dev,s.st_ino,s.st_mode,s.st_uid,s.st_gid,s.st_nlink)
+        core=lambda s:(s.st_dev,s.st_ino,s.st_mode,s.st_uid,s.st_gid,s.st_nlink,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
         require(stat.S_ISREG(before.st_mode)and before.st_uid==os.getuid()and
-                before.st_nlink==1 and not before.st_mode&0o022,
+                before.st_gid==os.getgid()and before.st_nlink==1 and before.st_size==0 and
+                not before.st_mode&0o113,
                 'actual ordinary dispatcher lock custody')
         fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
         with db:
