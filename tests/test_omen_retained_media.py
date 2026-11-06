@@ -2630,6 +2630,12 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             queueLoggerSHA256=policy['queueLoggerSHA256'],sources=sources,
             policy=dict(kind='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1',sourceAccepted=True,
                 runtimeAuthorized=True,sourceCommit=policy['mainCommit'],queueSourceSHA256=policy['queueSourceSHA256']))
+        original_job='root-github-robot-control-'+'d'*32
+        closure=dict(oldRowId=original_job,currentManager={'MainPID':'0','ControlGroup':''},
+            fullUID0Group={'absent':True},oldDispatcherAbsent=True,oldListenerAbsent=True)
+        closure_raw=cycle.enc(closure)
+        template['oldControl']=dict(closedReceiptHex=closure_raw.hex(),
+            closedReceiptSHA256=cycle.sha(closure_raw),liveMainPID=0,liveUID0Absent=True)
         raw=cycle.enc(template);policy['normalTemplateSHA256']=cycle.sha(raw)
         wrapper=(SOURCE/'runner21_recovery.py').read_bytes()
         with mock.patch.object(cycle,'REMOTE_MODULES',{'runner21_recovery.py':wrapper.hex()},create=True), \
@@ -2638,6 +2644,17 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             remote=cycle.module(cycle.ROOT/'runner21_recovery.py',cycle.sha(wrapper))
             with mock.patch.object(remote,'held',side_effect=AssertionError('no remote template file exists')):
                 self.assertEqual(remote.current_controller_definition(policy),template)
+                closed=dict(jobId=original_job,state='failed',terminalLifecycle='CLOSED',
+                    reservationRetained=False,listenerAlive=False,controllerAlive=False,workerAlive=False)
+                self.assertTrue(remote.current_closed_predecessor(policy,closed))
+                for fault in ('job','running','retained','actor'):
+                    wrong=copy.deepcopy(closed)
+                    if fault=='job':wrong['jobId']='root-github-robot-control-'+'e'*32
+                    elif fault=='running':wrong.update(state='running',terminalLifecycle=None)
+                    elif fault=='retained':wrong['reservationRetained']=True
+                    else:wrong['listenerAlive']=True
+                    with self.subTest(predecessor=fault),self.assertRaises(RuntimeError):
+                        remote.current_closed_predecessor(policy,wrong)
                 bad=dict(policy,normalTemplateSHA256='0'*64)
                 with self.assertRaisesRegex(RuntimeError,'authenticated current normal deployment definition'):
                     remote.current_controller_definition(bad)

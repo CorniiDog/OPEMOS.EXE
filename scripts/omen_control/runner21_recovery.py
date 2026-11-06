@@ -165,6 +165,25 @@ def validate_policy(p, now):
          p['maxBackoffSeconds']==900, 'bounded fixed cycle/backoff policy')
     return p
 
+def current_closed_predecessor(policy, control):
+    """Existing deployment receipt binds historical DATA independently of code."""
+    need(control['state'] in ('passed','failed','timed_out','blocked','unknown','output_limit')
+         and control['terminalLifecycle']=='CLOSED' and control['reservationRetained'] is False
+         and not any(control[k] for k in ('listenerAlive','controllerAlive','workerAlive')),
+         'different historical broker must be actually CLOSED and actorless')
+    old=current_controller_definition(policy)['oldControl']
+    raw=bytes.fromhex(old['closedReceiptHex'])
+    need(0<len(raw)<=65536 and sha(raw)==old['closedReceiptSHA256'],
+         'authenticated existing predecessor closure receipt')
+    receipt=strict(raw)
+    need(receipt['oldRowId']==control['jobId'] and
+         receipt['currentManager']['MainPID']=='0' and receipt['currentManager']['ControlGroup']==''
+         and receipt['fullUID0Group']['absent'] is True and receipt['oldDispatcherAbsent'] is True
+         and receipt['oldListenerAbsent'] is True and old['liveMainPID']==0
+         and old['liveUID0Absent'] is True,
+         'same exact closed predecessor in current deployment definition')
+    return True
+
 def validate_probe(v, policy, now):
     keys={'kind','atUnix','boot','protectedMain','mainCommit','protectedMainCommit','runnerId',
           'registeredRunnerId','runnerManifestSHA256','queueSourceSHA256',
@@ -240,10 +259,12 @@ def validate_probe(v, policy, now):
     if c['state']=='absent':
         need(v['controlBrokerSHA256'] is None,'absent control has no broker')
     elif v['controlBrokerSHA256']==policy['priorControlBrokerSHA256']:
-        need(c['jobId']=='root-github-robot-control-'+policy['currentReleaseTx'] and
-             c['state'] in ('running','pending','terminal_cleanup','passed','failed',
-                            'timed_out','blocked','unknown','output_limit'),
-             'old broker only with exact historical predecessor')
+        if c['jobId']!='root-github-robot-control-'+policy['currentReleaseTx']:
+            current_closed_predecessor(policy,c)
+        else:
+            need(c['state'] in ('running','pending','terminal_cleanup','passed','failed',
+                               'timed_out','blocked','unknown','output_limit'),
+                 'old broker only with exact historical predecessor')
     else:
         need(v['controlBrokerSHA256']==policy['controlBrokerSHA256'],
              'new current control broker source not authenticated')
