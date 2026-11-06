@@ -98,10 +98,16 @@ class RootInputs:
   ref=control['definitionPin'];root=Path(ref['path']).parent
   need(root.parent==Path('/run')and Path(ref['path']).name=='installed-controller.json','direct Root definition leaf')
   SOURCE_ROOT=str(root)
-  raw,helper=self.read_path(str(root/'source_contract.py'),0o444,65536)
+  _,original_helper=self.read_path(str(root/'source_contract.py'),0o444,65536)
+  reader_root=root
+  if self.implementationPin is not None:
+   current=Path(self.implementationPin['path']);reader_root=current.parent
+   need(current==reader_root/'installed-controller.json'and reader_root.parent==Path('/run')and re.fullmatch('opemos-media-source-[0-9a-f]{32}',reader_root.name),'separately pinned current definition reader')
+   self.implementationRoot=str(reader_root)
+  raw,helper=self.read_path(str(reader_root/'source_contract.py'),0o444,65536)
   need(helper['sha256']==SOURCE_CONTRACT_SHA,'exact reviewed shared definition implementation')
-  module=types.ModuleType('scoped_source_definition');module.__file__=str(root/'source_contract.py');exec(compile(raw,module.__file__,'exec'),module.__dict__)
-  value=module.read_definition(ref);need(value['sourceRoles']['source_contract']==helper,'same held definition implementation pin')
+  module=types.ModuleType('scoped_source_definition');module.__file__=str(reader_root/'source_contract.py');exec(compile(raw,module.__file__,'exec'),module.__dict__)
+  value=module.read_definition(ref);need(value['sourceRoles']['source_contract']==original_helper,'same held original definition helper DATA pin')
   need(value['deployment']['paths']['sourceRoot']==SOURCE_ROOT and re.fullmatch('[0-9a-f]{32}',value['guestNonce']),'typed protected deployment/guest lineage')
   self.definition=value;self.definitionPin=ref;NONCE=value['guestNonce'];CURRENT_DEFINITION=module
  def bind_implementation(self,ref):

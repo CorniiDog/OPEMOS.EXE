@@ -904,6 +904,12 @@ print(json.dumps({'uid':os.getuid(),'result':value,'defaultGuardRefused':True,'w
             payload['sources']['libvirt_access']=member(enrolled_subject_body('libvirt_access.py'))
             payload['sources']['libvirt_peer']=member(enrolled_subject_body('libvirt_peer.py'if prior_version is True else'prior-access-libvirt_peer.py'))
             payload['queueSources']['test_queue.py']=member(enrolled_subject_body('test_queue.py'if prior_version is True else'prior-access-test_queue.py'))
+            import zlib
+            original_contract=zlib.decompress((Path(__file__).parent/'fixtures/omen/source-contract-before-standalone.zlib').read_bytes())
+            self.assertEqual(hashlib.sha256(original_contract).hexdigest(),
+                '4cb604515bbb577e6448283a7b785249929c73216e890a06ca5c531e25bd6e5d')
+            payload['sources']['source_contract']=member(original_contract)
+            payload['queueSources']['source_contract.py']=member(original_contract)
         def deny_connect():
             class Filter(ctypes.Structure):
                 _fields_=[('code',ctypes.c_ushort),('jt',ctypes.c_ubyte),('jf',ctypes.c_ubyte),('k',ctypes.c_uint)]
