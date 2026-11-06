@@ -285,7 +285,17 @@ class Storage:
   b,_=N.checked(['/usr/sbin/losetup','--find','--show','--nooverlap',c['fixedBacking']],15,'loop-create');self.loop=b.decode().strip();self.acquired.append('returned-loop');C.require(self.loop.startswith('/dev/loop')and self.loop[9:].isdigit(),'actual returned loop association',self.loop)
   self.association('loop-before-format');self.loopfd=os.open(self.loop,os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC);self.acquired.append('held-own-loop-FD');C.require(stat.S_ISBLK(os.fstat(self.loopfd).st_mode)and os.major(os.fstat(self.loopfd).st_rdev)==7,'exact owned mutable storage loop FD');N.checked(['/usr/sbin/mkfs.ext4','-F','-q','-m','0',self.loop],120,'mkfs');os.mkdir(c['mount'],0o700);self.acquired.append('created-mount-directory')
   N.checked(['/usr/bin/mount','-t','ext4','-o','rw,nosuid,nodev,noexec',self.loop,c['mount']],15,'mount');self.mounted=True;self.acquired.append('mounted')
-  self.mountfd=os.open(c['mount'],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);self.mountIdentity=C.F(os.fstat(self.mountfd));os.chown(c['mount'],1000,1000);self.mountIdentity=C.F(os.fstat(self.mountfd));self.check('mounted');return self
+  self.mountfd=os.open(c['mount'],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+  self.mountIdentity=C.F(os.fstat(self.mountfd));self.check('before-mounted-root-permissions')
+  C.require(os.fstat(self.mountfd).st_dev==os.fstat(self.loopfd).st_rdev,
+            'held mounted root belongs to exact own loop')
+  # Mounting hides the 0700 mountpoint with ext4's newly formatted root (0755).
+  # Change only that held filesystem root, never a pathname or a prior volume.
+  os.fchown(self.mountfd,1000,1000);os.fchmod(self.mountfd,0o700);os.fsync(self.mountfd)
+  root=os.fstat(self.mountfd)
+  C.require(root.st_uid==root.st_gid==1000 and stat.S_IMODE(root.st_mode)==0o700 and
+            Fsame(root,Path(c['mount']).lstat(),C),'actual private ordinary mounted root owner/mode')
+  self.mountIdentity=C.F(root);self.check('mounted');return self
  def association(self,stem):
   b,_=self.N.checked(['/usr/sbin/losetup','--json','--list','--output','NAME,BACK-FILE,BACK-INO,BACK-MAJ:MIN,OFFSET,SIZELIMIT,RO',self.loop],15,stem)
   rows=json.loads(b)['loopdevices'];self.C.require(len(rows)==1,'one exact owned loop');r=rows[0];self.C.require(r['name']==self.loop and r['back-file']==self.c['fixedBacking']and int(r['back-ino'])==self.rawIdentity['st_ino']and r['back-maj:min']==str(os.major(self.rawIdentity['st_dev']))+':'+str(os.minor(self.rawIdentity['st_dev']))and r['ro']is False and int(r['offset'])==0 and int(r['sizelimit'])in(0,self.c['fixedStorageBytes']),'loop backed by exact generated inode',r);return r

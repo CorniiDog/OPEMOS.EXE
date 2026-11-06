@@ -685,7 +685,7 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                       if x.startswith('CapEff:')),16)
         if os.geteuid()!=0 or not caps&(1<<21):
             self.skipTest('actual Root CAP_SYS_ADMIN unavailable; private ext4 coverage NOT established')
-        if not all(shutil.which(x)for x in('unshare','losetup','mkfs.ext4','mount','umount')):
+        if not all(shutil.which(x)for x in('unshare','losetup','mkfs.ext4','mount','umount','genisoimage')):
             self.skipTest('real namespace/loop/ext4 tools unavailable')
         source=Path(__file__).resolve().parents[1]/'scripts/omen_control'
         body=r'''
@@ -727,18 +727,21 @@ config={'fixedBacking':str(generation/'generated.raw'),'mount':str(root/'scratch
  'outerMountNamespace':sys.argv[3],'jobId':'actual-fixture-owned-storage','boot':Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
 baseline=set(os.listdir('/proc/self/fd'));store=storage.Storage(config,C,N,None);store.open()
 actual=store.check('real-private-mount');assert actual['device']==Path(config['mount']).stat().st_dev
+mounted_root=os.fstat(store.mountfd)
+assert mounted_root.st_uid==mounted_root.st_gid==1000 and stat.S_IMODE(mounted_root.st_mode)==0o700
+assert mounted_root.st_dev==os.fstat(store.loopfd).st_rdev
 assert store.loopfd is not None and stat.S_ISBLK(os.fstat(store.loopfd).st_mode)
 Path(config['mount'],'actual-owned-data').write_bytes(b'actual retained private ext4 data\n')
 readable=root/'user-modules';readable.mkdir(mode=0o755);readable.chmod(0o755)
 for name,path in(('virtual_usb.py',Path(sys.argv[1])/'virtual_usb.py'),
+                 ('prepare_observer_iso.py',Path(sys.argv[1])/'prepare_observer_iso.py'),
+                 ('observer_guest.py',Path(sys.argv[1])/'observer_guest.py'),
                  ('vm_write_ceiling.py',Path(sys.argv[1]).parent/'vm_write_ceiling.py')):
  source_bytes=path.read_bytes();target=readable/name
  with target.open('xb')as stream:stream.write(source_bytes);stream.flush();os.fsync(stream.fileno())
  target.chmod(0o444);assert target.read_bytes()==source_bytes
-def ordinary():
- os.setgroups([]);os.setgid(1000);os.setuid(1000)
 user_code=r"""
-import os,sys,json,hashlib
+import os,sys,json,hashlib,zipfile,stat
 from pathlib import Path
 sys.path.insert(0,sys.argv[1]);sys.path.insert(0,str(Path(sys.argv[1]).parent));import virtual_usb as usb
 assert os.getresuid()==(1000,1000,1000)and os.getresgid()==(1000,1000,1000)
@@ -751,12 +754,43 @@ with usb.virtual_usb_backing(sys.argv[2],1048576,0)as(backing,fd):
  s=usb.virtual_usb_identity(backing,fd);assert s.st_uid==s.st_gid==1000 and s.st_nlink==1
  fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
  assert {k:getattr(s,k)for k in fields}=={k:getattr(Path(backing['path']).lstat(),k)for k in fields}
- print(json.dumps({'uid':os.getuid(),'bytesRead':len(actual),'sha256':hashlib.sha256(actual).hexdigest(),'RootRawRefused':True}))
+ proof={'uid':os.getuid(),'bytesRead':len(actual),'sha256':hashlib.sha256(actual).hexdigest(),'RootRawRefused':True}
+# Exercise the real preparation consumer against the actual mounted ext4 root,
+# not the hidden 0700 mountpoint or a modeled local directory.
+import prepare_observer_iso as preparation
+mount=Path(sys.argv[4]);metadata=mount.lstat()
+assert metadata.st_uid==metadata.st_gid==1000 and stat.S_IMODE(metadata.st_mode)==0o700
+def pin(path):
+ raw=path.read_bytes();s=path.lstat()
+ return {'path':str(path),'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),
+         'identity':{k:getattr(s,k)for k in fields}}
+package=b'opaque mounted-root fixture package DATA';native=b'opaque native DATA'
+archive=mount/'candidate.zip'
+with zipfile.ZipFile(archive,'x')as stream:
+ stream.writestr('package.AppImage',package);stream.writestr('native',native)
+ stream.writestr('package.AppImage.runtime/appliance/fixture',b'opaque appliance DATA')
+archive.chmod(0o400);archive_pin=pin(archive);nonce='e'*32;source='a'*40
+descriptor={'platform':'ubuntu','repository':'CorniiDog/OPEMOS.EXE','source_commit':source,
+ 'artifact_archive_sha256':archive_pin['sha256'],'package_name':'package.AppImage',
+ 'package_sha256':hashlib.sha256(package).hexdigest(),'package_bytes':len(package),
+ 'executable_name':'native','executable_sha256':hashlib.sha256(native).hexdigest(),'executable_bytes':len(native)}
+cfg={'nonce':nonce,'source_commit':source,'candidate':{'archive':archive_pin,'descriptor':descriptor},
+ 'prepared_directory':str(mount/'prepared'),'expanded_limit':1048576,
+ 'observer_source':pin(Path(sys.argv[1])/'observer_guest.py'),
+ 'guest_operation':{'nonce':nonce,'source_commit':source,'package_sha256':descriptor['package_sha256'],
+                    'native_executable_sha256':descriptor['executable_sha256'],'usb_serial':'opemos-'+nonce}}
+config_path=mount/'prepare.json';config_path.write_text(json.dumps(cfg));config_path.chmod(0o400)
+result=preparation.pipeline_medium(json.loads(preparation.held_input(pin(config_path),1048576,1000)))
+iso=Path(result['path']);assert iso.stat().st_size==result['bytes']and hashlib.sha256(iso.read_bytes()).hexdigest()==result['sha256']
+assert hashlib.sha256(archive.read_bytes()).hexdigest()==archive_pin['sha256']
+proof.update(actualMountedRootMode='0700',realPreparationISO=True,candidateExecuted=False)
+print(json.dumps(proof))
 """
-user=subprocess.run([sys.executable,'-I','-B','-',str(readable),str(generation/'usb'),config['fixedBacking']],
- input=user_code,text=True,capture_output=True,timeout=15,preexec_fn=ordinary)
+user=subprocess.run([sys.executable,'-I','-B','-',str(readable),str(generation/'usb'),config['fixedBacking'],config['mount']],
+ input=user_code,text=True,capture_output=True,timeout=30,user=1000,group=1000,extra_groups=[])
 assert user.returncode==0,user.stderr;unprivileged=json.loads(user.stdout)
 assert unprivileged['uid']==1000 and unprivileged['bytesRead']==1048576 and unprivileged['RootRawRefused']is True
+assert unprivileged['actualMountedRootMode']=='0700'and unprivileged['realPreparationISO']is True
 child=subprocess.Popen([sys.executable,'-I','-c','import os,sys,time;f=os.open(sys.argv[1],os.O_RDONLY);print(f,flush=True);time.sleep(30)',config['fixedBacking']],stdout=subprocess.PIPE,text=True)
 fd=int(child.stdout.readline());real=Path('/proc')/str(child.pid)/'fd'/str(fd)
 assert real.stat().st_ino==Path(config['fixedBacking']).stat().st_ino
