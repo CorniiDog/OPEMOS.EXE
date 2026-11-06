@@ -16,6 +16,12 @@ USER_ENV=['/usr/sbin/runuser','-u','connor','--','/usr/bin/env',
           'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus']
 ACTIONS={'CREATE','RESUME_PENDING','RECONCILE_CLOSED',
          'GRACEFUL_RENEW','REFRESH_HEARTBEAT'}
+# A normal drain returns 1 when retained history contains failures. Reentry
+# applies only to the demonstrated unexpected worker-error exit 2, once over
+# this unit's lifetime. The queue repeats all source/lock/admission guards.
+DISPATCHER_REENTRY_PROPERTIES=['--property=Restart=no','--property=RestartForceExitStatus=2',
+    '--property=RestartSec=2','--property=StartLimitIntervalSec=infinity',
+    '--property=StartLimitBurst=2']
 
 def need(ok,why):
     if not ok:raise RuntimeError(why)
@@ -400,7 +406,7 @@ def dispatch(tx,policy,probe_module):
     unit='opemos-root-robot-dispatcher-'+tx+'.service'
     argv=USER_ENV+['/usr/bin/systemd-run','--user','--unit='+unit,
            '--property=RuntimeMaxSec=21700','--property=TimeoutStopSec=40',
-           '--property=KillMode=control-group',str(QUEUE/'queue.sh'),
+           '--property=KillMode=control-group',*DISPATCHER_REENTRY_PROPERTIES,str(QUEUE/'queue.sh'),
            '--queue',str(QUEUE/'state'),'run']
     p=run(argv,timeout=20,cap=65536)
     notice=p.stderr.decode(errors='strict').strip()

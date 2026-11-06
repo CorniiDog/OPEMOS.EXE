@@ -4116,6 +4116,50 @@ def collected_libvirt_failed_root_equal(request,observed,original,stateRoot):
         k:v for k,v in original.items()if k not in ('completedMonotonic','actor')}
 
 
+def fail_unstarted(root,db,jobs):
+    """Close only this caller's exact never-started Ubuntu jobs.
+
+    The existing worker lock excludes a concurrent launch. A dead wait must
+    not leave its pending operation available for a detached later launch.
+    Running jobs and all retained/unknown reservations remain untouched.
+    """
+    require(1<=len(jobs)<=20 and len({j['id']for j in jobs})==len(jobs),
+            'bounded distinct unstarted operation')
+    require(all(j['owner']=='exe'and j['platform']=='ubuntu'for j in jobs),
+            'only owning EXE Ubuntu startup failure')
+    lock_path=root/'worker.lock'
+    fd=os.open(lock_path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    try:
+        before=os.fstat(fd)
+        core=lambda s:(s.st_dev,s.st_ino,s.st_mode,s.st_uid,s.st_gid,s.st_nlink)
+        require(stat.S_ISREG(before.st_mode)and before.st_uid==os.getuid()and
+                before.st_nlink==1 and not before.st_mode&0o022,
+                'actual ordinary dispatcher lock custody')
+        fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        with db:
+            db.execute('BEGIN IMMEDIATE')
+            for job in jobs:
+                row=db.execute('SELECT * FROM jobs WHERE id=?',(job['id'],)).fetchone()
+                require(row is not None and row['state']=='pending'and
+                        all(row[k]is None for k in('unit','cpus','started','finished','result'))and
+                        row['spec']==canonical(job)and
+                        db.execute('SELECT 1 FROM pool_unit_bindings WHERE job_id=?',(job['id'],)).fetchone()is None,
+                        'same complete never-launched job/spec and no invocation')
+            require(core(before)==core(os.fstat(fd))==core(lock_path.lstat()),
+                    'same held named dispatcher lock before pending closure')
+            result={'reason':'Ordinary dispatcher unavailable before startup after bounded recovery grace',
+                    'launched':False,'reservationRetained':False,
+                    'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False,
+                                         'automaticRetryAuthorized':False}}
+            for job in jobs:
+                updated=db.execute("UPDATE jobs SET state='failed',finished=?,result=? WHERE id=? AND state='pending' AND spec=?",
+                                   (time.time(),canonical(result),job['id'],canonical(job)))
+                require(updated.rowcount==1,'same unstarted row at normal closure')
+        return {'closed_unstarted':[j['id']for j in jobs],'reservationRetained':False,
+                'launched':False,'automaticRetryAuthorized':False}
+    finally:os.close(fd)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--queue", type=Path, default=Path(__file__).parent / "test-queue-state")
@@ -4123,6 +4167,8 @@ def main(argv=None):
     commands.add_parser("init")
     submit = commands.add_parser("submit")
     submit.add_argument("manifests", type=Path, nargs="+")
+    fail_pending=commands.add_parser('fail-unstarted')
+    fail_pending.add_argument('manifests',type=Path,nargs='+')
     add = commands.add_parser("add", help="One job per test file, using the supplied runner")
     add.add_argument("files", type=Path, nargs="+")
     add.add_argument("--runner", required=True, help="Single executable, e.g. python3 or pytest")
@@ -4158,7 +4204,7 @@ def main(argv=None):
         print(canonical(cfg))
         return 0
     cfg = config(db)
-    if args.action == "submit":
+    if args.action in ("submit", "fail-unstarted"):
         jobs = []
         for path in args.manifests:
             require(path.stat().st_size <= 1024 ** 2, "Manifest exceeds 1MiB")
@@ -4172,8 +4218,12 @@ def main(argv=None):
             require(type(manifest) is dict and set(manifest) == {"version", "jobs"} and
                     manifest["version"] == 1 and type(manifest["jobs"]) is list, "Expected version1/jobs manifest")
             jobs += [normalize_job(j, path.absolute().parent) for j in manifest["jobs"]]
-        enqueue(db, jobs)
-        print(canonical({"queued": [x["id"] for x in jobs]}))
+        if args.action=='submit':
+            enqueue(db, jobs)
+            print(canonical({"queued": [x["id"] for x in jobs]}))
+        else:
+            try:print(canonical(fail_unstarted(root,db,jobs)))
+            finally:db.close()
     elif args.action == "add":
         approval = file_pin(args.approval)
         jobs = []

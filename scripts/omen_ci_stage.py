@@ -379,7 +379,7 @@ def queue_call(config, action, manifests=(), capture_receipt=None):
     """
     import contextlib
     import types
-    require(action in ("status", "submit"), "CI never starts/replaces a queue worker")
+    require(action in ("status", "submit", "fail-unstarted"), "CI never starts/replaces a queue worker")
     modules = {}
     for item in config["queue_modules"]:
         require(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", item["module"]), "Declared module name required")
@@ -539,6 +539,21 @@ def queue_status(config, diagnostic=None):
     if diagnostic is not None:
         diagnostic.update(job_rows=len(jobs), pool_sha256=pool_sha, all_rows_retained=True,
                           top_level_keys=sorted(payload), mutation="normal status only; no submit/run/dispatch/expire")
+        lock=queue/'worker.lock'
+        try:fd=os.open(lock,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+        except FileNotFoundError:
+            diagnostic['worker_lock_free']=None  # unknown; never absence proof
+            return {row['id']:row for row in jobs}
+        try:
+            before=os.fstat(fd)
+            core=lambda s:(s.st_dev,s.st_ino,s.st_mode,s.st_uid,s.st_gid,s.st_nlink)
+            require(stat.S_ISREG(before.st_mode)and before.st_uid==os.getuid()and
+                    before.st_nlink==1 and not before.st_mode&0o022,'ordinary worker lock custody')
+            try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB);free=True
+            except BlockingIOError:free=False
+            require(core(before)==core(os.fstat(fd))==core(lock.lstat()),'same actual dispatcher lock')
+            diagnostic['worker_lock_free']=free
+        finally:os.close(fd)
     return {row["id"]: row for row in jobs}
 
 
@@ -546,6 +561,43 @@ def closed_jobs(job_ids, rows):
     return all(job in rows and rows[job].get("state") in TERMINAL
                and not ((rows[job].get("result") or {}).get("reason", "").startswith("Unit evidence missing"))
                for job in job_ids)
+
+
+def wait_jobs(config,job_ids,manifests,deadline,diagnostic):
+    """Wait on the real queue, with a finite absent-dispatcher startup grace.
+
+    The existing manager may reenter its source-pinned queue once. This wait
+    never launches/replaces a worker or a VM. If the worker remains absent,
+    only the normal exact-manifest pending closure API may end this request.
+    """
+    absent_since=None
+    while True:
+        require(time.monotonic()<deadline,'Original normal queue deadline; active closure UNKNOWN, no retry/cleanup')
+        cut={};rows=queue_status(config,diagnostic=cut)
+        require(time.monotonic()<deadline,'Original normal queue deadline after status; closure UNKNOWN')
+        diagnostic.update(cut)
+        diagnostic['jobs']={j:{k:rows.get(j,{}).get(k)for k in('state','unit')}for j in job_ids}
+        if closed_jobs(job_ids,rows):return rows
+        pending=[j for j in job_ids if rows.get(j,{}).get('state')=='pending']
+        # Worker absence is distinct from job/VM absence. Mixed running or
+        # unknown work can fail this wait but is never cancelled or released.
+        unstarted=len(pending)==len(job_ids)and all(rows[j].get('unit')is None for j in pending)
+        now=time.monotonic()
+        absent_since=(now if absent_since is None else absent_since)if cut['worker_lock_free']is True else None
+        if absent_since is not None and now-absent_since>=30:
+            diagnostic['stage']='dispatcher-unavailable-before-startup'if unstarted else'dispatcher-unavailable-active-ownership-unknown'
+            diagnostic['first']='ordinary worker absent throughout 30s normal recovery grace'
+            diagnostic['closure']='UNKNOWN'
+            diagnostic['reservationRetained']=True
+            if unstarted:
+                try:
+                    diagnostic['normal_pending_closure']=queue_call(config,'fail-unstarted',manifests)
+                    after=queue_status(config)
+                    if closed_jobs(job_ids,after):diagnostic.update(closure='CLOSED',reservationRetained=False)
+                except Exception as error:
+                    diagnostic['pending_closure_failure']={'type':type(error).__name__,'reason':str(error)}
+            raise ValueError('Ordinary dispatcher unavailable; correlated normal queue evidence: '+json.dumps(diagnostic,sort_keys=True))
+        time.sleep(min(5,max(0,deadline-time.monotonic())))
 
 
 def process_identity(value):
@@ -1832,13 +1884,9 @@ def dispatch(config, request, plan, root=ROOT):
         result["metadata_producer_custody"]["submit"] = submit_metadata
     if protected_jobs:
         deadline = started + config["wait_seconds"]
-        while time.monotonic() < deadline:
-            wait_metadata = {}
-            rows = queue_status(config, diagnostic=wait_metadata)
-            result["metadata_producer_custody"]["last_wait"] = wait_metadata
-            if closed_jobs(protected_jobs, rows):
-                break
-            time.sleep(10)
+        wait_metadata={}
+        try:rows=wait_jobs(config,protected_jobs,manifests,deadline,wait_metadata)
+        finally:result["metadata_producer_custody"]["last_wait"]=wait_metadata
     final_metadata = {}
     rows = queue_status(config, diagnostic=final_metadata)
     result["metadata_producer_custody"]["final"] = final_metadata

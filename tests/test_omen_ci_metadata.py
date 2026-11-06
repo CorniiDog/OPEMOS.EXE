@@ -142,6 +142,132 @@ class MetadataOwnedClosure(unittest.TestCase):
             finally:path.chmod(0o600)
 
 
+class OrdinaryDispatcherStartup(unittest.TestCase):
+    """Real queue/SQL/locks and normal close API; clock only is modeled."""
+    def setUp(self):
+        import contextlib,io,gc
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name);self.root.chmod(0o700)
+        source=path.parent/'omen_control/test_queue.py'
+        spec=importlib.util.spec_from_file_location('startup_actual_queue',source)
+        self.q=importlib.util.module_from_spec(spec);spec.loader.exec_module(self.q)
+        self.state=self.root/'state'
+        with contextlib.redirect_stdout(io.StringIO()):self.q.main(['--queue',str(self.state),'init'])
+        gc.collect()
+        lock=self.state/'worker.lock';lock.write_bytes(b'');lock.chmod(0o600)
+        marker=self.root/'admission.json';marker.write_text('{"fixtureOnly":true}');marker.chmod(0o600)
+        self.job={'id':'correlated-unstarted-ubuntu','owner':'exe','platform':'ubuntu',
+                  'command':['/usr/bin/true'],'cwd':str(self.root),'files':[str(marker)],
+                  'cores':1,'memory':'1GiB','timeout_seconds':30,'resources':['fixture-only'],
+                  'approval':{'path':str(marker),'sha256':hashlib.sha256(marker.read_bytes()).hexdigest()}}
+        self.manifest=self.root/'manifest.json';self.manifest.write_text(json.dumps({'version':1,'jobs':[self.job]}));self.manifest.chmod(0o600)
+        self.pin={'path':str(self.manifest),'sha256':hashlib.sha256(self.manifest.read_bytes()).hexdigest()}
+        cfg={'cpu_ids':self.q.DEFAULT_CPUS,'memory_bytes':self.q.DEFAULT_RAM,
+             'slice':'opemos-vm-pool.slice','manager':'system'}
+        self.config={'queue_dir':str(self.state),'queue_entry':{'path':str(source),
+                     'sha256':hashlib.sha256(source.read_bytes()).hexdigest()},'queue_modules':[],
+                     'queue_metadata':{'scratch_dir':str(self.state),'max_bytes':128*1024**2,'free_reserve_bytes':0},
+                     'pool_sha256':hashlib.sha256(json.dumps(cfg,sort_keys=True,separators=(',',':')).encode()).hexdigest()}
+        stage.queue_call(self.config,'submit',[self.pin])
+
+    def test_absent_dispatcher_fails_correlated_job_promptly_without_late_launch(self):
+        clock=[100.0];evidence={}
+        def sleep(seconds):clock[0]+=seconds
+        with mock.patch.object(stage.time,'monotonic',side_effect=lambda:clock[0]),mock.patch.object(stage.time,'sleep',side_effect=sleep):
+            with self.assertRaisesRegex(ValueError,'Ordinary dispatcher unavailable'):
+                stage.wait_jobs(self.config,[self.job['id']],[self.pin],10000,evidence)
+        self.assertLessEqual(clock[0],135)
+        self.assertEqual(evidence['closure'],'CLOSED')
+        self.assertEqual(evidence['normal_pending_closure']['closed_unstarted'],[self.job['id']])
+        row=stage.queue_status(self.config)[self.job['id']]
+        self.assertEqual(row['state'],'failed');self.assertIsNone(row['unit'])
+        self.assertIs(row['result']['launched'],False)
+        self.assertIs(row['result']['reservationRetained'],False)
+        # The normal scheduler cannot start this closed request later.
+        result=stage.queue_call(self.config,'status')
+        self.assertEqual(result['runnable_now'],[])
+
+    def test_live_worker_and_changed_manifest_refuse_pending_closure(self):
+        import subprocess,sys
+        body='import fcntl,sys;f=open(sys.argv[1]);fcntl.flock(f,fcntl.LOCK_EX);print("held",flush=True);sys.stdin.read(1)'
+        worker=subprocess.Popen([sys.executable,'-I','-c',body,str(self.state/'worker.lock')],
+                                stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
+        try:
+            self.assertEqual(worker.stdout.readline().strip(),'held')
+            with self.assertRaises(stage.MetadataConsumerFailure):
+                stage.queue_call(self.config,'fail-unstarted',[self.pin])
+            cut={};stage.queue_status(self.config,diagnostic=cut)
+            self.assertIs(cut['worker_lock_free'],False)
+        finally:
+            worker.stdin.close();worker.wait(timeout=5);worker.stdout.close()
+        wrong=dict(self.job,command=['/usr/bin/false'])
+        self.manifest.write_text(json.dumps({'version':1,'jobs':[wrong]}))
+        wrong_pin=dict(self.pin,sha256=hashlib.sha256(self.manifest.read_bytes()).hexdigest())
+        with self.assertRaises(stage.MetadataConsumerFailure):stage.queue_call(self.config,'fail-unstarted',[wrong_pin])
+        row=stage.queue_status(self.config)[self.job['id']]
+        self.assertEqual(row['state'],'pending');self.assertIsNone(row['unit'])
+
+    def test_absent_worker_with_started_or_unknown_work_fails_without_release(self):
+        import sqlite3
+        for state in('running','unknown'):
+            with self.subTest(state=state):
+                # Canonical/kernel execution is modeled; SQL/lock/wait are real.
+                with sqlite3.connect(self.state/'queue.sqlite3')as db:
+                    retained=json.dumps({'reason':'Unit evidence missing; original reservation retained'})if state=='unknown'else None
+                    db.execute('UPDATE jobs SET state=?,unit=?,started=?,cpus=?,result=? WHERE id=?',
+                               (state,'fixture-started-unit.service',1,'[0]',retained,self.job['id']))
+                db.close()  # sqlite's context commits; it does not close the FD
+                clock=[100.0];evidence={}
+                with mock.patch.object(stage.time,'monotonic',side_effect=lambda:clock[0]),mock.patch.object(stage.time,'sleep',side_effect=lambda n:clock.__setitem__(0,clock[0]+n)):
+                    with self.assertRaisesRegex(ValueError,'Ordinary dispatcher unavailable'):
+                        stage.wait_jobs(self.config,[self.job['id']],[self.pin],10000,evidence)
+                self.assertEqual(evidence['closure'],'UNKNOWN')
+                self.assertIs(evidence['reservationRetained'],True)
+                self.assertNotIn('normal_pending_closure',evidence)
+                row=stage.queue_status(self.config)[self.job['id']]
+                self.assertEqual((row['state'],row['unit']),(state,'fixture-started-unit.service'))
+                with self.assertRaises(stage.MetadataConsumerFailure):stage.queue_call(self.config,'fail-unstarted',[self.pin])
+
+    def test_late_status_cannot_extend_original_wait_deadline(self):
+        clock=[1.0];called=[]
+        def status(config,diagnostic):clock[0]=11.0;return {self.job['id']:{'state':'passed'}}
+        with mock.patch.object(stage.time,'monotonic',side_effect=lambda:clock[0]),mock.patch.object(stage,'queue_status',side_effect=status):
+            with self.assertRaisesRegex(ValueError,'deadline after status'):
+                stage.wait_jobs(self.config,[self.job['id']],[self.pin],10,{})
+
+    @unittest.skipUnless(os.getuid()==1000 and Path('/run/user/1000/bus').exists(),
+                         'actual ordinary user manager unavailable')
+    def test_real_existing_manager_reenters_error_two_once_but_not_normal_failure_one(self):
+        """Benign finite source fixture only; no listener, queue or VM effect."""
+        import subprocess,sys,time,uuid
+        source=path.parent/'omen_control/normal_cycle.py'
+        spec=importlib.util.spec_from_file_location('actual_dispatcher_properties',source)
+        cycle=importlib.util.module_from_spec(spec);spec.loader.exec_module(cycle)
+        env=dict(os.environ,XDG_RUNTIME_DIR='/run/user/1000',DBUS_SESSION_BUS_ADDRESS='unix:path=/run/user/1000/bus')
+        for code,expected in((2,2),(1,1)):
+            unit='opemos-source-fixture-reentry-'+uuid.uuid4().hex+'.service'
+            counter=self.root/('counter-'+str(code))
+            body='import os,sys;f=open(sys.argv[1],"a");f.write("attempt\\n");f.flush();os.fsync(f.fileno());f.close();sys.exit(int(sys.argv[2]))'
+            def call(args):return subprocess.run(args,env=env,capture_output=True,text=True,timeout=10)
+            try:
+                launch=call(['/usr/bin/systemd-run','--user','--unit='+unit,
+                    '--property=RuntimeMaxSec=10','--property=MemoryMax=67108864',
+                    '--property=MemorySwapMax=0','--property=AllowedCPUs=1',
+                    *cycle.DISPATCHER_REENTRY_PROPERTIES,sys.executable,'-I','-c',body,str(counter),str(code)])
+                self.assertEqual(launch.returncode,0,launch.stderr)
+                end=time.monotonic()+12
+                while True:
+                    props=call(['/usr/bin/systemctl','--user','show',unit,'-p','ActiveState','-p','MainPID','-p','ControlGroup'])
+                    self.assertEqual(props.returncode,0,props.stderr)
+                    m=dict(z.split('=',1)for z in props.stdout.splitlines()if'='in z)
+                    if m.get('ActiveState')=='failed'and m.get('MainPID')=='0'and m.get('ControlGroup')=='':break
+                    self.assertLess(time.monotonic(),end,props.stdout);time.sleep(.1)
+                self.assertEqual(counter.read_text().splitlines(),['attempt']*expected)
+            finally:
+                call(['/usr/bin/systemctl','--user','stop',unit])
+                call(['/usr/bin/systemctl','--user','reset-failed',unit])
+
+
 class RequiredCanonicalAdmission(unittest.TestCase):
     def test_public_safety_or_old_source_cannot_substitute_for_required_actual_omen_fixture(self):
         pins={name:"a"*64 for name in stage.QUALIFICATION_FILES}

@@ -15,7 +15,7 @@ CONFIG = Path.home()/'.config/opemos-ci/robot.json'
 HOOK = '/home/connor/.local/libexec/opemos-robot-job-plan'
 FULL9 = ('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
 SHA = re.compile(r'[0-9a-f]{64}\Z')
-MODULE_PINS={'omen_ci_reader.py': '6b2d97a373001e8835400d5be22cef8c06004dab5c228bc1efbe7078dfe464df', 'omen_ci_executables.py': '0a94a6068019795bbb3698fcacabd60dc632f863b6504fc183791b00aad56440', 'omen_ci_result.py': '5baa682b9bd7b625d817b857befa7b180edf025bf1b8ab60e7de0a77fd456f85', 'omen_ci_stage.py': '65e435c18c2c467799a4b5267ff643d04acc097e41692f0846b1dec421b4bd6e', 'omen_ci_inventory.py': 'e8873930651d4e1022fd3851b9bc35400ff54310e1d904f5d01c0f7dd903119e'}
+MODULE_PINS={'omen_ci_reader.py': '6b2d97a373001e8835400d5be22cef8c06004dab5c228bc1efbe7078dfe464df', 'omen_ci_executables.py': '0a94a6068019795bbb3698fcacabd60dc632f863b6504fc183791b00aad56440', 'omen_ci_result.py': '5baa682b9bd7b625d817b857befa7b180edf025bf1b8ab60e7de0a77fd456f85', 'omen_ci_stage.py': 'd7095c2ea151118ff35f4ae34ec7aee23a9febe14933f49b548ee948f7903dff', 'omen_ci_inventory.py': 'e8873930651d4e1022fd3851b9bc35400ff54310e1d904f5d01c0f7dd903119e'}
 
 
 def require(value, message):
@@ -301,11 +301,9 @@ class Engine:
             before=stage_path/'before.json';self.stage['create_json'](before,{'request':request,'prepared':prepared})
             submit=self.stage['queue_call'](cfg,'submit',manifests);self.stage['create_json'](stage_path/'submitted.json',submit)
             deadline=min(self.deadline,time.monotonic()+cfg['wait_seconds'])
-            while True:
-                rows=self.stage['queue_status'](cfg)
-                if self.stage['closed_jobs'](protected,rows):break
-                require(time.monotonic()<deadline,'Finite normal queue deadline; active closure UNKNOWN, no retry/cleanup')
-                time.sleep(5)
+            progress={}
+            try:rows=self.stage['wait_jobs'](cfg,protected,manifests,deadline,progress)
+            finally:self.stage['create_json'](stage_path/'queue-wait.json',progress)
             require(all(rows[j]['state']=='passed'for j in protected),'Actual ordinary job failed; original failure retained')
             collected=hook(self.profile,dict(request,action='collect'),folder/'post-terminal')
             if prepared.get('operation_scope')=='NORMAL_UBUNTU_GUI_BUILD_WRITE_VIRTUAL_USB_ONLY':
