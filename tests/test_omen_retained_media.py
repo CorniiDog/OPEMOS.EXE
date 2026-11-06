@@ -1121,6 +1121,55 @@ except peer.Refused as error:
                            cpus=[0,1,2,3],controllerMemory=2147483648,domainMemory=8589934592,
                            reservationMemory=10737418240,vmSlice='opemos-vm-pool-libvirt'+jobtoken+'.slice',
                            partition='/opemos/vm/pool/libvirt'+jobtoken,gpuGroup='omen-iommu-group-1')
+            # Actual ordinary UID1000 queue interpreter, with only its installed
+            # two helpers on sys.path. Runtime modules are neither ambient nor
+            # imported while authenticating original/current source DATA.
+            isolated_queue_code = '''import sys,json,os,copy
+from pathlib import Path
+sys.path.insert(0,sys.argv[1]);import test_queue as queue
+assert os.getresuid()==(1000,1000,1000)
+data=json.loads(sys.argv[2]);request=data['request']
+row={'id':request['jobId'],'unit':request['unit'],'spec':queue.canonical(data['spec']),
+     'cpus':queue.canonical(request['cpus'])}
+bound={'job_id':row['id'],'unit':row['unit'],'specSHA256':request['specSHA256'],
+       'invocation':request['invocation'],'cpus':request['cpus']}
+before=set(os.listdir('/proc/self/fd'))
+actual=queue.libvirt_request(row,bound)
+assert actual==request
+assert queue.closed_subject_source_root(actual)==data['sourceRoot']
+assert queue.closed_subject_implementation(actual,data['implementationPin'])==data['differentImplementation']
+import source_contract as contract
+definition=contract.read_definition(actual['currentControl']['definitionPin'])
+contract.validate(definition['sourceRoles'],definition['queuePrograms'],actual['currentControl']['definitionPin'])
+for fault in ('hash','owner','escape','missing'):
+ bad=copy.deepcopy(actual)
+ if fault=='hash':bad['currentControl']['definitionPin']['sha256']='0'*64
+ elif fault=='owner':bad['currentControl']['definitionPin']['identity']['st_uid']=1000
+ elif fault=='escape':bad['currentControl']['definitionPin']['path']='/run/../tmp/installed-controller.json'
+ else:bad['currentControl']['definitionPin']['path']='/run/missing-definition-for-fixture.json'
+ try:queue.closed_subject_source_root(bad)
+ except Exception:pass
+ else:raise AssertionError('untrusted original definition accepted: '+fault)
+ try:contract.validate(definition['sourceRoles'],definition['queuePrograms'],bad['currentControl']['definitionPin'])
+ except Exception:pass
+ else:raise AssertionError('untrusted standalone definition accepted: '+fault)
+assert not any(n in sys.modules for n in ('libvirt_native','libvirt_peer','libvirt_access'))
+assert set(os.listdir('/proc/self/fd'))==before
+print(json.dumps({'ordinaryUID1000':True,'isolatedInstalledQueue':True,'runtimeModulesExecuted':False}))
+'''
+            def ordinary_queue():
+                os.setgroups([]);os.setgid(1000);os.setuid(1000);deny_connect()
+            for current in (installed,implementation):
+                # An enrolled old queue intentionally keeps its historical ABI;
+                # only the independently installed current implementation runs.
+                if prior_version and current is installed:continue
+                isolated=subprocess.run(['/usr/bin/python3','-I','-B','-c',isolated_queue_code,
+                    str(Path(current['queuePrograms'][0]['path']).parent),json.dumps(dict(request=request,
+                        spec=actual_spec,sourceRoot=str(source_root),implementationPin=current['sourceContractPin'],
+                        differentImplementation=current is implementation))],capture_output=True,timeout=15,
+                    preexec_fn=ordinary_queue)
+                self.assertEqual(isolated.returncode,0,isolated.stderr.decode())
+                self.assertIs(json.loads(isolated.stdout)['isolatedInstalledQueue'],True)
             # SAME current entry capture producer -> actual FD consumer. All
             # installed roles are required; no QEMU/native facts are modeled as pass.
             import runtime_entry

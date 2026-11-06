@@ -17,17 +17,15 @@ PREPARATION_ROLES = frozenset({'current_media_preparation', 'fresh_placement_pro
 
 
 def validate(roles, queue, ref):
-    from libvirt_native import held
-    from libvirt_peer import need
+    # This consumer also runs in the ordinary queue, whose installed directory
+    # contains only the two contract helpers, not the privileged runtime graph.
+    need = _need
+    held = _held_source
     i = ref['identity']
     need(stat.S_ISREG(i['st_mode']) and i['st_uid'] == i['st_gid'] == 0
          and stat.S_IMODE(i['st_mode']) == 0o444 and i['st_nlink'] == 1,
          'immutable installed controller contract')
-    from libvirt_access import Held
-    with Held(ref['path']) as current:
-        need(current.check() == ref['identity'], 'protected installed contract ancestry')
-        value = read_definition(ref)
-        need(current.check() == ref['identity'], 'installed contract full9 remains exact')
+    value = read_definition(ref)
     need(value['kind'] == 'OPEMOS_INSTALLED_MEDIA_SOURCE_CONTRACT_V2'
          and value['sourceRoles'] == roles and value['queuePrograms'] == queue
          and set(roles) == RUNTIME_ROLES, 'complete installed controller/queue identity')
@@ -96,40 +94,61 @@ def candidate_paths(c):
     return expected
 
 
-def read_definition(ref):
-    """Held immutable existing contract; no developer directory or live AI dependency."""
+def _need(ok, reason):
+    if not ok:
+        raise ValueError(reason)
+
+
+def _held_source(ref, cap):
+    """Read immutable Root source DATA without importing or executing its graph."""
     if set(ref) != {'path', 'bytes', 'sha256', 'identity'}:
         raise ValueError('whole installed definition pin')
     fields = {'st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns'}
     if type(ref['identity']) is not dict or set(ref['identity']) != fields or not all(type(x) is int and x >= 0 for x in ref['identity'].values()):
         raise ValueError('complete typed definition full9')
-    path = Path(ref['path']); descriptors = []
+    path = Path(ref['path']); descriptors = []; ancestors = []
+    _need(path.is_absolute() and '..' not in path.parts and str(path) == ref['path'], 'absolute confined immutable source')
+    _need(type(ref['bytes']) is int and 0 < ref['bytes'] <= cap and type(ref['sha256']) is str
+          and re.fullmatch('[0-9a-f]{64}', ref['sha256']), 'bounded immutable source bytes/hash')
+    identity = lambda st: {k: getattr(st, k) for k in fields}
     try:
         fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC); descriptors.append(fd)
+        ancestors.append(('/', identity(os.fstat(fd))))
+        current = Path('/')
         for part in path.parent.parts[1:]:
             fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd); descriptors.append(fd)
             st = os.fstat(fd)
             if st.st_uid != 0 or st.st_gid != 0 or st.st_mode & 0o022:
                 raise ValueError('Root nofollow definition ancestry')
+            current /= part; ancestors.append((str(current), identity(st)))
         fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd); descriptors.append(fd)
-        identity = lambda st: {k: getattr(st, k) for k in ref['identity']}
         before = os.fstat(fd)
-        if not stat.S_ISREG(before.st_mode) or before.st_uid != before.st_gid or before.st_uid != 0 or stat.S_IMODE(before.st_mode) != 0o444 or before.st_nlink != 1 or not 0 < before.st_size <= 1048576:
+        if not stat.S_ISREG(before.st_mode) or before.st_uid != before.st_gid or before.st_uid != 0 or stat.S_IMODE(before.st_mode) != 0o444 or before.st_nlink != 1 or not 0 < before.st_size <= cap:
             raise ValueError('immutable Root definition file')
         raw = b''
         while block := os.read(fd, 65536):
             raw += block
-            if len(raw) > 1048576: raise ValueError('definition cap')
+            if len(raw) > cap: raise ValueError('definition cap')
         if identity(before) != ref['identity'] or identity(before) != identity(os.fstat(fd)) or identity(before) != identity(os.lstat(path)) or len(raw) != ref['bytes'] or hashlib.sha256(raw).hexdigest() != ref['sha256']:
             raise ValueError('held/named definition full9/bytes/hash')
-        value = json.loads(raw)
-        if value.get('kind') != 'OPEMOS_INSTALLED_MEDIA_SOURCE_CONTRACT_V2' or type(value.get('guestNonce')) is not str or not re.fullmatch('[0-9a-f]{32}', value['guestNonce']):
-            raise ValueError('current installed definition ABI/guest data')
-        if value['deployment'] != dict(id=value['deployment']['id'], paths=deployment_paths(value['deployment']['id'])) or path != Path(value['deployment']['paths']['sourceRoot']) / 'installed-controller.json':
-            raise ValueError('one shared authenticated deployment layout')
-        return value
+        for directory_fd, (name, old) in zip(descriptors, ancestors):
+            now = identity(os.fstat(directory_fd))
+            _need(now == identity(os.lstat(name)) and all(now[k] == old[k] for k in
+                  ('st_dev','st_ino','st_mode','st_uid','st_gid')) and now['st_uid'] == now['st_gid'] == 0
+                  and not now['st_mode'] & 0o022, 'held/named unchanged Root source ancestry')
+        return raw
     finally:
         for fd in reversed(descriptors): os.close(fd)
+
+
+def read_definition(ref):
+    """Held immutable existing contract; no developer directory or live AI dependency."""
+    value = json.loads(_held_source(ref, 1048576))
+    if value.get('kind') != 'OPEMOS_INSTALLED_MEDIA_SOURCE_CONTRACT_V2' or type(value.get('guestNonce')) is not str or not re.fullmatch('[0-9a-f]{32}', value['guestNonce']):
+        raise ValueError('current installed definition ABI/guest data')
+    if value['deployment'] != dict(id=value['deployment']['id'], paths=deployment_paths(value['deployment']['id'])) or Path(ref['path']) != Path(value['deployment']['paths']['sourceRoot']) / 'installed-controller.json':
+        raise ValueError('one shared authenticated deployment layout')
+    return value
 
 
 def current_from_queue(queue_path):
