@@ -186,7 +186,10 @@ def materialize(config_ref):
         'observer_source':pins['observer_guest.py'],'guest_operation':guest}
     prep_raw=(json.dumps(prepare,sort_keys=True,separators=(',',':'))+'\n').encode()
     create(target/'prepare.json',prep_raw,0o400)
-    prep_pin={'path':str(target/'prepare.json'),'sha256':hashlib.sha256(prep_raw).hexdigest()}
+    # The preparation process consumes a full held-input pin, including its
+    # actual byte count and file epoch. Authenticate the created file here.
+    _,prep_pin=read(target/'prepare.json',1048576,1000,
+                    hashlib.sha256(prep_raw).hexdigest(),0o400)
     owned=types.ModuleType('normal_owned_transport');owned.__file__=str(target/'owned_command.py')
     exec(compile(programs['owned_command.py'],owned.__file__,'exec'),owned.__dict__)
     native=owned.run_owned_command(['/usr/bin/python3','-I','-B',str(target/'prepare_observer_iso.py'),

@@ -69,6 +69,84 @@ def operand():
 
 
 class RetainedMediaContract(unittest.TestCase):
+    @unittest.skipUnless(os.geteuid()==0 and sys.platform=='linux','real Root source/UID1000 preparation only')
+    def test_normal_materializer_preparation_pin_reaches_real_uid1000_medium_child(self):
+        """Actual materializer -> owned child -> held-input -> ISO, no VM.
+
+        Deployment and mount admission are modeled at definition(); the created
+        config, producer archive, Root observer, process and ISO are real.
+        """
+        if not Path('/usr/bin/genisoimage').is_file():
+            self.skipTest('actual ISO generator unavailable')
+        with tempfile.TemporaryDirectory(prefix='normal-prepare-pin-')as directory:
+            root=Path(directory);root.chmod(0o711)
+            modules=root/'reviewed-modules';modules.mkdir();modules.chmod(0o755)
+            for name in('run_approved.py','owned_command.py','prepare_observer_iso.py','observer_guest.py'):
+                path=modules/name;path.write_bytes((SOURCE/name).read_bytes());path.chmod(0o444)
+            work=root/'ordinary';work.mkdir();os.chown(work,1000,1000);work.chmod(0o700)
+            body=r'''
+import hashlib,json,os,stat,sys,time,zipfile
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0,sys.argv[1])
+import run_approved as approved
+import prepare_observer_iso as preparation
+assert os.getresuid()==(1000,1000,1000)
+modules=Path(sys.argv[1]);operation=Path(sys.argv[2]);mount=operation/'scratch';mount.mkdir(mode=0o700)
+nonce='c'*32;source='a'*40
+package=b'opaque fixture AppImage DATA, never executed';native=b'opaque fixture native DATA, never executed'
+archive=operation/'candidate.zip'
+with zipfile.ZipFile(archive,'x')as stream:
+ stream.writestr('package.AppImage',package)
+ stream.writestr('native',native)
+ stream.writestr('package.AppImage.runtime/appliance/fixture',b'opaque companion DATA')
+archive.chmod(0o400)
+raw=archive.read_bytes();archive_ref={'path':str(archive),'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest()}
+archive_ref=approved.archive_pin(archive_ref)
+descriptor={'platform':'ubuntu','repository':'CorniiDog/OPEMOS.EXE','source_commit':source,
+ 'artifact_archive_sha256':archive_ref['sha256'],'package_name':'package.AppImage',
+ 'package_sha256':hashlib.sha256(package).hexdigest(),'package_bytes':len(package),
+ 'executable_name':'native','executable_sha256':hashlib.sha256(native).hexdigest(),'executable_bytes':len(native)}
+login=operation/'login';approved.create(login,b'{"fixtureOnly":true}',0o600)
+_,login_pin=approved.read(login,4096,1000)
+programs={name:(modules/name).read_bytes()for name in('owned_command.py','prepare_observer_iso.py','observer_guest.py')}
+_,observer_pin=approved.read(modules/'observer_guest.py',65536,0)
+started=time.monotonic();policy={'fixedStorageBytes':33554432,
+ 'programSHA256':{name:hashlib.sha256(raw).hexdigest()for name,raw in programs.items()}}
+cfg={'nonce':nonce,'candidate':{'descriptor':descriptor,'archive':archive_ref},'loginPin':login_pin,
+ 'runtime_storage':{'kind':'CURRENT_ROOT_PRIVATE_FILE_BACKED_EXT4_V1','mount':str(mount),
+  'mountNamespace':os.readlink('/proc/self/ns/mnt'),'device':mount.stat().st_dev,
+  'cowPath':str(mount/'desktop-overlay.qcow2'),'preparedDirectory':str(mount/'prepared'),
+  'fixedStorageBytes':policy['fixedStorageBytes']},
+ 'operation_started_monotonic':started,'operation_end_monotonic':started+120,'whole_seconds':120,
+ 'retained_union_bytes':0,'guest_operation':{'nonce':nonce,'source_commit':source,
+  'package_sha256':descriptor['package_sha256'],'native_executable_sha256':descriptor['executable_sha256']}}
+with patch.object(approved,'definition',return_value=(cfg,policy,programs,{'observer_guest.py':observer_pin},{},operation)):
+ job,config=approved.materialize({'fixtureOnly':'modeled deployment/mount admission'})
+receipt=json.loads((operation/'prepare-native.json').read_bytes())
+assert receipt['numericExit']==0 and receipt['lifecycleClosed']is True and receipt['errors']==[]
+assert receipt['fd']['restored']and receipt['childSetRestored']and receipt['stdoutEOF']and receipt['stderrEOF']
+pin=json.loads(receipt['argv'][-1]);prepare=operation/'programs/prepare.json'
+assert pin['bytes']==prepare.stat().st_size and pin['identity']=={k:getattr(prepare.stat(),k)for k in approved.FIELDS}
+assert preparation.held_input(pin,1048576,1000)==prepare.read_bytes()
+for field,value in(('bytes',pin['bytes']+1),('identity',dict(pin['identity'],st_ino=0)),('sha256','0'*64)):
+ wrong=dict(pin,**{field:value})
+ try:preparation.held_input(wrong,1048576,1000)
+ except ValueError:pass
+ else:raise AssertionError('changed preparation '+field+' accepted')
+result=json.loads(config.read_bytes());iso=Path(result['observer_iso']['path'])
+assert iso.stat().st_size==result['observer_iso']['bytes']and stat.S_IMODE(iso.stat().st_mode)==0o400
+assert hashlib.sha256(iso.read_bytes()).hexdigest()==result['observer_iso']['sha256']
+assert archive.read_bytes()==raw
+print(json.dumps({'realUID1000Child':True,'realISO':True,'configPinComplete':True,'candidateExecuted':False}))
+'''
+            def ordinary():
+                os.setgroups([]);os.setgid(1000);os.setuid(1000)
+            result=subprocess.run([sys.executable,'-I','-B','-',str(modules),str(work)],
+                input=body,text=True,capture_output=True,timeout=150,preexec_fn=ordinary)
+            self.assertEqual(result.returncode,0,result.stderr+'\n'+result.stdout)
+            self.assertTrue(json.loads(result.stdout)['configPinComplete'])
+
     def test_normal_storage_reads_full_canonical_job_not_public_status_summary(self):
         """Real queue init/submit/status and readonly membership as its owner."""
         import stat
