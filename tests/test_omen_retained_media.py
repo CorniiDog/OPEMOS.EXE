@@ -2593,6 +2593,47 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
         self.assertEqual(loaded.call_count,1);self.assertTrue(lineage.call_args.kwargs['pending'])
         saved.assert_called_once()
 
+    def test_actual_run_cycle_reconciles_only_own_closed_failed_create(self):
+        from unittest import mock
+        import time
+        _,r=self.modules();policy,state,probe,_,_=self.pending(r)
+        policy['controlBrokerSHA256']='9'*64
+        state['lastOutcome']={'action':'CREATE','nonce':state['inflight'],
+            'controlJobId':'root-github-robot-control-'+'a'*32,'numeric':1,
+            'reaped':True,'first':'actual original launch refusal retained'}
+        probe['control'].update(state='failed',terminalLifecycle='CLOSED',reservationRetained=False)
+        probe['controlBrokerSHA256']=policy['controlBrokerSHA256']
+        before=copy.deepcopy(state)
+        def execute(current):
+            value=copy.deepcopy(before);observed={'reaped':True,'numeric':0,
+                'eof':{'stdout':True,'stderr':True},'first':None,
+                'stdout':r.canonical(current),'stderr':b''}
+            with mock.patch.object(r,'load_code',return_value=b'modeled authenticated current probe')as loaded, \
+                 mock.patch.object(r,'start_held_python',return_value=object()), \
+                 mock.patch.object(r,'capture',return_value=observed), \
+                 mock.patch.object(r,'validate_probe'), \
+                 mock.patch.object(r,'renew_epoch',return_value='UNCHANGED'), \
+                 mock.patch.object(r,'write_state')as saved:
+                reply=r.run_cycle(policy,value,int(time.time()))
+            return reply,value,saved.call_count,loaded.call_count
+        reply,after,writes,loads=execute(probe)
+        self.assertEqual(reply['decision'],'RECONCILED_CLOSED_CREATE')
+        self.assertEqual(reply['effect'],'RECOVERY_BOOKKEEPING_ONLY')
+        self.assertIsNone(after['inflight']);self.assertEqual(writes,1);self.assertEqual(loads,1)
+        self.assertEqual(after['lastOutcome']['originalOutcome'],before['lastOutcome'])
+        self.assertEqual(after['completedCycles'],before['completedCycles']+1)
+        for key,value in(('jobId','root-github-robot-control-'+'c'*32),
+                          ('sourceCommit','d'*40),('queueSourceSHA256','e'*64),
+                          ('state','terminal_cleanup'),('reservationRetained',True),('listenerAlive',True)):
+            bad=copy.deepcopy(probe);bad['control'][key]=value
+            reply,after,writes,_=execute(bad)
+            self.assertEqual(reply['decision'],'HOLD_INFLIGHT');self.assertEqual(writes,0)
+            self.assertEqual(after,before)
+        bad=copy.deepcopy(probe);bad['unknownReservations']=['foreign']
+        reply,after,writes,_=execute(bad)
+        self.assertEqual(reply['decision'],'HOLD_INFLIGHT');self.assertEqual(writes,0)
+        self.assertEqual(after,before)
+
     def test_normal_pending_transport_requires_unexpired_lease_but_does_not_publish_readiness(self):
         from unittest import mock
         import contextlib,time

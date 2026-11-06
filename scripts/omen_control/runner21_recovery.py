@@ -974,11 +974,17 @@ def run_cycle(policy, state, now):
         return {'decision':'RECONCILED_MATERIALIZED_'+old_outcome['action'],'effect':'RECOVERY_BOOKKEEPING_ONLY'if renewal_due else'NORMAL_CONTROL_ONLY','nonce':nonce,'jobId':probe['control']['jobId'],'heartbeatPublished':published is not None,'resultSHA256':result_sha}
     if state['inflight'] is not None and type(state['lastOutcome']) is dict and state['lastOutcome'].get('action') in ('GRACEFUL_RENEW','CREATE'):
         old=state['lastOutcome']; prior=old.get('controlJobId'); c=probe['control']
-        if (prior==c['jobId'] and c['state'] in ('passed','failed','timed_out','blocked','unknown','output_limit') and c['terminalLifecycle']=='CLOSED' and c['reservationRetained'] is False and not probe['runnerOnline'] and not probe['runnerBusy'] and not probe['actionsInProgress'] and not probe['otherActiveJobs'] and not probe['unknownReservations'] and not probe['guestActive'] and not probe['gpuLeaseActive'] and not probe['sourceOwnerBusy'] and probe['workerLockFree'] and probe['networkReachable'] and probe['protectedMain']):
+        created_closed=(old['action']=='CREATE' and old.get('nonce')==state['inflight']
+            and c['jobId']=='root-github-robot-control-'+state['inflight']
+            and c['sourceCommit']==policy['mainCommit']
+            and c['queueSourceSHA256']==policy['queueSourceSHA256']
+            and probe['controlBrokerSHA256']==policy['controlBrokerSHA256']
+            and not any(c[k]for k in('listenerAlive','controllerAlive','workerAlive')))
+        if ((prior==c['jobId'] or created_closed) and c['state'] in ('passed','failed','timed_out','blocked','unknown','output_limit') and c['terminalLifecycle']=='CLOSED' and c['reservationRetained'] is False and not probe['runnerOnline'] and not probe['runnerBusy'] and not probe['actionsInProgress'] and not probe['otherActiveJobs'] and not probe['unknownReservations'] and not probe['guestActive'] and not probe['gpuLeaseActive'] and not probe['sourceOwnerBusy'] and probe['workerLockFree'] and probe['networkReachable'] and probe['protectedMain']):
             nonce=state['inflight']; state['inflight']=None;state['completedCycles']+=1;state['totalCycles']+=1;state['failureCount']=0;state['nextAttemptUnix']=now+1
-            state['lastOutcome']={'action':old['action'],'nonce':nonce,'reconciledBy':'closed predecessor/no successor/no runtime actors','originalOutcome':old,'probeSHA256':sha(observed['stdout'])}
+            state['lastOutcome']={'action':old['action'],'nonce':nonce,'reconciledBy':'created control CLOSED/released; no successor/no runtime actors' if created_closed else 'closed predecessor/no successor/no runtime actors','originalOutcome':old,'probeSHA256':sha(observed['stdout'])}
             write_state(state)
-            return {'decision':'RECONCILED_ABSENT_GRACEFUL_RENEW','effect':'NO_EFFECT_PROVEN','nonce':nonce}
+            return {'decision':'RECONCILED_CLOSED_CREATE' if created_closed else 'RECONCILED_ABSENT_GRACEFUL_RENEW','effect':'RECOVERY_BOOKKEEPING_ONLY' if created_closed else 'NO_EFFECT_PROVEN','nonce':nonce}
     if state['inflight'] is not None and type(state['lastOutcome']) is dict and \
        state['lastOutcome'].get('action')=='REFRESH_HEARTBEAT':
         nonce=state['inflight']
