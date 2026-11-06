@@ -46,6 +46,12 @@ def control_policy_bytes(lease):
     return raw, policy, pin['sha256']
 
 
+def control_source_environment(lease):
+    """Job-start hooks inherit process env, not workflow/job-level env."""
+    _, policy, _ = control_policy_bytes(lease)
+    return ['--setenv', 'OPEMOS_SOURCE_SHA', policy['sourceCommit']]
+
+
 def main():
     need(os.getuid() == os.geteuid() == 1000, "ordinary owner")
     cg = Path("/proc/self/cgroup").read_text().strip().split("::", 1)[1]
@@ -60,7 +66,7 @@ def main():
     need(lease["kind"] == "OPEMOS_ROBOT_FIXED_CONTROL_LEASE" and
          lease["runtimeAuthorized"] is True and
          lease["repository"] == "CorniiDog/OPEMOS.EXE", "fixed lease")
-    control_policy_bytes(lease)
+    source_environment = control_source_environment(lease)
     profile_path = Path('/home/connor/.config/opemos-ci/robot.json')
     registry_path = Path('/home/connor/.config/opemos-ci/robot-jobs.json')
     planner_path = Path('/var/lib/opemos-robot-control-r1/opemos-robot-job-plan')
@@ -185,6 +191,7 @@ def main():
             "--dir", "/run", "--dir", "/run/opemos-ci",
             "--bind", str(socket_dir), "/run/opemos-ci/control",
             "--chdir", str(RUNNER), "--setenv", "HOME", "/home/connor",
+            *source_environment,
             "--setenv", "OPEMOS_ROBOT_CONTROL_SOCKET", "/run/opemos-ci/control/control.sock",
             "--setenv", "ACTIONS_RUNNER_HOOK_JOB_STARTED", str(GUARD / "job-started.sh"),
             "--setenv", "PYTHONPATH", str(RUNNER / "robot-python"),

@@ -76,7 +76,7 @@ class RetainedMediaContract(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='launcher-policy-')as tmp:
             root=Path(tmp);os.chmod(root,0o711)
             modules=root/'modules';modules.mkdir();os.chmod(modules,0o755)
-            for name in('launch.py','host_engine.py'):
+            for name in('launch.py','host_engine.py','job_guard.py'):
                 target=modules/name;target.write_bytes((SOURCE/name).read_bytes());os.chmod(target,0o444)
             now=int(time.time())
             header=dict(repository='CorniiDog/OPEMOS.EXE',sourceCommit='a'*40,
@@ -110,7 +110,49 @@ for name,lease in leases.items():
     except (RuntimeError,ValueError):result[name]={'accepted':False}
 assert result['normal']['accepted']and result['legacy']['accepted']
 assert all(not result[name]['accepted']for name in('wrong-source','expired','unowned','tampered'))
-print(json.dumps({'uid':os.getresuid(),'results':result},sort_keys=True))
+# Official runner JobHookProvider supplies an empty step environment; its
+# default GITHUB context is added later. No OPEMOS job-level env is inherited.
+# Exercise the actual Root-policy -> launcher argv -> real UID1000 hook join.
+import subprocess,tempfile
+from pathlib import Path
+source_args=launch.control_source_environment(leases['normal'])
+assert source_args==['--setenv','OPEMOS_SOURCE_SHA','a'*40]
+# Use the actual environment payload emitted for bwrap; external confinement
+# is not modeled as acceptance of a live listener or a VM.
+child_env=dict(os.environ);child_env.pop('OPEMOS_SOURCE_SHA',None)
+child_env[source_args[1]]=source_args[2]
+code=r"""import os,sys,json,tempfile
+from pathlib import Path
+from unittest import mock
+sys.path.insert(0,sys.argv[1]);import job_guard
+class ReachedAuthenticatedAPI(Exception):pass
+def api(path,token=None):
+    assert path=='repos/CorniiDog/OPEMOS.EXE/branches/main'
+    raise ReachedAuthenticatedAPI()
+with tempfile.TemporaryDirectory()as d:
+    event=Path(d)/'event.json';event.write_text(json.dumps({'repository':{'full_name':'CorniiDog/OPEMOS.EXE'}}))
+    default_context={'GITHUB_REPOSITORY':'CorniiDog/OPEMOS.EXE','GITHUB_REF':'refs/heads/main',
+        'GITHUB_WORKFLOW_REF':'CorniiDog/OPEMOS.EXE/.github/workflows/omen-robot.yml@refs/heads/main',
+        'GITHUB_EVENT_NAME':'workflow_dispatch','GITHUB_SHA':'b'*40,'GITHUB_RUN_ID':'123',
+        'GITHUB_RUN_ATTEMPT':'1','GITHUB_EVENT_PATH':str(event)}
+    assert os.getresuid()==(1000,1000,1000)
+    with mock.patch.object(sys,'argv',['job_guard.py']),mock.patch.object(job_guard,'api',side_effect=api):
+        with mock.patch.dict(os.environ,default_context,clear=True):
+            try:job_guard.main()
+            except ValueError as e:assert str(e)=='installed controller and workflow source SHA'
+            else:raise AssertionError('missing hook source must refuse before API')
+        default_context['OPEMOS_SOURCE_SHA']=os.environ['OPEMOS_SOURCE_SHA']
+        with mock.patch.dict(os.environ,default_context,clear=True):
+            try:job_guard.main()
+            except ReachedAuthenticatedAPI:pass
+            else:raise AssertionError('actual authenticated source must reach API guard')
+print('actual-hook-source-join-reached-authenticated-api')
+"""
+joined=subprocess.run([sys.executable,'-I','-B','-c',code,sys.argv[1]],env=child_env,
+    capture_output=True,text=True,timeout=10)
+assert joined.returncode==0,joined.stderr
+assert joined.stdout.strip()=='actual-hook-source-join-reached-authenticated-api'
+print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},sort_keys=True))
 '''
             def ordinary():os.setgroups([]);os.setgid(1000);os.setuid(1000)
             child=subprocess.run([sys.executable,'-I','-B','-c',source,str(modules),json.dumps(leases)],
