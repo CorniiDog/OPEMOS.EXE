@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
 sys.path.insert(0,str(Path(__file__).parent))
-from omen_robot import raw_file,strict,require,dump,FULL9
+from omen_robot import raw_file,strict,require,dump,FULL9,identity
 
 
 def normal_ubuntu_job(config_ref,request_ref):

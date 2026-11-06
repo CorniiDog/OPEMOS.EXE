@@ -17,6 +17,38 @@ def load(name):
     value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value);return value
 M=load('omen_robot');G=load('omen_robot_gate')
 
+class NormalUbuntuJobIdentity(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
+        self.runner=load('run_omen_robot_guest')
+        self.request={'source_commit':'a'*40,'run_id':'101','attempt':'2','nonce':'b'*32}
+        self.config={'source_commit':'a'*40,'nonce':'b'*32,
+                     'normalPolicyPin':{'path':'/invalid/fixed-policy.json','sha256':'c'*64}}
+        self.environment={'GITHUB_REPOSITORY':M.REPO,'OPEMOS_SOURCE_SHA':'a'*40,
+                          'GITHUB_RUN_ID':'101','GITHUB_RUN_ATTEMPT':'2',
+                          'OPEMOS_TRANSACTION_NONCE':'b'*32}
+    def tearDown(self):self.temp.cleanup()
+    def ref(self,name,value):
+        path=self.root/name;raw=json.dumps(value).encode();path.write_bytes(raw);path.chmod(0o600)
+        return {'path':str(path),'sha256':hashlib.sha256(raw).hexdigest()}
+    def invoke(self):
+        return self.runner.normal_ubuntu_job(self.ref('config.json',self.config),
+                                             self.ref('identity.json',self.request))
+    def test_real_entry_identity_reaches_exact_policy_ancestry_guard(self):
+        # Use the installed entry and actual environment identity parser. The
+        # deliberate policy-path refusal is the next guard, before any effect.
+        with patch.dict(os.environ,self.environment),self.assertRaisesRegex(
+                ValueError,'same Root normal deployment policy'):
+            self.invoke()
+    def test_real_entry_refuses_another_controller_source(self):
+        with patch.dict(os.environ,dict(self.environment,OPEMOS_SOURCE_SHA='d'*40)),self.assertRaisesRegex(
+                ValueError,'actual current normal queue consumer identity'):
+            self.invoke()
+    def test_real_entry_refuses_another_attempt_nonce(self):
+        with patch.dict(os.environ,dict(self.environment,OPEMOS_TRANSACTION_NONCE='e'*32)),self.assertRaisesRegex(
+                ValueError,'actual current normal queue consumer identity'):
+            self.invoke()
+
 class DescriptorSafety(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
