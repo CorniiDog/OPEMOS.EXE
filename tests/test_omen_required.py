@@ -284,6 +284,33 @@ class RequiredProducerTests(unittest.TestCase):
   tree=ast.parse(Path(gate.__file__).with_name('omen_robot.py').read_bytes());fn=next(n for n in ast.walk(tree)if isinstance(n,ast.FunctionDef)and n.name=='transaction');text=ast.get_source_segment(Path(gate.__file__).with_name('omen_robot.py').read_text(),fn)
   self.assertLess(text.index("prepared.get('expected')==expected_producer"),text.index('stage_path.mkdir'))
   self.assertLess(text.index("prepared.get('expected')==expected_producer"),text.index("self.stage['queue_call']"))
+ def test_actual_candidate_stream_uses_existing_artifact_reader_size_contract(self):
+  import omen_robot as robot
+  import omen_ci_stage as stage
+  payload=b'opaque candidate archive: retained data, never host code'
+  expected=copy.deepcopy(Metadata().value)
+  expected['artifact_archive_sha256']=hashlib.sha256(payload).hexdigest()
+  for fault in ('none','wrong-size','wrong-hash','over-cap'):
+   with self.subTest(fault=fault),tempfile.TemporaryDirectory()as directory:
+    engine=robot.Engine.__new__(robot.Engine)
+    engine.profile={'max_candidate_archive_bytes':len(payload)-1 if fault=='over-cap'else 4096}
+    engine.output=Path(directory);os.chmod(engine.output,0o700)
+    # Real production reader and descriptor; only the HTTPS stream is modeled.
+    engine.stage={'_EXECUTABLES':{'descriptor':gate.descriptor},'artifact_read':stage.artifact_read}
+    value=copy.deepcopy(expected)
+    if fault=='wrong-hash':value['artifact_archive_sha256']='0'*64
+    def download(descriptor,stream,cap):
+     self.assertEqual(descriptor,value);stream.write(payload)
+     return len(payload)+1 if fault=='wrong-size'else len(payload)
+    if fault=='none':
+     archive=engine.stage_candidate(value,download)
+     self.assertEqual(archive['bytes'],len(payload)) # Existing downstream archive schema stays bytes.
+     self.assertEqual(Path(archive['path']).read_bytes(),payload)
+     self.assertEqual(archive['sha256'],hashlib.sha256(payload).hexdigest())
+     self.assertEqual(Path(archive['path']).stat().st_mode&0o777,0o400)
+    else:
+     with self.assertRaises(ValueError):engine.stage_candidate(value,download)
+
  def test_root_failure_retains_first_and_secondary(self):
   m=Metadata();req=dict(version=2,action='execute-produced-platform',subject=gate.target(m.value),repository=gate.REPO,source_commit=SOURCE,run_id='50',attempt='1',nonce='f'*32,consumer_started_epoch=1)
   class Engine:

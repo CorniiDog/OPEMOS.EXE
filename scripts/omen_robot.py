@@ -166,7 +166,7 @@ class Engine:
                 size=download(expected,stream,limit);stream.flush();os.fsync(fd)
             os.fchmod(fd,0o400)
         finally:os.close(fd)
-        self.stage['artifact_read']({'path':str(path),'sha256':expected['artifact_archive_sha256'],'bytes':size},limit)
+        self.stage['artifact_read']({'path':str(path),'sha256':expected['artifact_archive_sha256'],'size':size},limit)
         return {'path':str(path),'sha256':expected['artifact_archive_sha256'],'bytes':size}
 
     def request(self,kind,subject,candidate=None):
