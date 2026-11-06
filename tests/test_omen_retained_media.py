@@ -666,6 +666,74 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                 self.assertEqual((root/'logs/failed-ubuntu/stderr.log').read_text(),'actual preparation FIRST retained\n')
             finally:db.close()
 
+    @unittest.skipUnless(sys.platform=='linux' and (os.geteuid()==0 or os.getuid()==1000),
+                         'real fixed UID1000 lock custody requires Root or UID1000')
+    def test_real_root_normal_dispatcher_uses_actual_uid1000_admitted_ofds(self):
+        """Real FLOCK/fdinfo/full9; external manager/path facts are modeled."""
+        import fcntl,sys,subprocess,uuid
+        from unittest import mock
+        temp=tempfile.TemporaryDirectory(prefix='opemos-owned-locks-');self.addCleanup(temp.cleanup)
+        self.root=Path(temp.name);self.state=self.root/'state';self.state.mkdir(mode=0o700)
+        source=SOURCE/'normal_cycle.py'
+        spec=importlib.util.spec_from_file_location('actual_normal_cycle_owned_locks',source)
+        c=importlib.util.module_from_spec(spec);spec.loader.exec_module(c)
+        paths=(self.state/'worker.lock',self.root/'heavy.lock')
+        fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+        identity=lambda s:{k:getattr(s,k)for k in fields}
+        fds=[];other=None
+        unit='opemos-root-robot-dispatcher-'+uuid.uuid4().hex+'.service'
+        ref={'unit':unit,'invocation':'a'*32,'pid':0,'start':None}
+        manager={'LoadState':'loaded','InvocationID':ref['invocation'],
+                 'MainPID':'0','ControlGroup':'','ActiveState':'failed'}
+        before=set(os.listdir('/proc/self/fd'))
+        try:
+            for p in paths:
+                p.write_bytes(b'');p.chmod(0o664)
+                if os.geteuid()==0:os.chown(p,1000,1000)
+                fd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC);fds.append(fd)
+                fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            refs=[{'path':str(p),'fd':fd,'identity':identity(os.fstat(fd))}for p,fd in zip(paths,fds)]
+            with mock.patch.object(c,'dispatcher_lock_paths',return_value=paths),\
+                 mock.patch.object(c,'user_dispatcher',return_value=manager):
+                self.assertFalse(c.dispatcher_closed(ref),'old fallback conflicts with its own admitted OFDs')
+                self.assertTrue(c.dispatcher_closed(ref,admitted_locks=refs))
+                # It neither unlocks nor closes the caller's admission capabilities.
+                for p in paths:
+                    other=os.open(p,os.O_RDONLY|os.O_CLOEXEC)
+                    with self.assertRaises(BlockingIOError):fcntl.flock(other,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                    os.close(other);other=None
+                wrong=copy.deepcopy(refs);wrong[0]['identity']['st_ino']+=1
+                with self.assertRaisesRegex(RuntimeError,'full9'):c.dispatcher_closed(ref,admitted_locks=wrong)
+                wrong=copy.deepcopy(refs);wrong[1]['fd']=wrong[0]['fd']
+                with self.assertRaisesRegex(RuntimeError,'distinct'):c.dispatcher_closed(ref,admitted_locks=wrong)
+                # A second open of the very same inode is not the admitted OFD.
+                other=os.open(paths[0],os.O_RDONLY|os.O_CLOEXEC)
+                wrong=copy.deepcopy(refs);wrong[0]['fd']=other
+                with self.assertRaisesRegex(RuntimeError,'already owns'):c.dispatcher_closed(ref,admitted_locks=wrong)
+                os.close(other);other=None
+                with mock.patch.object(c,'user_dispatcher',return_value=dict(manager,MainPID=str(os.getpid()),ActiveState='active')):
+                    self.assertFalse(c.dispatcher_closed(ref,admitted_locks=refs))
+                with mock.patch.object(c,'user_dispatcher',return_value=dict(manager,InvocationID='b'*32)):
+                    with self.assertRaisesRegex(RuntimeError,'same actual dispatcher'):c.dispatcher_closed(ref,admitted_locks=refs)
+                # A real foreign OFD remains a refusal, never borrowed custody.
+                fcntl.flock(fds[0],fcntl.LOCK_UN)
+                body='import fcntl,sys;f=open(sys.argv[1]);fcntl.flock(f,fcntl.LOCK_EX);print("held",flush=True);sys.stdin.read(1)'
+                child=subprocess.Popen([sys.executable,'-I','-c',body,str(paths[0])],
+                    stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
+                try:
+                    self.assertEqual(child.stdout.readline().strip(),'held')
+                    self.assertFalse(c.dispatcher_closed(ref))
+                    with self.assertRaisesRegex(RuntimeError,'already owns'):c.dispatcher_closed(ref,admitted_locks=refs)
+                finally:
+                    child.stdin.close();child.wait(timeout=5);child.stdout.close()
+                fcntl.flock(fds[0],fcntl.LOCK_EX|fcntl.LOCK_NB)
+                self.assertTrue(c.dispatcher_closed(ref,admitted_locks=refs))
+        finally:
+            if other is not None:os.close(other)
+            for fd in reversed(fds):os.close(fd)
+        self.assertEqual(set(os.listdir('/proc/self/fd')),before)
+
+
     def test_readonly_pool_membership_retry_keeps_original_deadline_and_unknown_refusals(self):
         import copy,time
         from unittest.mock import patch
@@ -3129,6 +3197,76 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
         self.assertEqual(record['before'],before);self.assertFalse(record['queueMutation'])
         self.assertEqual(loaded.call_count,1);self.assertTrue(lineage.call_args.kwargs['pending'])
         saved.assert_called_once()
+
+    def test_actual_run_cycle_failed_heartbeat_intent_does_not_reserve_lifecycle_or_claim_ready(self):
+        """Actual recovery producer/bookkeeping; native/API probe facts MODELED."""
+        from unittest import mock
+        import time
+        _,r=self.modules();policy,state,probe,_,_=self.pending(r);now=int(time.time())
+        policy.update(renewLeadSeconds=19000,maxCycles=64,maxTotalCycles=4096,
+                      controlBrokerSHA256='9'*64,priorControlBrokerSHA256='8'*64)
+        control=probe['control'];control.update(state='running',terminalLifecycle=None,
+            reservationRetained=True,leaseExpiresUnix=now+1000,
+            **{k:True for k in('listenerAlive','controllerAlive','workerAlive','ownUnitBound')})
+        probe.update(runnerOnline=True,runnerBusy=True,actionsInProgress=1,workerLockFree=False,
+            controlBrokerSHA256=policy['controlBrokerSHA256'],
+            queueSourceSHA256=policy['queueSourceSHA256'])
+        state['lastOutcome']={'action':'REFRESH_HEARTBEAT','nonce':state['inflight'],
+            'controlJobId':control['jobId'],'dispatcherNonce':'e'*32,
+            'numeric':1,'reaped':True,'first':None,'stderrSHA256':'f'*64,'stdoutSHA256':r.sha(b'')}
+        before=copy.deepcopy(state)
+        def execute(current):
+            value=copy.deepcopy(before);frame={'reaped':True,'numeric':0,
+                'eof':{'stdout':True,'stderr':True},'first':None,
+                'stdout':r.canonical(current),'stderr':b''}
+            with tempfile.TemporaryDirectory()as directory,mock.patch.object(r,'ROOT',Path(directory)),\
+                 mock.patch.object(r,'load_code',return_value=b'modeled authenticated probe')as loaded,\
+                 mock.patch.object(r,'start_held_python',return_value=object())as spawned,\
+                 mock.patch.object(r,'capture',return_value=frame),mock.patch.object(r,'validate_probe'),\
+                 mock.patch.object(r,'write_state')as saved:
+                reply=r.run_cycle(policy,value,now)
+                records=[json.loads(p.read_bytes())for p in Path(directory).glob('failed-heartbeat-*.json')]
+            return reply,value,records,saved.call_count,loaded.call_count,spawned.call_count
+        for busy in(True,False):
+            current=copy.deepcopy(probe);current.update(runnerBusy=busy,actionsInProgress=int(busy))
+            reply,after,records,writes,loads,spawns=execute(current)
+            self.assertEqual(reply['decision'],'RECONCILED_FAILED_HEARTBEAT_INTENT')
+            self.assertEqual(reply['effect'],'RECOVERY_BOOKKEEPING_ONLY')
+            self.assertFalse(reply['heartbeatPublished']);self.assertFalse(reply['vmAdmission'])
+            self.assertIsNone(after['inflight']);self.assertEqual(after['lastOutcome']['originalOutcome'],before['lastOutcome'])
+            self.assertEqual(after['lastOutcome']['dispatcherNonce'],'e'*32)
+            self.assertEqual(after['completedCycles'],before['completedCycles']);self.assertEqual(after['totalCycles'],before['totalCycles'])
+            self.assertEqual((writes,loads,spawns),(1,1,1),'only one readonly probe, no normal effect child')
+            self.assertEqual(records[0]['before'],before);self.assertFalse(records[0]['queueMutation'])
+            self.assertFalse(records[0]['heartbeatPublished']);self.assertFalse(records[0]['vmAdmission'])
+            # A subsequent decision remains WAIT while busy, or ordinary renewal
+            # when idle and lease is due. No expired-ready publication is fabricated.
+            with mock.patch.object(r,'validate_probe'):
+                self.assertEqual(r.decision(current,policy,now+2,after),
+                                 'WAIT_ACTIVE_ACTION_OR_SOURCE_OWNER'if busy else'GRACEFUL_RENEW')
+        for key,value in(('jobId','root-github-robot-control-'+'a'*32),('sourceCommit','0'*40),
+                          ('queueSourceSHA256','0'*64),('state','terminal_cleanup'),
+                          ('reservationRetained',False),('leaseExpiresUnix',None),
+                          ('leaseExpiresUnix',now-1),('listenerAlive',False),('workerAlive',False),('ownUnitBound',False)):
+            bad=copy.deepcopy(probe);bad['control'][key]=value
+            with self.subTest(key=key,value=value):
+                reply,after,records,writes,_,_=execute(bad)
+                self.assertEqual(after,before);self.assertEqual((records,writes),([],0))
+        for key,value in(('queueKnown',False),('unknownReservations',['foreign']),('sourceOwnerBusy',True),
+                          ('runnerOnline',False),('networkReachable',False),('protectedMain',False),
+                          ('mainCommit','0'*40),('queueSourceSHA256','0'*64)):
+            bad=copy.deepcopy(probe);bad[key]=value
+            with self.subTest(key=key):
+                reply,after,records,writes,_,_=execute(bad)
+                self.assertEqual(after,before);self.assertEqual((records,writes),([],0))
+        # Other intents, un-reaped children and unknown native outcomes stay held.
+        for key,value in(('action','CREATE'),('action','GRACEFUL_RENEW'),('nonce','a'*32),
+                          ('reaped',False),('first','native closure unknown'),('numeric',None),('numeric',0),
+                          ('numeric',-9),('stdoutSHA256','0'*64),('dispatcherNonce',None)):
+            bad=copy.deepcopy(before);bad['lastOutcome'][key]=value
+            with self.subTest(outcome=key,value=value):
+                self.assertIsNone(r.reconcile_failed_heartbeat_intent(policy,bad,probe,now,'0'*64))
+                self.assertEqual(bad['inflight'],before['inflight'])
 
     def test_actual_run_cycle_reconciles_only_own_closed_failed_create(self):
         from unittest import mock

@@ -906,6 +906,44 @@ def failed_probe(stage, native):
     return error
 
 
+def reconcile_failed_heartbeat_intent(policy,state,probe,now,probe_sha):
+    """A terminated metadata publisher cannot reserve a control lifecycle action.
+
+    run_cycle has authenticated the complete fresh source/native/API probe.
+    Preserve the failed publication and its unknowns; this neither publishes
+    readiness nor changes a queue, process, source, lease or VM reservation.
+    """
+    old=state.get('lastOutcome');nonce=state.get('inflight');c=probe['control']
+    if not(nonce is not None and type(old)is dict and old.get('nonce')==nonce and
+           old.get('action')=='REFRESH_HEARTBEAT'and old.get('reaped')is True and
+           old.get('first')is None and type(old.get('numeric'))is int and
+           old['numeric']>0 and old.get('stdoutSHA256')==sha(b'')and
+           not probe['heartbeatCurrent']):return None
+    if not(old.get('controlJobId')==c['jobId']and
+           type(old.get('dispatcherNonce'))is str and re.fullmatch(r'[0-9a-f]{32}',old['dispatcherNonce'])and
+           c['state']=='running'and c['terminalLifecycle']is None and
+           c['reservationRetained']is True and type(c['leaseExpiresUnix'])in(int,float)and c['leaseExpiresUnix']>now and
+           all(c[k]for k in('listenerAlive','controllerAlive','workerAlive','ownUnitBound'))and
+           probe['runnerOnline']and probe['networkReachable']and probe['protectedMain']and
+           probe['queueKnown']and not probe['unknownReservations']and not probe['sourceOwnerBusy']and
+           probe['mainCommit']==c['sourceCommit']==policy['mainCommit']and
+           probe['queueSourceSHA256']==c['queueSourceSHA256']==policy['queueSourceSHA256']):return None
+    before=strict(canonical(state));record={'kind':'ROOT_FAILED_HEARTBEAT_METADATA_INTENT_DISPOSITION_V1',
+        'atUnix':now,'before':before,'probeSHA256':probe_sha,'queueMutation':False,
+        'heartbeatPublished':False,'vmAdmission':False,'publicationOutcome':'ORIGINAL_FAILED_OR_UNKNOWN_PRESERVED'}
+    raw=canonical(record);path=ROOT/('failed-heartbeat-'+nonce+'-'+sha(raw)[:16]+'.json')
+    fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+    try:write_all(fd,raw);os.fsync(fd)
+    finally:os.close(fd)
+    state['inflight']=None;state['failureCount']=0;state['nextAttemptUnix']=now+1
+    state['lastOutcome']={'action':'REFRESH_HEARTBEAT','nonce':nonce,'jobId':c['jobId'],
+        'dispatcherNonce':old['dispatcherNonce'],'originalOutcome':old,
+        'reconciledBy':'terminated metadata publisher; same authenticated live control; no readiness claim',
+        'disposition':str(path),'dispositionSHA256':sha(raw),'heartbeatPublished':False}
+    write_state(state)
+    return {'decision':'RECONCILED_FAILED_HEARTBEAT_INTENT','effect':'RECOVERY_BOOKKEEPING_ONLY',
+            'nonce':nonce,'jobId':c['jobId'],'heartbeatPublished':False,'vmAdmission':False}
+
 def run_cycle(policy, state, now):
     # A pre-effect failure schedules one future attempt. Read-only timer ticks
     # before that point must not run another fallible probe and slide it away.
@@ -985,6 +1023,8 @@ def run_cycle(policy, state, now):
             state['lastOutcome']={'action':old['action'],'nonce':nonce,'reconciledBy':'created control CLOSED/released; no successor/no runtime actors' if created_closed else 'closed predecessor/no successor/no runtime actors','originalOutcome':old,'probeSHA256':sha(observed['stdout'])}
             write_state(state)
             return {'decision':'RECONCILED_CLOSED_CREATE' if created_closed else 'RECONCILED_ABSENT_GRACEFUL_RENEW','effect':'RECOVERY_BOOKKEEPING_ONLY' if created_closed else 'NO_EFFECT_PROVEN','nonce':nonce}
+    heartbeat_intent=reconcile_failed_heartbeat_intent(policy,state,probe,now,sha(observed['stdout']))
+    if heartbeat_intent is not None:return heartbeat_intent
     if state['inflight'] is not None and type(state['lastOutcome']) is dict and \
        state['lastOutcome'].get('action')=='REFRESH_HEARTBEAT':
         nonce=state['inflight']

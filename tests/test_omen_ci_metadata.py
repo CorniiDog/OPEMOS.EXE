@@ -223,67 +223,6 @@ class OrdinaryDispatcherStartup(unittest.TestCase):
         result=stage.queue_call(self.config,'fail-unstarted',[self.pin])
         self.assertEqual(result['closed_unstarted'],[self.job['id']])
 
-    def test_normal_dispatcher_closure_consumes_real_admitted_lock_ofds_without_relocking(self):
-        """Real FLOCK/fdinfo/full9; external manager/path facts are modeled."""
-        import fcntl,sys,subprocess,uuid
-        source=path.parent/'omen_control/normal_cycle.py'
-        spec=importlib.util.spec_from_file_location('actual_normal_cycle_owned_locks',source)
-        c=importlib.util.module_from_spec(spec);spec.loader.exec_module(c)
-        paths=(self.state/'worker.lock',self.root/'heavy.lock')
-        fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
-        identity=lambda s:{k:getattr(s,k)for k in fields}
-        fds=[];other=None
-        unit='opemos-root-robot-dispatcher-'+uuid.uuid4().hex+'.service'
-        ref={'unit':unit,'invocation':'a'*32,'pid':0,'start':None}
-        manager={'LoadState':'loaded','InvocationID':ref['invocation'],
-                 'MainPID':'0','ControlGroup':'','ActiveState':'failed'}
-        before=set(os.listdir('/proc/self/fd'))
-        try:
-            for p in paths:
-                p.write_bytes(b'');p.chmod(0o664)
-                if os.geteuid()==0:os.chown(p,1000,1000)
-                fd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC);fds.append(fd)
-                fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
-            refs=[{'path':str(p),'fd':fd,'identity':identity(os.fstat(fd))}for p,fd in zip(paths,fds)]
-            with mock.patch.object(c,'dispatcher_lock_paths',return_value=paths),\
-                 mock.patch.object(c,'user_dispatcher',return_value=manager):
-                self.assertFalse(c.dispatcher_closed(ref),'old fallback conflicts with its own admitted OFDs')
-                self.assertTrue(c.dispatcher_closed(ref,admitted_locks=refs))
-                # It neither unlocks nor closes the caller's admission capabilities.
-                for p in paths:
-                    other=os.open(p,os.O_RDONLY|os.O_CLOEXEC)
-                    with self.assertRaises(BlockingIOError):fcntl.flock(other,fcntl.LOCK_EX|fcntl.LOCK_NB)
-                    os.close(other);other=None
-                wrong=copy.deepcopy(refs);wrong[0]['identity']['st_ino']+=1
-                with self.assertRaisesRegex(RuntimeError,'full9'):c.dispatcher_closed(ref,admitted_locks=wrong)
-                wrong=copy.deepcopy(refs);wrong[1]['fd']=wrong[0]['fd']
-                with self.assertRaisesRegex(RuntimeError,'distinct'):c.dispatcher_closed(ref,admitted_locks=wrong)
-                # A second open of the very same inode is not the admitted OFD.
-                other=os.open(paths[0],os.O_RDONLY|os.O_CLOEXEC)
-                wrong=copy.deepcopy(refs);wrong[0]['fd']=other
-                with self.assertRaisesRegex(RuntimeError,'already owns'):c.dispatcher_closed(ref,admitted_locks=wrong)
-                os.close(other);other=None
-                with mock.patch.object(c,'user_dispatcher',return_value=dict(manager,MainPID=str(os.getpid()),ActiveState='active')):
-                    self.assertFalse(c.dispatcher_closed(ref,admitted_locks=refs))
-                with mock.patch.object(c,'user_dispatcher',return_value=dict(manager,InvocationID='b'*32)):
-                    with self.assertRaisesRegex(RuntimeError,'same actual dispatcher'):c.dispatcher_closed(ref,admitted_locks=refs)
-                # A real foreign OFD remains a refusal, never borrowed custody.
-                fcntl.flock(fds[0],fcntl.LOCK_UN)
-                body='import fcntl,sys;f=open(sys.argv[1]);fcntl.flock(f,fcntl.LOCK_EX);print("held",flush=True);sys.stdin.read(1)'
-                child=subprocess.Popen([sys.executable,'-I','-c',body,str(paths[0])],
-                    stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
-                try:
-                    self.assertEqual(child.stdout.readline().strip(),'held')
-                    self.assertFalse(c.dispatcher_closed(ref))
-                    with self.assertRaisesRegex(RuntimeError,'already owns'):c.dispatcher_closed(ref,admitted_locks=refs)
-                finally:
-                    child.stdin.close();child.wait(timeout=5);child.stdout.close()
-                fcntl.flock(fds[0],fcntl.LOCK_EX|fcntl.LOCK_NB)
-                self.assertTrue(c.dispatcher_closed(ref,admitted_locks=refs))
-        finally:
-            if other is not None:os.close(other)
-            for fd in reversed(fds):os.close(fd)
-        self.assertEqual(set(os.listdir('/proc/self/fd')),before)
 
     def test_absent_worker_with_started_or_unknown_work_fails_without_release(self):
         import sqlite3
