@@ -323,7 +323,7 @@ def materialize(policy,probe_module,nonce,old_row,old_manager,dispatchers=None):
     now=int(time.time())
     fixed=dict(data['policy']);fixed['notBefore']=now;fixed['expiresAt']=now+21600
     data['policy']=fixed
-    if fixed['kind']=='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1':
+    if fixed.get('kind')=='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1':
         # One actual immutable policy pin is generated with the new normal
         # release, then the existing registry/profile consume it consistently.
         data['registry']=json.loads(enc(data['registry']))

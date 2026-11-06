@@ -2562,7 +2562,8 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
         with self.assertRaises(cp.IdleRunnerStatusTransition)as caught:cp.require_stable_github(before,after)
         self.assertFalse(caught.exception.before['runnerOnline']);self.assertTrue(caught.exception.after['runnerOnline'])
         cp.require_stable_github(before,dict(before,heartbeatCurrent=True))
-        for key,value in [('mainCommit','c'*40),('runnerBusy',True),('actionsInProgress',1),('actionsQueued',1)]:
+        cp.require_stable_github(before,dict(before,actionsQueued=3))
+        for key,value in [('mainCommit','c'*40),('runnerBusy',True),('actionsInProgress',1)]:
             with self.subTest(key=key),self.assertRaisesRegex(RuntimeError,key):
                 cp.require_stable_github(before,dict(after,**{key:value}))
 
