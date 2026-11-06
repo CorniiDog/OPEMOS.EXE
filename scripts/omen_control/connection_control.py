@@ -252,8 +252,8 @@ def ci10_root(context):
     finally:os.close(fd)
     policy=ci9_json(raw);need(policy['kind']=='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1',
                             'current normal pointer operation authority')
-    root=Path(context['operation_root']);need(root.parent==Path(policy['runtimeRoot'])and
-         root.name=='robot-ubuntu-'+context['identity']['operation_nonce']and
+    root=Path(context['operation_root']);need(root.parent.parent==Path(policy['operationRoot'])and
+         root.parent.name.endswith('-'+context['identity']['operation_nonce'])and root.name=='runtime'and
          root.is_absolute()and root.resolve()==root,'same typed normal pointer evidence root')
     own=root.lstat();need(stat.S_ISDIR(own.st_mode)and own.st_uid==os.getuid()and
                          stat.S_IMODE(own.st_mode)==0o700,'private normal pointer root')
@@ -541,7 +541,7 @@ def transact(operation):
          'ordinary normal queued mouse sender only')
     context=operation['pointerContext'];root=ci10_root(context);binding=operation['binding']
     need(Path(binding['run_directory'])==root and binding['nonce']==context['identity']['operation_nonce']
-         and binding['artifact_source']==context['identity']['source_commit'],
+         and binding['artifact_source']==context['identity']['executable']['source_commit'],
          'actual current queue VM/source/nonce')
     proc=process(binding);need((proc/'status').read_text().split('Uid:',1)[1].splitlines()[0].split()==['1000']*4,
                                'uniform ordinary QEMU identity')
@@ -583,7 +583,7 @@ def transact(operation):
         need(call('query-name')['name']==binding['vm_name']and call('query-status')['status']=='running',
              'same actual running admitted Ubuntu VM')
         blocks=call('query-block');disks=[v for v in blocks if v.get('device')=='osdisk']
-        need(len(disks)==1 and disks[0]['inserted']['file']==str(root/'desktop-overlay.qcow2')
+        need(len(disks)==1 and disks[0]['inserted']['file']==str(root.parent/'scratch/desktop-overlay.qcow2')
              and disks[0]['inserted']['ro']is False,'current owned disposable guest disk')
         actual={'qmp_name':binding['vm_name'],'qemu_process':{'pid':binding['pid'],'start':int(binding['start_ticks'])},
                 'host_boot_id':binding['host_boot_id'],'socket_path':str(path),'socket_identity':ci10_sig(socket_before),
@@ -674,7 +674,7 @@ class RobotPipeline:
         need(self.p.q.call('query-name')['name']==b['vm_name']and
              self.p.q.call('query-status')['status']=='running','actual same running QMP destination')
         disks=[x for x in self.p.q.call('query-block')if x.get('device')=='osdisk']
-        need(len(disks)==1 and disks[0]['inserted']['file']==str(self.p.root/'desktop-overlay.qcow2')
+        need(len(disks)==1 and disks[0]['inserted']['file']==self.cfg['runtime_storage']['cowPath']
              and disks[0]['inserted']['ro']is False,'actual writable owned guest destination')
         actual={'qmp_name':b['vm_name'],'qemu_process':{'pid':b['pid'],'start':int(b['start_ticks'])},
             'host_boot_id':b['host_boot_id'],'socket_path':str(path),
@@ -802,7 +802,7 @@ class RobotPipeline:
                 'window_owner_process':self.birth,'actual_observation':True,'native':after_native}
             if name in('chooser-confirm-exact-input','Build'):
                 observed.update(input_sha256=p.cfg['input_sha256'],input_path=p.cfg['input_path'])
-            if name=='Build':observed['planned_output']=p.cfg['output_path']
+            if name=='Build':observed['planned_output_directory']=p.cfg['output_directory']
             if name.startswith('virtualUSB'):
                 observed.update(usb_id='opemos-'+p.binding['nonce'],usb_backing_identity=self.cfg['virtualUSBIdentity'],
                     usb_device_identity=p.selected_usb,output_image_sha256=p.built_output['value']['sha256'])
@@ -844,9 +844,12 @@ class RobotPipeline:
 
     def complete(self):
         need(tuple(self.actions)==self.ACTIONS and len(self.reports)==5,'all five actual Robot mouse operations required')
+        self.retain('normal-sender-source',self.sender,'pointer-sender-source')
+        self.retain('normal-observer-source',Path(self.cfg['programRoot'])/'observer_guest.py','gui-observer-source')
         return {'pointer_actions':self.actions,'files':self.files,'gui_session':self.session,
             'gui_clock':self.clock,'gui_controls':self.controls,'gui_destination_admission':self.destination,
             'identity':self.identity,'app_process':self.birth,'app_window_id':self.p.app['window_id'],
+            'gui_sender_ref':'normal-sender-source','gui_observer_ref':'normal-observer-source',
             'robot_reports':self.reports}
 
 
@@ -875,8 +878,11 @@ class Pipeline:
              response.get('nonce')==request['nonce'] and response.get('sequence')==self.sequence and
              response.get('request_kind')==kind and response.get('process')==self.ready['process'],
              'ordered same native app observation within original clock')
-        self.observations.append(response)
-        self.observation_bytes+=len(json.dumps(response,separators=(',',':')).encode())
+        path=self.root/('native-observation-'+str(self.sequence).zfill(3)+'.json')
+        pin=save(path,response);info=path.lstat()
+        self.observations.append(dict(pin,identity={k:getattr(info,k)for k in FULL9},
+            kind='native-observation'))
+        self.observation_bytes+=pin['bytes']
         need(self.observation_bytes<=32*1024*1024,'complete bounded native observation history; first crossing retained')
         return response
 
@@ -941,13 +947,14 @@ class Pipeline:
         self.key('l',('ctrl',));self.text(path)
         self.click('chooser-confirm-exact-input'if action=='chooser-open'else action+'-confirm',confirm,window=dialogs[0])
 
-    def names(self):return self.request('NAMES',window_id=self.app['window_id'])['value']['names']
+    def names(self):return [name for row in self.request('UI_STATE')['value']['namesByWindow']for name in row['names']]
 
-    def wait_text(self,text):
+    def wait_text(self,text,prefix=False):
         while True:
             names=self.names()
-            if text in names:return names
-            errors=[name for name in names if name.startswith(('Build failed','USB write failed','Error:'))]
+            if text in names or(prefix and text=='NVIDIA-mutated image created and retained: '
+                                   and any(name.startswith(text)for name in names)):return names
+            errors=[name for name in names if name.startswith(('Build failed','Image build failed','USB write failed','Error:'))]
             need(not errors,'actual application failure: '+repr(errors))
             remaining=self.end-time.monotonic();need(remaining>0,'actual application completion absent');time.sleep(min(30,remaining))
 
@@ -959,7 +966,7 @@ class Pipeline:
         need(input_image['value']['sha256']==self.cfg['input_sha256'],'actual selected original image hash')
         self.selected_input=input_image
         self.click('Build',labels['build'])
-        self.wait_text(labels['build_success'])
+        self.wait_text(labels['build_success'],prefix=True)
         output=self.request('FILE',role='output_path')
         usb=self.request('USB')['value']
         need(usb['serial']=='opemos-'+self.binding['nonce']and usb['bytes']==self.cfg['usb_bytes'],
@@ -968,7 +975,7 @@ class Pipeline:
         choices=[name for name in self.names()if ' · '+usb['path']+' · 'in name]
         need(len(choices)==1,'one native device option for the actually observed emulated USB')
         self.click('virtualUSB-device',choices[0],('list item','menu item','text'))
-        self.built_output=output;self.selected_usb=usb
+        self.built_output=output;self.selected_usb=usb;self.cfg['output_path']=output['value']['path']
         self.click('virtualUSB-select-and-review',labels['review'])
         self.click('virtualUSB-confirmation-entry',labels['confirmation'],('entry',))
         self.text('ERASE')

@@ -323,6 +323,14 @@ def materialize(policy,probe_module,nonce,old_row,old_manager,dispatchers=None):
     now=int(time.time())
     fixed=dict(data['policy']);fixed['notBefore']=now;fixed['expiresAt']=now+21600
     data['policy']=fixed
+    if fixed['kind']=='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1':
+        # One actual immutable policy pin is generated with the new normal
+        # release, then the existing registry/profile consume it consistently.
+        data['registry']=json.loads(enc(data['registry']))
+        data['profile']=json.loads(enc(data['profile']))
+        data['registry']['artifacts']['ubuntu']['operation_policy']={
+            'path':str(CONTROL/'releases'/nonce/'fixed-policy.json'),'sha256':sha(enc(fixed))}
+        data['profile']['fixed_registry']['sha256']=sha(enc(data['registry']))
     need(data['queueLoggerSHA256']==policy['queueLoggerSHA256'] and
          fixed['sourceCommit']==policy['mainCommit'] and
          fixed['queueSourceSHA256']==policy['queueSourceSHA256'] and

@@ -202,7 +202,7 @@ def remaining_job_window(lease, peer, now):
          "same installed release fixed policy path")
     raw = held_bytes(target, 65536, pin["sha256"], require_root=True)
     policy = json.loads(raw)
-    need(policy.get("kind") == "ROOT_FIXED_SCOPED_CONNECTION_POLICY_V1" and
+    need(policy.get("kind") in ("ROOT_FIXED_SCOPED_CONNECTION_POLICY_V1", "ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1") and
          policy.get("sourceCommit") == lease["engine_source_commit"] and
          policy.get("queueSourceSHA256") == lease["connection_queue_sha256"] and
          job_window_valid(policy.get("notBefore"),policy.get("expiresAt"),now),

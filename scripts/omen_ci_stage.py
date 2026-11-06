@@ -1080,7 +1080,12 @@ def validate_gui_pointer(receipt,plan,operand,expected_executable=None):
         if action in("chooser-confirm-exact-input","Build"):
             require(observation.get("input_sha256")==operand["input_sha256"]and observation.get("input_path")==operand.get("gui_input_path")
                 and isinstance(observation.get("input_path"),str)and observation["input_path"],"Exact selected original input pin/path missing")
-        if action=="Build":require(observation.get("planned_output")==operand.get("gui_output_path")and bool(observation.get("planned_output")),"Actual planned output differs")
+        if action=="Build":
+            if operand.get('gui_output_directory'):
+                require(observation.get('planned_output_directory')==operand['gui_output_directory']and
+                    Path(operand['gui_output_path']).parent==Path(operand['gui_output_directory']),
+                    'Actual selected output directory/completed export differs')
+            else:require(observation.get("planned_output")==operand.get("gui_output_path")and bool(observation.get("planned_output")),"Actual planned output differs")
         if action.startswith("virtualUSB"):
             usb=receipt["roles"]["virtual_usb"]
             require(all(observation.get(k)==usb.get(v)and observation.get(k)for k,v in

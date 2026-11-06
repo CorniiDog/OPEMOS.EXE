@@ -15,7 +15,7 @@ CONFIG = Path.home()/'.config/opemos-ci/robot.json'
 HOOK = '/home/connor/.local/libexec/opemos-robot-job-plan'
 FULL9 = ('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
 SHA = re.compile(r'[0-9a-f]{64}\Z')
-MODULE_PINS = {'omen_ci_reader.py': '6b2d97a373001e8835400d5be22cef8c06004dab5c228bc1efbe7078dfe464df', 'omen_ci_executables.py': '0a94a6068019795bbb3698fcacabd60dc632f863b6504fc183791b00aad56440', 'omen_ci_result.py': '5baa682b9bd7b625d817b857befa7b180edf025bf1b8ab60e7de0a77fd456f85', 'omen_ci_stage.py': '92a2a83c152c6a99f007d56f88d8f556903f1dfcc3d85702797f44afd02814ae', 'omen_ci_inventory.py': 'e8873930651d4e1022fd3851b9bc35400ff54310e1d904f5d01c0f7dd903119e'}  # Filled when sealing; all bytes consumed before any operation.
+MODULE_PINS={'omen_ci_reader.py': '6b2d97a373001e8835400d5be22cef8c06004dab5c228bc1efbe7078dfe464df', 'omen_ci_executables.py': '0a94a6068019795bbb3698fcacabd60dc632f863b6504fc183791b00aad56440', 'omen_ci_result.py': '5baa682b9bd7b625d817b857befa7b180edf025bf1b8ab60e7de0a77fd456f85', 'omen_ci_stage.py': '65e435c18c2c467799a4b5267ff643d04acc097e41692f0846b1dec421b4bd6e', 'omen_ci_inventory.py': 'e8873930651d4e1022fd3851b9bc35400ff54310e1d904f5d01c0f7dd903119e'}
 
 
 def require(value, message):
@@ -288,6 +288,10 @@ class Engine:
                 time.sleep(5)
             require(all(rows[j]['state']=='passed'for j in protected),'Actual ordinary job failed; original failure retained')
             collected=hook(self.profile,dict(request,action='collect'),folder/'post-terminal')
+            if prepared.get('operation_scope')=='NORMAL_UBUNTU_GUI_BUILD_WRITE_VIRTUAL_USB_ONLY':
+                require(kind=='artifact'and subject['platform']=='ubuntu'and not operations,
+                        'bounded Ubuntu stage cannot replace another full-stack role')
+                return self.ubuntu_gui_component(request,prepared,collected,rows,stage_path,folder)
             receipt,receipt_sha,proof=consume_collection(
                 self.stage,collected,request,protected,robot,operand,cfg['result_contract']['max_bytes'])
             self.stage['validate_receipt'](receipt,case,plan,operand)
@@ -331,6 +335,90 @@ class Engine:
             return value
         finally:
             lock.close()
+
+    def ubuntu_gui_component(self,request,prepared,collected,rows,stage_path,folder):
+        """Verify the real Ubuntu stage without claiming the later SteamOS stages.
+
+        The same strict pointer/raw/frame consumer validates dynamic native
+        observations after this exact normal job closes. GPU/install/update
+        acceptance remains unavailable until their own real jobs run.
+        """
+        stage=self.stage;operand=prepared['operand'];expected=prepared['expected']
+        cfg=stage['load_pinned'](prepared['normal_job_config'])
+        policy=stage['load_pinned'](cfg['normalPolicyPin'])
+        require(policy['kind']=='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1'and
+            policy['scope']=='NORMAL_UBUNTU_GUI_BUILD_WRITE_VIRTUAL_USB_ONLY'and
+            policy['sourceCommit']==request['source_commit']==cfg['source_commit']and
+            cfg['candidate']['descriptor']==expected and cfg['nonce']==request['nonce']and
+            collected['identity']=={k:request[k]for k in('repository','source_commit','run_id','attempt','nonce')}and
+            collected['effect']=='READ_ONLY_CURRENT_OPERATION'and collected['job_ids']==operand['job_ids'],
+            'exact Root-selected Ubuntu stage, candidate and post-terminal identity')
+        root=Path(prepared['normal_job_config']['path']).parent
+        require(root.parent==Path(policy['operationRoot'])and root.name.endswith('-'+request['nonce'])and
+            collected['job_result_path']==str(root/'runtime/job-result.json')and
+            collected['robot_result_path']==str(root/'robot-result.json')and
+            collected['storage_result_path']==str(root/'storage-result.json'),
+            'same current admitted result paths')
+        actual,actual_sha=stage['load_result'](collected['job_result_path'],16*1024**2)
+        robot,_=stage['load_result'](collected['robot_result_path'],4*1024**2)
+        storage,_=stage['load_result'](collected['storage_result_path'],4*1024**2)
+        require(actual['kind']=='NORMAL_UBUNTU_GUI_BUILD_WRITE_JOB_V1'and
+            actual['nonce']==request['nonce']and actual['source_commit']==request['source_commit']and
+            actual['candidate_source_commit']==expected['source_commit']and actual['package_sha256']==expected['package_sha256']and
+            actual['GUIBuildWriteReadbackAccepted']is True and actual['qemu_reaped']is True and
+            actual['originals_unchanged_after']is True and actual['private_storage_closure_verified']is True and
+            storage['first']is None and storage['closure']['unmountedNormally']is True and
+            storage['closure']['loopDetachedNormally']is True and storage['closure']['errors']==[]and
+            robot['identity']==request and robot['numeric_exit']==robot['tests_failed']==0 and
+            robot['actual_pointer_calls']==robot['tests_passed']==5,
+            'actual GUI/normal child/originals/Root storage/Robot closure required')
+        for job_id in operand['job_ids']:
+            result=rows[job_id]['result'];require(result['terminalLifecycle']['phase']=='CLOSED'and
+                not result.get('reservationRetained',False),'actual canonical release required')
+        gui=actual['GUI'];evidence=gui['normalRobotEvidence'];files=evidence['files']
+        sender=files[evidence['gui_sender_ref']];observer=files[evidence['gui_observer_ref']]
+        require(sender['sha256']==policy['programSHA256']['connection_control.py']and
+            observer['sha256']==policy['programSHA256']['observer_guest.py'],
+            'actual current sender/observer independently bound to Root source')
+        image=gui['output']['value'];readback=actual['hostUSBReadback']
+        output_dir='/home/opemosgui/opemos-robot-'+request['nonce']+'/output'
+        require(Path(image['path']).parent==Path(output_dir)and
+            readback['readbackSHA256']==image['sha256']and readback['imageBytes']==image['bytes']and
+            readback['bytesRead']==actual['virtualUSB']['capacityBytes']==cfg['guest_operation']['usb_bytes']and
+            readback['hostFlushCompleted']is True,'same actual guest output/full virtual USB readback')
+        observed=dict(operand,evidence_roots=[str(root)],gui_session=evidence['gui_session'],
+            gui_clock=evidence['gui_clock'],gui_controls=evidence['gui_controls'],
+            gui_destination_admission=evidence['gui_destination_admission'],
+            gui_sender=sender,gui_observer=observer,gui_input_path=gui['input']['value']['path'],
+            gui_output_path=image['path'],gui_output_directory=output_dir)
+        receipt=dict(evidence,roles={'imaging_host':{'id':operand['runtime_instance_id'],'platform':'linux',
+            'architecture':'x86_64','gui_session':evidence['gui_session'],'app_process':evidence['app_process'],
+            'app_window_id':evidence['app_window_id']},'virtual_usb':{'id':'opemos-'+request['nonce'],
+            'backing_identity':actual['virtualUSB']['identity'],'device_identity':gui['usb']}},output=image)
+        pointer=stage['validate_gui_pointer'](receipt,prepared['plan'],observed,expected)
+        exports=[];remaining=policy['publicEvidenceMaxBytes']
+        for pin in collected['public_evidence']:
+            require(pin['public']is True and pin['kind']in{'screenshot','log','pointer-action','pointer-sender-lifecycle',
+                'robot-output','robot-report','robot-log','robot-xunit'}and
+                Path(pin['path']).is_relative_to(root/'runtime'),'same actual public GUI evidence only')
+            actual_pin=stage['artifact_read'](pin,remaining);remaining-=actual_pin['size']
+            suffix=Path(pin['path']).suffix;dest=self.reports/(request['nonce']+'-'+pin['sha256']+suffix)
+            stage['retain_pin'](pin,stage_path/'artifacts'/pin['sha256'],remaining+actual_pin['size'],policy['publicEvidenceMaxBytes'])
+            raw=raw_file(pin['path'],policy['publicEvidenceMaxBytes'],pin['sha256'],os.getuid())
+            if not os.path.lexists(dest):
+                fd=os.open(dest,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+                with os.fdopen(fd,'wb')as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
+            else:require(raw_file(dest,policy['publicEvidenceMaxBytes'],pin['sha256'],os.getuid())==raw,'same public report bytes')
+            exports.append({'path':str(dest),'sha256':pin['sha256'],'kind':pin['kind']})
+        require({'screenshot','pointer-action','robot-output','robot-log','robot-report','robot-xunit'}<=
+            {x['kind']for x in exports},'actual GUI and all Robot report formats must be retained')
+        value={'status':'incomplete','reason':'Ubuntu GUI Build/write/readback verified; SteamOS install/update/NVIDIA/healing not yet verified',
+            'component':'ubuntu-gui-build-write-readback','component_accepted':True,'fullStackAccepted':False,
+            'SteamOSOrNVIDIAAcceptance':False,'identity':request,'runtime_instance_id':operand['runtime_instance_id'],
+            'actual_job_sha256':actual_sha,'pointer_proof':pointer,'virtual_usb':readback,'exports':exports,
+            'closure_verified':True,'active':False,'stage':str(stage_path),'run_name':stage_path.name}
+        stage['create_json'](stage_path/'receipt.json',value);dump(folder/'verified-ubuntu-stage.json',value)
+        return value
 
     def failure_exports(self):
         if self.current is None:return {'status':'unavailable','reason':'No admitted current operation'}

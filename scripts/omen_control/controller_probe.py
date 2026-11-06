@@ -37,7 +37,7 @@ class IdleRunnerStatusTransition(RuntimeError):
 
 def require_stable_github(before,after):
     stable=('networkReachable','protectedMain','mainCommit','protectedMainCommit',
-            'runnerBusy','actionsInProgress','actionsQueued')
+            'runnerBusy','actionsInProgress')
     changed=[k for k in stable if after[k]!=before[k]]
     need(not changed,'GitHub non-heartbeat ownership/source changed during OMEN probe: '+','.join(changed))
     if before['runnerOnline']!=after['runnerOnline']:
@@ -67,9 +67,13 @@ def observe():
           'sudo -n /usr/bin/python3 -I -B -']
     proc=subprocess.run(argv,input=source,stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,timeout=25,check=False)
-    need(proc.returncode==0 and len(proc.stdout)<=1048576 and
-         proc.stderr==b'' and proc.stdout.count(b'\n')==1 and
-         proc.stdout.endswith(b'\n'),'authenticated current OMEN probe numeric/EOF; stderrSHA='+sha(proc.stderr))
+    if not(proc.returncode==0 and len(proc.stdout)<=1048576 and
+           proc.stderr==b'' and proc.stdout.count(b'\n')==1 and proc.stdout.endswith(b'\n')):
+        # This subprocess has actually waited/reaped. Preserve its real stderr
+        # separately from the enclosing controller child's traceback/hash.
+        raise trigger.failed_probe('controller-ssh',{'numeric':proc.returncode,
+            'stdout':proc.stdout,'stderr':proc.stderr,'reaped':True,
+            'eof':{'stdout':True,'stderr':True},'first':None})
     v=trigger.strict(proc.stdout)
     trigger.validate_probe(v,p,int(time.time()))
     # A second current API read closes the controller-to-OMEN observation.

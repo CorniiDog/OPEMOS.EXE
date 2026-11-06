@@ -97,6 +97,33 @@ def check_root_directory():
              stat.S_IMODE(s.st_mode)==mode and not path.is_symlink(),
              'Root anchored recovery directory '+str(path))
 
+def current_controller_definition(p):
+    # Existing normal-template is the single installed deployment definition.
+    # Original release/job identities remain immutable data; no copied current
+    # revision list or candidate checkout can select privileged implementation.
+    raw=held(ROOT/'normal-template.json',16*1024*1024,0,0o400)
+    need(sha(raw)==p['normalTemplateSHA256'],'authenticated current normal deployment definition')
+    template=strict(raw)
+    need(template.get('kind')=='ROOT_REVIEWED_ROBOT_CONTROL_MATERIALIZATION_V1'
+         and template.get('mainCommit')==p['mainCommit']and template.get('runnerId')==21
+         and template.get('runtimeAuthorized')is True
+         and template.get('queueSourceSHA256')==p['queueSourceSHA256']
+         and template.get('queueLoggerSHA256')==p['queueLoggerSHA256'],
+         'same reviewed controller/queue/source definition')
+    fixed=template.get('policy',{})
+    need(fixed.get('kind')=='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1'
+         and fixed.get('sourceAccepted')is True and fixed.get('runtimeAuthorized')is True
+         and fixed.get('sourceCommit')==p['mainCommit']
+         and fixed.get('queueSourceSHA256')==p['queueSourceSHA256'],
+         'explicit current normal operation definition, no expansion of legacy connection grant')
+    for name,key in (('control.py','controlBrokerSHA256'),('connection_host.py','privatePeerSHA256'),
+                     ('install_remote.py','normalInstallerSHA256'),('job_guard.py','jobGuardSHA256'),
+                     ('job-started.sh','jobStartedSHA256')):
+        source=template['sources'][name];body=bytes.fromhex(source['hex'])
+        need(0<len(body)<=8*1024*1024 and sha(body)==source['sha256']==p[key],
+             'current controller definition source role '+name)
+    return template
+
 def validate_policy(p, now):
     keys = {'kind','enabled','sourceAccepted','runtimeAuthorized','repository',
             'runnerId','mainCommit','queueSourceSHA256','queueLoggerSHA256',
@@ -115,14 +142,14 @@ def validate_policy(p, now):
     need(type(p) is dict and set(p) in (keys,keys|{'healthImplementationDefinitionPin'}) and p['kind']=='ROOT_RUNNER21_AUTO_RECOVERY_V1'
          and p['enabled'] is True and p['sourceAccepted'] is True and
          p['runtimeAuthorized'] is True and p['repository']=='CorniiDog/OPEMOS.EXE'
-         and p['runnerId']==RUNNER_ID and p['scope']==SOURCE_SCOPE and
-         p['mainCommit']==REVIEWED_MAIN and
-         p['queueSourceSHA256']==REVIEWED_QUEUE,
+         and p['runnerId']==RUNNER_ID and p['scope']==SOURCE_SCOPE,
          'exact reviewed and enabled Runner21-only policy')
     need(re.fullmatch(r'[0-9a-f]{40}',p['mainCommit']) and
          re.fullmatch(r'[0-9a-f]{32}',p['currentReleaseTx']) and
          all(re.fullmatch(r'[0-9a-f]{64}',p[k]) for k in keys if k.endswith('SHA256')),
          'exact current Main and complete source pins')
+    if not(p['mainCommit']==REVIEWED_MAIN and p['queueSourceSHA256']==REVIEWED_QUEUE):
+        current_controller_definition(p)
     need(type(p['notBeforeUnix']) is int and type(p['expiresUnix']) is int and
          p['notBeforeUnix'] <= now < p['renewalAuthorizedUntilUnix'] and
          0 < p['expiresUnix']-p['notBeforeUnix'] <= 7*86400 and
@@ -814,15 +841,62 @@ def reconcile_running_resume(policy,state,probe,now):
     return {'decision':'RECONCILED_RUNNING_RESUME_PENDING','effect':'RECOVERY_BOOKKEEPING_ONLY',
             'nonce':nonce,'jobId':c['jobId'],'heartbeatPublished':False}
 
+def failed_probe(stage, native):
+    """Keep a bounded genuine failed child stderr in existing private custody.
+
+    This is diagnostic evidence, never a closure, readiness or retry grant.
+    Immutable content names retain the first bytes; at most16 distinct records
+    (each under140000 bytes) can be added by this producer. A diagnostic failure cannot
+    replace the original refusal.
+    """
+    error=RuntimeError('full current probe native closure; numeric='+str(native['numeric'])+
+                       '; stderrSHA256='+sha(native['stderr']))
+    try:
+        need(stage in('controller-native','controller-ssh')and
+             type(native['stderr'])is bytes and len(native['stderr'])<=65536,
+             'finite fixed-stage failed stderr')
+        record={'kind':'ROOT_RUNNER21_FAILED_PROBE_NATIVE_V1','stage':stage,
+                'numeric':native['numeric'],'first':native.get('first'),
+                'reaped':native.get('reaped'),'eof':native.get('eof'),
+                'stdoutSHA256':sha(native['stdout']),'stderrSHA256':sha(native['stderr']),
+                'stderrHex':native['stderr'].hex()}
+        raw=canonical(record);need(len(raw)<=140000,'finite failed native evidence')
+        directory=os.open(ROOT,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+        try:
+            info=os.fstat(directory)
+            need(info.st_uid==info.st_gid==0 and stat.S_IMODE(info.st_mode)==0o700,
+                 'existing Root private evidence directory')
+            name='probe-failure-'+sha(raw)+'.json'
+            existing=[n for n in os.listdir(directory)if re.fullmatch(r'probe-failure-[0-9a-f]{64}\.json',n)]
+            if name in existing:
+                need(held(ROOT/name,140000,0,0o400)==raw,'existing immutable failure differs')
+            elif len(existing)<16:
+                fd=os.open(name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o400,dir_fd=directory)
+                try:write_all(fd,raw);os.fsync(fd)
+                finally:os.close(fd)
+                os.fsync(directory)
+            else:name=None
+            if name is not None:error.add_note('actual private failed stderr: '+str(ROOT/name))
+        finally:os.close(directory)
+    except BaseException as secondary:
+        error.add_note('secondary failed-probe evidence: '+type(secondary).__name__+': '+str(secondary)[:200])
+    return error
+
+
 def run_cycle(policy, state, now):
+    # A pre-effect failure schedules one future attempt. Read-only timer ticks
+    # before that point must not run another fallible probe and slide it away.
+    # Inflight outcomes still require their normal fresh reconciliation proof.
+    if (state['inflight'] is None and now < state['nextAttemptUnix'] and
+            state.get('totalCycles',0) < policy['maxTotalCycles'] and
+            state['completedCycles'] < policy['maxCycles']):
+        return {'decision':'BACKOFF','effect':False}
     probe_raw=load_code(PROBE,policy['controllerProbeSHA256'])
     probe_child=start_held_python(probe_raw,['--probe'])
     observed=capture(probe_child,MAX_PROBE_SECONDS,abort_readonly=True)
-    need(observed['reaped'] and observed['numeric']==0 and
-         all(observed['eof'].values()) and observed['first'] is None and
-         observed['stderr']==b'',
-         'full current probe native closure; numeric='+str(observed['numeric'])+
-         '; stderrSHA256='+sha(observed['stderr']))
+    if not(observed['reaped'] and observed['numeric']==0 and
+           all(observed['eof'].values()) and observed['first'] is None and observed['stderr']==b''):
+        raise failed_probe('controller-native',observed)
     probe=receipt(observed['stdout'],'ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1')
     # The authenticated remote timestamp is later than the main entry clock.
     # Sample a fresh local clock only after the complete native probe receipt.

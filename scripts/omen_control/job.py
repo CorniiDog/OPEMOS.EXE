@@ -269,6 +269,22 @@ def held_source(path,uid,mode,digest=None,cap=1048576):
         return bytes(raw)
     finally:os.close(fd)
 
+def current_queue_identity(C):
+    group=Path('/proc/self/cgroup').read_text().strip()
+    units=[x for x in group.removeprefix('0::').split('/')
+           if re.fullmatch(r'opemos-testq-[0-9a-f-]+\.service',x)]
+    need(len(units)==1 and C['queue_job_id'].endswith('-'+C['nonce']),
+         'same actual admitted queue unit/job/operation')
+    observed=subprocess.run(['/usr/bin/systemctl','show',units[0],'-p','InvocationID','-p','ActiveState'],
+        capture_output=True,text=True,timeout=10)
+    need(observed.returncode==0 and observed.stderr=='','actual current system manager observation')
+    value=dict(x.split('=',1)for x in observed.stdout.splitlines()if'='in x)
+    need(value.get('ActiveState')=='active'and re.fullmatch('[0-9a-f]{32}',value.get('InvocationID','')),
+         'actual finite current queue invocation/active state')
+    inherited=os.environ.get('INVOCATION_ID')
+    need(inherited is None or inherited==value['InvocationID'],'inherited actual queue invocation differs')
+    return units[0],value['InvocationID'],group
+
 def authenticated_config(config):
     need(os.getuid()==os.geteuid()==1000 and config.parent==HERE and config.name=='operation.json',
          'same materialized ordinary queue config')
@@ -297,7 +313,7 @@ def authenticated_config(config):
     need(all(C[k]['sha256']==policy['originalSHA256'][k]for k in('base','code','vars_template','image_carrier')),
          'Root-pinned original image/firmware roles')
     need(d['platform']=='ubuntu'and d['repository']=='CorniiDog/OPEMOS.EXE'
-         and d['source_commit']==C['source_commit']==guest['source_commit']
+         and C['source_commit']==policy['sourceCommit']and d['source_commit']==guest['source_commit']
          and C['candidate']['archive']['sha256']==d['artifact_archive_sha256']
          and guest['package_sha256']==d['package_sha256']and guest['nonce']==C['nonce']
          and d['executable_name']!=d['package_name']and guest['native_executable_sha256']==d['executable_sha256']
@@ -341,7 +357,9 @@ def main():
     global WHOLE_END,CLEANUP_END,OWNED
     need(len(sys.argv)==3 and sys.argv[1]=='--pipeline','exact installed normal pipeline config')
     config=Path(sys.argv[2]);C=authenticated_config(config)
-    nonce=C['nonce'];WHOLE_END=time.monotonic()+C['whole_seconds']
+    RUNTIME=HERE.parent  # the existing one-use normal operation owns all VM/evidence paths
+    nonce=C['nonce'];WHOLE_END=C['operation_end_monotonic']
+    need(type(WHOLE_END)in(int,float)and C['operation_started_monotonic']<=time.monotonic()<WHOLE_END<=C['operation_started_monotonic']+C['whole_seconds'],'same original whole normal operation clock, including preparation')
     modules=authenticated_programs(C);engine_sources=authenticated_engine(C);OWNED=modules['owned_command']
     USB=modules['virtual_usb'];CONTROL=modules['connection_control']
     cow_limit=C['cow_growth_bytes'];whole_limit=C['maxVMBytes']
@@ -351,6 +369,9 @@ def main():
          type(C['memoryBytes'])is int and C['memoryBytes']%1048576==0 and
          0<C['memoryBytes']<=34359738368 and C['swapBytes']==0 and C['network']=='none',
          'same admitted CPU/RAM/no-swap/no-network bounds')
+    need(type(C['guest_memory_bytes'])is int and C['guest_memory_bytes']%1048576==0 and
+         0<C['guest_memory_bytes']<=C['memoryBytes']-2147483648,
+         'guest memory preserves admitted QEMU/observer overhead')
     need(os.getuid()==1000 and stat.S_ISDIR(RUNTIME.stat().st_mode)and
          RUNTIME.stat().st_uid==1000 and RUNTIME.stat().st_dev==C['ext4_dev'] and
          os.statvfs(RUNTIME).f_frsize>0,'exact ext4 OPEMOS runtime root differs')
@@ -358,29 +379,13 @@ def main():
                       capture_output=True,text=True,timeout=10)
     need(fs.returncode==0 and fs.stdout.strip()=='ext4',
          'fresh disposable COW target must actually be ext4')
-    current_cgroup=Path('/proc/self/cgroup').read_text().strip()
-    units=[part for part in current_cgroup.removeprefix('0::').split('/')
-           if re.fullmatch(r'opemos-testq-[0-9a-f-]+\.service',part)]
-    need(len(units)==1,'one actual normal queue unit in current kernel cgroup')
-    unit=units[0];invocation=os.environ.get('INVOCATION_ID','')
-    need(C.get('queue_job_id') and C['queue_job_id'].endswith('-'+nonce),
-         'same normal planner queue job/attempt identity')
-    need(re.fullmatch(r'opemos-testq-[0-9a-f-]+\.service',unit or '') and
-         re.fullmatch(r'[0-9a-f]{32}',invocation or '') and
-         unit in Path('/proc/self/cgroup').read_text(),
-         'exact admitted normal queue service/cgroup required')
-    unit_show=subprocess.run(['/usr/bin/systemctl','show',unit,'-p','InvocationID',
-                              '-p','ActiveState'],capture_output=True,text=True,timeout=10)
-    need(unit_show.returncode==0 and
-         'InvocationID='+invocation in unit_show.stdout.splitlines() and
-         'ActiveState=active' in unit_show.stdout.splitlines(),
-         'fresh normal queue InvocationID/active custody differs')
+    unit,invocation,current_cgroup=current_queue_identity(C)
     base=input_file(C['base'],60_000_000_000)
     code=input_file(C['code'],8*1024*1024)
     vars_original=input_file(C['vars_template'],8*1024*1024)
     package=input_file(C['image_carrier'],16*1024**3)
     observer_iso=C['observer_iso'];observer=input_file(observer_iso,3*1024**3)
-    need(observer_iso['nonce']==nonce and observer_iso['source_commit']==C['source_commit'],
+    need(observer_iso['nonce']==nonce and observer_iso['source_commit']==C['candidate']['descriptor']['source_commit'],
          'exact produced candidate/observer medium belongs to this operation')
     originals={'base':C['base'],'code':C['code'],'vars_template':C['vars_template'],
                'image_carrier':C['image_carrier'],'observer_iso':observer_iso}
@@ -388,25 +393,50 @@ def main():
     # retention. The Root normal admission supplies the separately retained union.
     ids=[(v['identity']['st_dev'],v['identity']['st_ino'])for v in originals.values()]
     need(len(ids)==len(set(ids)),'aliased VM original roles')
-    charged=sum(os.stat(v['path']).st_blocks*512 for v in originals.values())
+    storage=C['runtime_storage'];scratch=RUNTIME/'scratch';scratch_info=scratch.lstat()
+    need(storage['kind']=='CURRENT_ROOT_PRIVATE_FILE_BACKED_EXT4_V1'and
+         storage['mount']==str(scratch)and storage['mountNamespace']==os.readlink('/proc/self/ns/mnt')and
+         storage['device']==scratch_info.st_dev and scratch_info.st_uid==1000 and
+         storage['cowPath']==str(scratch/'desktop-overlay.qcow2')and
+         storage['fixedStorageBytes']==C['normalPolicy']['fixedStorageBytes']and
+         storage['usbDirectory']==str(Path(C['normalPolicy']['storageBase'])/nonce/'usb'),
+         'actual current Root-provided bounded storage context')
+    private_fs=subprocess.run(['/usr/bin/findmnt','-n','-o','FSTYPE','-T',str(scratch)],
+                              capture_output=True,text=True,timeout=10)
+    need(private_fs.returncode==0 and private_fs.stdout.strip()=='ext4','actual private COW ext4')
+    charged=sum(os.stat(v['path']).st_blocks*512 for k,v in originals.items()if k!='observer_iso')
     retained=C['retained_union_bytes'];usb_bytes=C['guest_operation']['usb_bytes']
     need(type(retained)is int and retained>=0 and type(usb_bytes)is int and usb_bytes>0 and
          type(C['maxVMBytes'])is int and whole_limit==C['normalPolicy']['maxVMBytes']<=59_971_770_624 and
-         charged+retained+cow_limit+usb_bytes+C['vars_template']['bytes']+500_000_000<=whole_limit,
+         charged+retained+storage['fixedStorageBytes']+usb_bytes+C['vars_template']['bytes']+500_000_000<=whole_limit,
          'complete immutable originals/retention/COW/USB/vars/metadata exceed admitted whole VM bound')
-    root=RUNTIME/('robot-ubuntu-'+nonce)
+    root=RUNTIME/'runtime'
     need(not os.path.lexists(root),'fresh private VM directory exists')
-    statfs=os.statvfs(RUNTIME);free=statfs.f_bavail*statfs.f_frsize
-    need(free>=cow_limit+usb_bytes+500_000_000,
-         'actual COW/USB/metadata capacity unavailable')
+    statfs=os.statvfs(scratch);free=statfs.f_bavail*statfs.f_frsize
+    need(free>=cow_limit+500_000_000 and os.statvfs(RUNTIME).f_bavail*os.statvfs(RUNTIME).f_frsize>=500_000_000,
+         'actual inner COW and outer metadata capacity unavailable')
     root.mkdir(mode=0o700)
+    def metadata_guard(reserve=0):
+        allocated=0;count=0;archive=Path(C['candidate']['archive']['path'])
+        for directory,dirs,files in os.walk(RUNTIME,followlinks=False):
+            parent=Path(directory)
+            if parent==RUNTIME:dirs[:]=[n for n in dirs if n!='scratch']
+            for name in files+dirs:
+                path=parent/name;s=path.lstat();count+=1
+                need(count<=8192 and not stat.S_ISLNK(s.st_mode),'finite owned metadata namespace')
+                if path==archive:continue  # independently full-hashed and charged archive role
+                allocated+=s.st_blocks*512
+        need(allocated+reserve<=500_000_000,'actual whole operation metadata reserve exhausted')
+        return allocated
+    metadata_guard(192*1024**2)  # QEMU stream caps plus one complete Robot action
     first=None;q=None;qemu_pidfd=None;qemu_streams={};qemu_readers=[];qemu_launch_attempted=False;control=None;socket_pins={};usb_scope=None;usb_fd=None
     result={'kind':'NORMAL_UBUNTU_GUI_BUILD_WRITE_JOB_V1','nonce':nonce,
-            'source_commit':C['source_commit'],'package_sha256':C['candidate']['descriptor']['package_sha256'],
+            'source_commit':C['source_commit'],'candidate_source_commit':C['candidate']['descriptor']['source_commit'],'package_sha256':C['candidate']['descriptor']['package_sha256'],
             'fullStackAccepted':False,'SteamOSOrGPUAcceptance':False,'originals':originals,
             'effects':[],'first_failure':None,'closure':'UNKNOWN'}
     try:
-        usb_scope=USB.virtual_usb_backing(root,usb_bytes,charged+retained+cow_limit+C['vars_template']['bytes'])
+        usb_scope=USB.virtual_usb_backing(storage['usbDirectory'],usb_bytes,
+                    charged+retained+storage['fixedStorageBytes']+C['vars_template']['bytes'])
         backing,usb_fd=usb_scope.__enter__()
         result['virtualUSB']=backing;result['effects'].append('new-owned-allocated-regular-file-USB')
         vars_out=root/'OVMF_VARS_4M.fd'
@@ -415,7 +445,7 @@ def main():
         need(hashlib.sha256(vars_out.read_bytes()).hexdigest()==C['vars_template']['sha256'],
              'fresh vars copy differs from readonly template')
         result['effects'].append('fresh-private-vars')
-        overlay=root/'desktop-overlay.qcow2'
+        overlay=Path(storage['cowPath'])
         run,out,err=child(['/usr/bin/qemu-img','create','-q','-f','qcow2','-F','qcow2',
                            '-b',str(base),str(overlay)],root,30)
         need(run['numeric']==0 and overlay.is_file() and overlay.stat().st_size<cow_limit,
@@ -469,16 +499,16 @@ def main():
              'cow_after_sha256':rule_receipt['cow_after']['sha256'],
              'rule_sha256':rule_receipt['rule_sha256']}
         result['effects'].append('exact-offline-rule-in-fresh-private-cow-only')
-        name='opemos-robot-ubuntu-'+nonce[:12]
+        name='opemos-robot-ubuntu-'+nonce
         qmp=root/'qmp.sock';vnc=root/'vnc.sock';obs=root/'observer.sock'
         argv=['/usr/bin/qemu-system-x86_64','-name',name,'-machine','q35,accel=kvm',
-              '-cpu','host','-smp',str(C['cores']),'-m',str(C['memoryBytes']//1048576),
+              '-cpu','host','-smp',str(C['cores']),'-m',str(C['guest_memory_bytes']//1048576),
               '-drive',f'if=pflash,format=raw,unit=0,readonly=on,file={code}',
               '-drive',f'if=pflash,format=raw,unit=1,file={vars_out}',
               '-drive',f'if=none,id=osdisk,format=qcow2,file={overlay}',
               '-device','virtio-blk-pci,drive=osdisk,bootindex=0',
               '-drive',f'if=none,id=package,media=cdrom,format=raw,readonly=on,file={package}',
-              '-device','ide-cd,id=package-cd,bus=ide.0,unit=0,drive=package',
+              '-device','ide-cd,id=package-cd,bus=ide.0,unit=0,drive=package,serial='+C['guest_operation']['input_carrier_serial'],
               '-drive',f'if=none,id=observer,media=cdrom,format=raw,readonly=on,file={observer}',
               '-device','ide-cd,id=observer-cd,bus=ide.1,unit=0,drive=observer',
               '-device','virtio-vga','-device','qemu-xhci,id=xhci',
@@ -505,7 +535,7 @@ def main():
                  'queue_unit':unit,'queue_invocation_id':invocation,
                  'queue_cgroup':Path('/proc/self/cgroup').read_text().strip(),
                  'argv':argv,'qmp_socket':str(qmp),'observer_socket':str(obs),
-                 'vm_name':name,'run_directory':str(root),'artifact_source':C['source_commit'],
+                 'vm_name':name,'run_directory':str(root),'artifact_source':C['candidate']['descriptor']['source_commit'],
                  'package_sha256':C['candidate']['descriptor']['package_sha256']}
         write_json(root/'binding.json',binding)
         control=qmp_connect(qmp,q.pid)
@@ -526,7 +556,7 @@ def main():
              blocks['observer']['inserted']['ro'] is True,
              'paused QEMU original/observer block attachment differs')
         holders=readonly_qemu_holders(q.pid,[C['base'],C['code'],C['image_carrier'],observer_iso])
-        need(os.statvfs(RUNTIME).f_bavail*os.statvfs(RUNTIME).f_frsize>=cow_limit+500_000_000,
+        need(os.statvfs(scratch).f_bavail*os.statvfs(scratch).f_frsize>=cow_limit+500_000_000,
              'actual bounded COW growth capacity absent before cont')
         write_json(root/'paused-before-cont.json',{'binding':binding,'actual_blocks':blocks,
                    'USB':backing,'COWGrowthBound':cow_limit,
@@ -561,9 +591,15 @@ def main():
         ready=CONTROL.next_native_event(obs_sock,nonce,result)
         need(ready.get('kind')=='READY'and ready.get('port_custody',{}).get('sudo_numeric')in('0','NOT_NEEDED'),
              'actual source-bound guest observer READY/port custody')
-        pipeline=CONTROL.Pipeline(binding,C['guest_operation'],native_q,obs_sock,ready,root)
+        guest=dict(C['guest_operation']);guest['input_path']=ready['input_path']
+        need(ready['input_carrier']['serial']==C['guest_operation']['input_carrier_serial']==nonce[:20] and
+             ready['input_carrier']['relativePath']==guest['input_relative_path'],
+             'actual original guest carrier/path belongs to this admitted operation')
+        pipeline=CONTROL.Pipeline(binding,guest,native_q,obs_sock,ready,root)
         pipeline.end=WHOLE_END  # original job clock; never restart it for the GUI
-        pipeline.check=lambda:check_qemu_output(qemu_streams)
+        def current_output_and_metadata():
+            check_qemu_output(qemu_streams);metadata_guard(192*1024**2)
+        pipeline.check=current_output_and_metadata
         C['virtualUSBIdentity']=backing['identity']
         robot=CONTROL.RobotPipeline(pipeline,C,C['engineRoot'],OWNED)
         pipeline.robot_click=robot.click
@@ -701,7 +737,7 @@ def main():
         if q is not None and q.poll() is not None and result.get('GUI') is not None:
             try:
                 result['hostUSBReadback']=USB.virtual_usb_readback_observed(backing,usb_fd,
-                    result['GUI']['output'],pipeline.ready['process'],nonce,C['guest_operation']['output_path'])
+                    result['GUI']['output'],pipeline.ready['process'],nonce,result['GUI']['output']['value']['path'])
             except BaseException as error:
                 secondary.append('actual completed USB whole readback: '+type(error).__name__+': '+str(error))
         for reader in qemu_readers:
@@ -716,6 +752,8 @@ def main():
             try:usb_scope.__exit__(None,None,None)
             except BaseException as error:secondary.append('owned USB FD closure: '+str(error))
         if secondary:result['secondary_failures']=secondary
+        try:result['operationMetadataAllocatedBytes']=metadata_guard()
+        except BaseException as error:secondary.append('metadata whole-reserve postflight: '+str(error));result['secondary_failures']=secondary
         result['GUIBuildWriteReadbackAccepted']=(result.get('first_failure') is None and
             result.get('GUI',{}).get('kind')=='ACTUAL_UBUNTU_GUI_BUILD_WRITE_OBSERVATIONS'and result.get('hostUSBReadback',{}).get('hostFlushCompleted')is True and
             result.get('qemu_reaped') is True and result.get('originals_unchanged_after') is True and

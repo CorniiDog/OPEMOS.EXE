@@ -47,9 +47,11 @@ def virtual_usb_backing(directory, capacity, charged_bytes, metadata_reserve=500
                 stat.S_IMODE(value.st_mode) != 0o600 or
                 (value.st_dev, value.st_ino) != (path.lstat().st_dev, path.lstat().st_ino)):
             raise ValueError('allocated owned regular-file virtual USB identity changed')
+        fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
         yield {'path': str(path), 'capacityBytes': capacity,
                'device': value.st_dev, 'inode': value.st_ino,
-               'uid': value.st_uid, 'gid': value.st_gid}, fd
+                'uid': value.st_uid, 'gid': value.st_gid,
+                'identity': {key:getattr(value,key)for key in fields}}, fd
     finally:
         if fd is not None:
             os.close(fd)

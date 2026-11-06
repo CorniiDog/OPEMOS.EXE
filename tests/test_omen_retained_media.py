@@ -187,6 +187,70 @@ class RetainedMediaContract(unittest.TestCase):
                 subprocess.run([tools['losetup'], '--detach', device], check=True)
             self.assertFalse(media.owned_mount(mount, device))
 
+    def test_normal_ubuntu_private_ext4_retains_own_loop_until_real_child_closes(self):
+        """Exercise the reused production storage API with real kernel mounts."""
+        caps=int(next(x.split()[1]for x in Path('/proc/self/status').read_text().splitlines()
+                      if x.startswith('CapEff:')),16)
+        if os.geteuid()!=0 or not caps&(1<<21):
+            self.skipTest('actual Root CAP_SYS_ADMIN unavailable; private ext4 coverage NOT established')
+        if not all(shutil.which(x)for x in('unshare','losetup','mkfs.ext4','mount','umount')):
+            self.skipTest('real namespace/loop/ext4 tools unavailable')
+        source=Path(__file__).resolve().parents[1]/'scripts/omen_control'
+        body=r'''
+import os,sys,json,stat,time,subprocess
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+import provision_observer_rule as storage
+import owned_command as owned
+root=Path(sys.argv[2]);root.mkdir(mode=0o700)
+fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+class C:
+ K=fields
+ F=staticmethod(lambda s:{k:getattr(s,k)for k in fields})
+ @staticmethod
+ def require(ok,reason,evidence=None):
+  if not ok:raise ValueError(reason)
+class N:
+ counter=0
+ @classmethod
+ def checked(cls,argv,seconds,stem):
+  cls.counter+=1;paths=[root/(str(cls.counter)+'.out'),root/(str(cls.counter)+'.err')]
+  value=owned.run_owned_command(argv,None,seconds,paths,stream_limit=1048576)
+  assert value['numericExit']==0 and value['lifecycleClosed']is True and value['errors']==[],value
+  return paths[0].read_bytes(),paths[1].read_bytes()
+config={'fixedBacking':str(root/'generated.raw'),'mount':str(root/'scratch'),'fixedStorageBytes':33554432,
+ 'outerMountNamespace':sys.argv[3],'jobId':'actual-fixture-owned-storage','boot':Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
+baseline=set(os.listdir('/proc/self/fd'));store=storage.Storage(config,C,N,None);store.open()
+actual=store.check('real-private-mount');assert actual['device']==Path(config['mount']).stat().st_dev
+assert store.loopfd is not None and stat.S_ISBLK(os.fstat(store.loopfd).st_mode)
+Path(config['mount'],'actual-owned-data').write_bytes(b'actual retained private ext4 data\n')
+child=subprocess.Popen([sys.executable,'-I','-c','import os,sys,time;f=os.open(sys.argv[1],os.O_RDONLY);print(f,flush=True);time.sleep(30)',config['fixedBacking']],stdout=subprocess.PIPE,text=True)
+fd=int(child.stdout.readline());real=Path('/proc')/str(child.pid)/'fd'/str(fd)
+assert real.stat().st_ino==Path(config['fixedBacking']).stat().st_ino
+quiet={'kind':'INDEPENDENT_ROOT_CURRENT_STORAGE_QUIET','jobId':config['jobId'],'boot':config['boot'],
+ 'unknown':[],'foreignHolders':[{'pid':child.pid,'fd':fd}],'otherMountNamespaces':[],
+ 'allOwnChildrenReaped':False,'original':None}
+try:
+ try:store.close(quiet)
+ except ValueError:pass
+ else:raise AssertionError('live owned holder was accepted as closed')
+ assert store.mounted and store.loopfd is not None
+finally:child.terminate();child.wait(timeout=5);child.stdout.close()
+assert not real.exists();quiet.update(foreignHolders=[],allOwnChildrenReaped=True)
+result=store.close(quiet);assert result['unmountedNormally']and result['loopDetachedNormally']and result['errors']==[]
+assert Path(config['fixedBacking']).stat().st_size==config['fixedStorageBytes']
+assert set(os.listdir('/proc/self/fd'))==baseline
+print(json.dumps({'realPrivateNamespace':True,'loopFDHeldThroughUnmount':True,'liveHolderRefused':True,'backingRetained':True}))
+'''
+        with tempfile.TemporaryDirectory(prefix='normal-private-ext4-ci-')as directory:
+            before=os.readlink('/proc/self/ns/mnt')
+            result=subprocess.run([shutil.which('unshare'),'--mount','--propagation','private',
+                sys.executable,'-I','-B','-',str(source),str(Path(directory)/'operation'),before],
+                input=body,text=True,capture_output=True,timeout=150)
+            self.assertEqual(result.returncode,0,result.stderr+'\n'+result.stdout)
+            self.assertIs(json.loads(result.stdout)['realPrivateNamespace'],True)
+            self.assertEqual(os.readlink('/proc/self/ns/mnt'),before)
+
     @unittest.skipUnless(os.geteuid()==0 and sys.platform=='linux','admitted Linux Root only')
     def test_schema_failure_preserves_real_native_helper_evidence_before_any_domain(self):
         import libvirt_native as native

@@ -142,23 +142,16 @@ def main():
                              'exact admitted fixed-source config required')
     c=job.authenticated_config(config)
     job.authenticated_programs(c);nonce=c.get('nonce','')
-    need(re.fullmatch(r'[0-9a-f]{32}',nonce or '') and
-         c.get('kind')=='ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1' and
-         c.get('queue_unit') in Path('/proc/self/cgroup').read_text(),
-         'fresh ordinary queue identity missing')
-    unit=c['queue_unit'];invocation=c.get('queue_invocation_id')
-    need(isinstance(invocation,str) and re.fullmatch(r'[0-9a-f]{32}',invocation),
-         'exact admitted queue invocation absent')
-    show=cmd(['/usr/bin/systemctl','show',unit,'-p','InvocationID','-p','ActiveState'])
-    need(show['numeric']==0 and
-         'InvocationID='+invocation in show['stdout'].splitlines() and
-         'ActiveState=active' in show['stdout'].splitlines(),
-         'current queue InvocationID or active state changed before offline rule')
-    root=job.RUNTIME/('robot-ubuntu-'+nonce)
+    need(re.fullmatch(r'[0-9a-f]{32}',nonce or '')and c['kind']=='ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1','same actual ordinary queue operation')
+    unit,invocation,group=job.current_queue_identity(c)
+    root=Path(c['programRoot']).parent/'runtime'
     need(root.is_dir() and root.stat().st_uid==os.getuid() and
          stat.S_IMODE(root.stat().st_mode)==0o700 and
          root.stat().st_dev==c['ext4_dev'],'fresh private COW root differs')
-    cow=root/'desktop-overlay.qcow2'
+    storage=c['runtime_storage'];cow=Path(storage['cowPath'])
+    need(cow==Path(c['programRoot']).parent/'scratch/desktop-overlay.qcow2'and
+         storage['mountNamespace']==os.readlink('/proc/self/ns/mnt')and
+         cow.parent.stat().st_dev==storage['device'],'same actual private ext4 COW namespace')
     need(cow.is_file() and not cow.is_symlink() and cow.stat().st_uid==os.getuid() and
          cow.stat().st_nlink==1 and cow.stat().st_size<4_000_000_000 and
          not os.path.lexists(root/'observer-rule-provision.json'),
@@ -279,5 +272,61 @@ def main():
     print(json.dumps({'receipt':str(root/'observer-rule-provision.json'),
                       'cow_sha256':out['cow_after']['sha256'],
                       'rule_sha256':out['rule_sha256'],'accepted':True},sort_keys=True))
+
+# Reused normal cold-executor file-backed ext4 API; originals are never targets.
+class Storage:
+ def __init__(self,c,C,N,W):self.c=c;self.C=C;self.N=N;self.W=W;self.raw=None;self.loop=None;self.mountfd=None;self.loopfd=None;self.rawIdentity=None;self.mounted=False;self.acquired=[]
+ def open(self):
+  c=self.c;C=self.C;N=self.N
+  C.require(os.getresuid()==(0,0,0),'actual Root storage owner');C.require(os.readlink('/proc/self/ns/mnt')!=c['outerMountNamespace'],'new actual private mount namespace')
+  C.require(not any(os.path.lexists(c[k])for k in ('fixedBacking','mount')),'absent fresh backing/mount')
+  self.raw=os.open(c['fixedBacking'],os.O_RDWR|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600);self.acquired.append('created-backing');self.rawCreatedIdentity=C.F(os.fstat(self.raw))
+  os.posix_fallocate(self.raw,0,c['fixedStorageBytes']);os.fsync(self.raw);a=os.fstat(self.raw);C.require(a.st_size==c['fixedStorageBytes']and a.st_blocks*512<=c['fixedStorageBytes']and Fsame(a,Path(c['fixedBacking']).lstat(),C),'actual fixed backing physical/logical absolute capacity',C.F(a));self.rawIdentity=C.F(a)
+  b,_=N.checked(['/usr/sbin/losetup','--find','--show','--nooverlap',c['fixedBacking']],15,'loop-create');self.loop=b.decode().strip();self.acquired.append('returned-loop');C.require(self.loop.startswith('/dev/loop')and self.loop[9:].isdigit(),'actual returned loop association',self.loop)
+  self.association('loop-before-format');self.loopfd=os.open(self.loop,os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC);self.acquired.append('held-own-loop-FD');C.require(stat.S_ISBLK(os.fstat(self.loopfd).st_mode)and os.major(os.fstat(self.loopfd).st_rdev)==7,'exact owned mutable storage loop FD');N.checked(['/usr/sbin/mkfs.ext4','-F','-q','-m','0',self.loop],120,'mkfs');os.mkdir(c['mount'],0o700);self.acquired.append('created-mount-directory')
+  N.checked(['/usr/bin/mount','-t','ext4','-o','rw,nosuid,nodev,noexec',self.loop,c['mount']],15,'mount');self.mounted=True;self.acquired.append('mounted')
+  self.mountfd=os.open(c['mount'],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);self.mountIdentity=C.F(os.fstat(self.mountfd));os.chown(c['mount'],1000,1000);self.mountIdentity=C.F(os.fstat(self.mountfd));self.check('mounted');return self
+ def association(self,stem):
+  b,_=self.N.checked(['/usr/sbin/losetup','--json','--list','--output','NAME,BACK-FILE,BACK-INO,BACK-MAJ:MIN,OFFSET,SIZELIMIT,RO',self.loop],15,stem)
+  rows=json.loads(b)['loopdevices'];self.C.require(len(rows)==1,'one exact owned loop');r=rows[0];self.C.require(r['name']==self.loop and r['back-file']==self.c['fixedBacking']and int(r['back-ino'])==self.rawIdentity['st_ino']and r['back-maj:min']==str(os.major(self.rawIdentity['st_dev']))+':'+str(os.minor(self.rawIdentity['st_dev']))and r['ro']is False and int(r['offset'])==0 and int(r['sizelimit'])in(0,self.c['fixedStorageBytes']),'loop backed by exact generated inode',r);return r
+ def check(self,stem):
+  C=self.C;a=os.fstat(self.raw);C.require(all(getattr(a,k)==self.rawIdentity[k]for k in C.K if k not in ('st_mtime_ns','st_ctime_ns'))and mutable_same(a,Path(self.c['fixedBacking']).lstat(),C),'held fixed backing immutable identity/size',C.F(a));C.require(a.st_blocks*512<=self.c['fixedStorageBytes'],'hard backing allocated charge')
+  if self.mountfd is not None:
+   C.require(Fsame(os.fstat(self.mountfd),Path(self.c['mount']).lstat(),C),'same held mount root')
+   mi=Path('/proc/self/fdinfo',str(self.mountfd)).read_text();mid=next(x.split()[1]for x in mi.splitlines()if x.startswith('mnt_id:'));entries=[x.split()for x in Path('/proc/self/mountinfo').read_text().splitlines()if x.split()[0]==mid];C.require(len(entries)==1 and entries[0][4]==self.c['mount']and entries[0][entries[0].index('-')+1]=='ext4','FD mount-id exact ext4 membership')
+   sv=os.fstatvfs(self.mountfd);C.require(sv.f_blocks*sv.f_frsize<=self.c['fixedStorageBytes'],'absolute inner filesystem capacity');return {'backing':C.F(a),'mountID':mid,'device':os.fstat(self.mountfd).st_dev,'availableBytes':sv.f_bavail*sv.f_frsize,'innerTotal':sv.f_blocks*sv.f_frsize}
+ def close(self,quietProof):
+  C=self.C;errors=[]
+  # Caller must provide fresh independently collected whole-own-unit/FD proof,
+  # no terminal.json boolean or direct-child poll is a cleanup authorization.
+  C.require(quietProof['kind']=='INDEPENDENT_ROOT_CURRENT_STORAGE_QUIET'and quietProof['jobId']==self.c['jobId']and quietProof['boot']==self.c['boot']and quietProof['unknown']==[]and quietProof['foreignHolders']==[]and quietProof['otherMountNamespaces']==[]and quietProof['allOwnChildrenReaped']is True and (quietProof['original']is None or quietProof['originalAbsent']is True),'independent same-host cleanup proof',quietProof)
+  before=self.state()
+  if self.raw is not None:
+   actual=C.F(os.fstat(self.raw));named=C.F(Path(self.c['fixedBacking']).lstat());expected=self.rawCreatedIdentity
+   C.require(actual==named and all(actual[k]==expected[k]for k in C.K if k not in ('st_size','st_mtime_ns','st_ctime_ns'))and actual['st_size']<=self.c['fixedStorageBytes'],'same exact acquired bounded backing before partial/normal cleanup',actual)
+  if self.loop is not None:self.association('loop-before-unmount')
+  if self.mountfd is not None:os.close(self.mountfd);self.mountfd=None
+  if self.mounted:self.N.checked(['/usr/bin/umount',self.c['mount']],15,'umount');self.mounted=False
+  if self.loop is not None:
+   self.association('own-loop-held-after-unmount')
+   self.N.checked(['/usr/sbin/losetup','--detach',self.loop],15,'loop-detach')
+   if self.loopfd is not None:os.close(self.loopfd);self.loopfd=None
+   current=Path('/sys/block')/Path(self.loop).name/'loop/backing_file'
+   C.require(not current.exists()or not current.read_text().strip(),'actual own loop association absent after ordered FD close')
+   self.loop=None
+  if self.raw is not None:os.fsync(self.raw);os.close(self.raw);self.raw=None
+  # Never unlink backing/USB/failed state; retained qualified or partial data.
+  return {'unmountedNormally':True,'loopDetachedNormally':True,'backingRetained':bool(self.acquired),'acquired':list(self.acquired),'before':before,'after':self.state(),'errors':errors}
+ def state(self):
+  return {'rawFDHeld':self.raw is not None,'loop':self.loop,'mounted':self.mounted,'mountFDHeld':self.mountfd is not None,'ownLoopFDHeld':self.loopfd is not None,'acquired':list(self.acquired)}
+def Fsame(a,b,C):return C.F(a)==C.F(b)
+
+def mutable_same(a,b,C):
+ # Only the exact generated fixed-capacity raw backing is mutable. Preserve full
+ # observations; require immutable7/held named identity while QEMU is writing.
+ # Original/code/vars/source media and stopped data still use full9+whole hash.
+ left=C.F(a);right=C.F(b)
+ return all(left[k]==right[k]for k in C.K if k not in('st_mtime_ns','st_ctime_ns'))
+
 
 if __name__=='__main__':main()

@@ -108,6 +108,12 @@ def gh_json(path,timeout=10):
          'current GitHub API unavailable')
     return json.loads(r.stdout)
 
+def runner21_active_runs(read):
+    # Only this reviewed consumer can receive native Runner21 work. Hosted
+    # packaging activity is not an assignment frontier for the OMEN owner.
+    return read('repos/CorniiDog/OPEMOS.EXE/actions/workflows/omen-robot.yml/runs?status=in_progress&per_page=100')
+
+
 def runner21_assigned_jobs(active, read):
     """Scope active Actions ownership to this registered runner, not the repo.
 
@@ -116,8 +122,11 @@ def runner21_assigned_jobs(active, read):
     """
     total=active.get('total_count')
     runs=active.get('workflow_runs')
-    need(type(total) is int and 0<=total<=100 and type(runs) is list and
-         len(runs)==total,'bounded complete active workflow-run frontier')
+    complete=(type(total) is int and 0<=total<=100 and type(runs) is list and len(runs)==total)
+    if not complete:
+        observed={'total_count':total,'returned':len(runs)if type(runs)is list else None,
+                  'run_ids':[r.get('id')for r in runs[:100]if type(r)is dict]if type(runs)is list else None}
+        raise RuntimeError('bounded complete active workflow-run frontier; observed='+json.dumps(observed,sort_keys=True))
     owned=0
     relevant_runs=0
     for run in runs:
@@ -126,8 +135,8 @@ def runner21_assigned_jobs(active, read):
              run.get('status')=='in_progress' and
              type(run.get('path')) is str,
              'current active workflow-run identity')
-        if run['path']!='.github/workflows/omen-robot.yml':
-            continue
+        need(run['path'].split('@',1)[0]=='.github/workflows/omen-robot.yml',
+             'only exact reviewed workflow in runner assignment frontier')
         relevant_runs+=1
         need(relevant_runs<=10,'bounded reviewed consumer workflow frontier')
         page=read('repos/CorniiDog/OPEMOS.EXE/actions/runs/'+str(run_id)+
@@ -167,7 +176,7 @@ def current_github(p,route_only=False):
             runners={'runners':[runner]}
         else:
             runners=gh_json('repos/CorniiDog/OPEMOS.EXE/actions/runners?per_page=100')
-            active=gh_json('repos/CorniiDog/OPEMOS.EXE/actions/runs?status=in_progress&per_page=100')
+            active=runner21_active_runs(gh_json)
             queued=gh_json('repos/CorniiDog/OPEMOS.EXE/actions/runs?status=queued&per_page=1')
     except (OSError,subprocess.TimeoutExpired):
         return {'networkReachable':False,'protectedMain':False,'mainCommit':None,

@@ -1,0 +1,422 @@
+{
+  "collect": {
+    "effect": "READ_ONLY_CURRENT_OPERATION",
+    "job_ids": [
+      {
+        "$job": "ubuntu-build-write"
+      }
+    ],
+    "job_result_path": {
+      "$runtime": "result"
+    },
+    "public_evidence": {
+      "$normal_evidence": "ubuntu-gui"
+    },
+    "queue_job_id": {
+      "$job": "ubuntu-build-write"
+    },
+    "robot_result_path": {
+      "$path": "robot-result.json"
+    },
+    "storage_result_path": {
+      "$path": "storage-result.json"
+    }
+  },
+  "documents": [
+    {
+      "name": "identity.json",
+      "value": {
+        "$request": "prepare"
+      }
+    },
+    {
+      "name": "normal-job.json",
+      "value": {
+        "attempt": {
+          "$run": "attempt"
+        },
+        "base": {
+          "$operand": "base"
+        },
+        "candidate": {
+          "archive": {
+            "$archive": "*"
+          },
+          "descriptor": {
+            "$candidate": "*"
+          }
+        },
+        "code": {
+          "$operand": "code"
+        },
+        "cores": 4,
+        "cow_growth_bytes": 20000000000,
+        "ext4_dev": {
+          "$operand": "ext4_dev"
+        },
+        "guest_memory_bytes": 21474836480,
+        "guest_operation": {
+          "display": [
+            1280,
+            800
+          ],
+          "input_relative_path": "STEAMOS/steamdeck-repair-latest.img",
+          "input_sha256": "f9aa0fa2dd618febf28a5e2a583d1e2b5a8ca3f1205be965da584602ac962f40",
+          "labels": {
+            "build": "Build NVIDIA Image",
+            "build_success": "NVIDIA-mutated image created and retained: ",
+            "choose_input": "Choose Image\u2026",
+            "choose_output": "Choose\u2026",
+            "confirmation": "Destructive-intent phrase",
+            "open": "Open",
+            "review": "Review & Write Selected USB\u2026",
+            "select_folder": "Select",
+            "usb_target": "Detected removable USB drives",
+            "write": "Write & Verify USB",
+            "write_success": "USB writing, flush and full readback completed; UDisks confirmed safe removal of the selected drive."
+          },
+          "native_executable_bytes": {
+            "$candidate": "executable_bytes"
+          },
+          "native_executable_sha256": {
+            "$candidate": "executable_sha256"
+          },
+          "nonce": {
+            "$run": "nonce"
+          },
+          "package_sha256": {
+            "$candidate": "package_sha256"
+          },
+          "source_commit": {
+            "$candidate": "source_commit"
+          },
+          "usb_bytes": 8400000000,
+          "whole_seconds": 7200
+        },
+        "image_carrier": {
+          "$operand": "image_carrier"
+        },
+        "inventory_vm_id": "OPEMOS-Ubuntu-Agent-UI",
+        "kind": "ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1",
+        "loginPin": {
+          "$operand": "loginPin"
+        },
+        "maxVMBytes": 59971770624,
+        "memoryBytes": 25769803776,
+        "network": "none",
+        "nonce": {
+          "$run": "nonce"
+        },
+        "normalPolicyPin": {
+          "$policy": "pin"
+        },
+        "original_source": {
+          "$operand": "original_source"
+        },
+        "queue_job_id": {
+          "$job": "ubuntu-build-write"
+        },
+        "retained_union_bytes": {
+          "$operand": "retained_union_bytes"
+        },
+        "run_id": {
+          "$run": "run_id"
+        },
+        "source_commit": {
+          "$run": "source_commit"
+        },
+        "swapBytes": 0,
+        "vars_template": {
+          "$operand": "vars_template"
+        },
+        "whole_seconds": 7200
+      }
+    },
+    {
+      "name": "stage-config.json",
+      "value": {
+        "artifact_root": "/media/connor/Games/OPEMOS/CI-artifacts",
+        "dispatcher_mode": "join-existing",
+        "enabled": true,
+        "max_input_bytes": 60000000000,
+        "max_run_bytes": 60000000000,
+        "max_vm_submissions": 1,
+        "pool_sha256": {
+          "$operand": "pool_sha256"
+        },
+        "queue_dir": "/home/connor/.local/state/opemos-test-queue-r2/state",
+        "queue_entry": {
+          "$operand": "queue_entry"
+        },
+        "queue_metadata": {
+          "free_reserve_bytes": 67108864,
+          "max_bytes": 536870912,
+          "scratch_dir": {
+            "$runtime": "operation"
+          }
+        },
+        "queue_modules": [],
+        "result_contract": {
+          "free_reserve_bytes": 67108864,
+          "max_bytes": 536870912,
+          "stderr_max_bytes": 4194304
+        },
+        "version": 1,
+        "vm_admission_limits": {
+          "max_cpu": 10,
+          "max_memory_bytes": 34359738368,
+          "max_vm_bytes": 60000000000
+        },
+        "wait_seconds": 8400
+      }
+    },
+    {
+      "name": "manifest.json",
+      "value": {
+        "jobs": [
+          {
+            "approval": {
+              "path": {
+                "$policy": "path"
+              },
+              "sha256": {
+                "$policy": "sha256"
+              }
+            },
+            "command": {
+              "$normal_ubuntu_command": "guest-gui"
+            },
+            "cores": 4,
+            "cwd": {
+              "$runtime": "operation"
+            },
+            "depends_on": [],
+            "files": [
+              {
+                "$path": "normal-job.json"
+              },
+              {
+                "$path": "identity.json"
+              },
+              {
+                "$engine": "scripts/omen_robot.py"
+              },
+              {
+                "$engine": "scripts/omen_ci_reader.py"
+              },
+              {
+                "$engine": "scripts/omen_ci_stage.py"
+              },
+              {
+                "$engine": "scripts/omen_ci_inventory.py"
+              },
+              {
+                "$engine": "scripts/omen_ci_executables.py"
+              },
+              {
+                "$engine": "scripts/omen_ci_result.py"
+              },
+              {
+                "$engine": "scripts/OPEMOSPointer.py"
+              },
+              {
+                "$engine": "scripts/OPEMOSGuest.py"
+              },
+              {
+                "$engine": "scripts/run_omen_robot_guest.py"
+              },
+              {
+                "$engine": "ci/required-vms.json"
+              },
+              {
+                "$engine": "tests/robot/guest.robot"
+              },
+              {
+                "$engine": "tests/robot/role.robot"
+              },
+              {
+                "$engine": "tests/robot/inventory.robot"
+              },
+              {
+                "$engine": "scripts/required_omen.py"
+              },
+              {
+                "$engine": "scripts/check_full_stack_acceptance.py"
+              }
+            ],
+            "id": {
+              "$job": "ubuntu-build-write"
+            },
+            "memory": 25769803776,
+            "owner": "exe",
+            "platform": "ubuntu",
+            "resources": [
+              "opemos-ubuntu-gui-virtual-usb"
+            ],
+            "timeout_seconds": 7800
+          }
+        ],
+        "version": 1
+      }
+    }
+  ],
+  "prepare": {
+    "additional_operations": [],
+    "config": {
+      "$document": "stage-config.json"
+    },
+    "executable_entry": {},
+    "executable_transaction_path": {
+      "$path": "future-steamos-transaction.json"
+    },
+    "expected": {
+      "$candidate": "*"
+    },
+    "normal_job_config": {
+      "$document": "normal-job.json"
+    },
+    "operand": {
+      "artifacts": [],
+      "case": "ubuntu-full-stack",
+      "evidence_root": {
+        "$runtime": "operation"
+      },
+      "hardware_scope": "virtual-only",
+      "input_sha256": "f9aa0fa2dd618febf28a5e2a583d1e2b5a8ca3f1205be965da584602ac962f40",
+      "inputs": [
+        {
+          "$operand": "base"
+        },
+        {
+          "$operand": "code"
+        },
+        {
+          "$operand": "vars_template"
+        },
+        {
+          "$operand": "image_carrier"
+        }
+      ],
+      "inventory_vm_id": "OPEMOS-Ubuntu-Agent-UI",
+      "job_ids": [
+        {
+          "$job": "ubuntu-build-write"
+        }
+      ],
+      "manifest": {
+        "$document": "manifest.json"
+      },
+      "original_source": {
+        "$operand": "original_source"
+      },
+      "package_sha256": {
+        "$candidate": "package_sha256"
+      },
+      "receipt": {
+        "$path": "runtime-observed.json"
+      },
+      "runtime_admission": {
+        "$policy": "pin"
+      },
+      "runtime_instance_id": {
+        "$runtime": "id"
+      },
+      "subject_role": "imaging_host"
+    },
+    "operation_scope": "NORMAL_UBUNTU_GUI_BUILD_WRITE_VIRTUAL_USB_ONLY",
+    "plan": {
+      "attempt": {
+        "$run": "attempt"
+      },
+      "nonce": {
+        "$run": "nonce"
+      },
+      "run_id": {
+        "$run": "run_id"
+      },
+      "source_commit": {
+        "$run": "source_commit"
+      }
+    },
+    "robot_job": {
+      "attempt": {
+        "$run": "attempt"
+      },
+      "job_id": {
+        "$job": "ubuntu-build-write"
+      },
+      "library_sha256": {
+        "$engine_sha": "scripts/OPEMOSPointer.py"
+      },
+      "nonce": {
+        "$run": "nonce"
+      },
+      "queue_command": {
+        "$normal_ubuntu_command": "guest-gui"
+      },
+      "result_path": {
+        "$path": "robot-result.json"
+      },
+      "run_id": {
+        "$run": "run_id"
+      },
+      "source_commit": {
+        "$run": "source_commit"
+      },
+      "source_pins": {
+        "ci/required-vms.json": {
+          "$engine_pin": "ci/required-vms.json"
+        },
+        "scripts/OPEMOSGuest.py": {
+          "$engine_pin": "scripts/OPEMOSGuest.py"
+        },
+        "scripts/OPEMOSPointer.py": {
+          "$engine_pin": "scripts/OPEMOSPointer.py"
+        },
+        "scripts/check_full_stack_acceptance.py": {
+          "$engine_pin": "scripts/check_full_stack_acceptance.py"
+        },
+        "scripts/omen_ci_executables.py": {
+          "$engine_pin": "scripts/omen_ci_executables.py"
+        },
+        "scripts/omen_ci_inventory.py": {
+          "$engine_pin": "scripts/omen_ci_inventory.py"
+        },
+        "scripts/omen_ci_reader.py": {
+          "$engine_pin": "scripts/omen_ci_reader.py"
+        },
+        "scripts/omen_ci_result.py": {
+          "$engine_pin": "scripts/omen_ci_result.py"
+        },
+        "scripts/omen_ci_stage.py": {
+          "$engine_pin": "scripts/omen_ci_stage.py"
+        },
+        "scripts/omen_robot.py": {
+          "$engine_pin": "scripts/omen_robot.py"
+        },
+        "scripts/required_omen.py": {
+          "$engine_pin": "scripts/required_omen.py"
+        },
+        "scripts/run_omen_robot_guest.py": {
+          "$engine_pin": "scripts/run_omen_robot_guest.py"
+        },
+        "tests/robot/guest.robot": {
+          "$engine_pin": "tests/robot/guest.robot"
+        },
+        "tests/robot/inventory.robot": {
+          "$engine_pin": "tests/robot/inventory.robot"
+        },
+        "tests/robot/role.robot": {
+          "$engine_pin": "tests/robot/role.robot"
+        }
+      },
+      "suite_sha256": {
+        "$engine_sha": "tests/robot/guest.robot"
+      }
+    },
+    "staging_path": {
+      "$runtime": "stage"
+    }
+  },
+  "schema": 1
+}

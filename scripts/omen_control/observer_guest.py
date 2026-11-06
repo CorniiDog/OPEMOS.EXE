@@ -242,6 +242,45 @@ def observed_names(desktop,window,states):
     return {'names':names,'pid':window['pid'],'window_id':window['window_id'],'readOnlyObservation':True}
 
 
+def mounted_input(cfg):
+    """Resolve only the QEMU-labelled readonly carrier in this admitted guest."""
+    import subprocess
+    nonce=cfg['nonce'];serial=cfg['input_carrier_serial']
+    require(serial==nonce[:20],'same current virtual input carrier serial')
+    relative=Path(cfg['input_relative_path'])
+    require(not relative.is_absolute()and relative.parts and all(x not in('.','..')for x in relative.parts),
+            'one declared relative original image path')
+    listing=subprocess.run(['/usr/bin/lsblk','--json','--paths','--output','NAME,TYPE,RO,SERIAL,MOUNTPOINTS'],
+        capture_output=True,timeout=10,check=False)
+    require(listing.returncode==0 and listing.stderr==b''and len(listing.stdout)<=1048576,'actual guest readonly carrier inventory')
+    rows=[];todo=json.loads(listing.stdout)['blockdevices']
+    while todo:
+        row=todo.pop();todo.extend(row.get('children',[]));rows.append(row)
+        require(len(rows)<=4096,'finite actual guest block inventory')
+    selected=[x for x in rows if x.get('serial')==serial]
+    require(len(selected)==1 and selected[0]['type']=='rom'and selected[0]['ro']in(True,1),
+            'one actual readonly declared QEMU optical source')
+    device=Path(selected[0]['name']);st=device.stat()
+    require(device.parent==Path('/dev')and stat.S_ISBLK(st.st_mode),'actual guest optical block device')
+    mounted=subprocess.run(['/usr/bin/udisksctl','mount','--block-device',str(device),'--options','ro'],
+        capture_output=True,timeout=20,check=False)
+    # An existing desktop automount is fine. Both outcomes must converge to the
+    # same actual readonly mount; no stderr text is treated as proof.
+    listing=subprocess.run(['/usr/bin/findmnt','--json','--source',str(device),
+        '--output','TARGET,SOURCE,FSTYPE,OPTIONS'],capture_output=True,timeout=10,check=False)
+    require(listing.returncode==0 and listing.stderr==b''and len(listing.stdout)<=65536,
+            'actual guest original carrier mount proof')
+    mounts=json.loads(listing.stdout)['filesystems']
+    require(len(mounts)==1 and mounts[0]['source']==str(device)and
+            mounts[0]['fstype']in('iso9660','udf')and 'ro'in mounts[0]['options'].split(','),
+            'same original readonly optical filesystem')
+    root=Path(mounts[0]['target']);path=root/relative
+    require(root.is_absolute()and root.resolve()==root and path.resolve()==path and
+            path.is_relative_to(root)and path.is_file(),'canonical mounted original image within actual carrier')
+    return str(path),{'device':str(device),'rdev':st.st_rdev,'serial':serial,'mount':mounts[0],
+                     'mountNumeric':mounted.returncode,'relativePath':str(relative),'path':str(path)}
+
+
 def pipeline_config(config_path,config_sha,nonce):
     config_file=Path(config_path)
     require(config_file==Path('/media/opemosgui/OPROBOT/operation.json')
@@ -262,6 +301,7 @@ def pipeline_config(config_path,config_sha,nonce):
             and 0<cfg['usb_bytes']<=60_000_000_000,'same admitted source/operation/virtual USB')
     require(type(cfg['native_executable_bytes'])is int and 0<cfg['native_executable_bytes']<=1073741824
             and re.fullmatch('[0-9a-f]{64}',cfg['native_executable_sha256']),'exact producer native executable role')
+    cfg['input_path'],cfg['input_carrier_observation']=mounted_input(cfg)
     return cfg
 
 
@@ -285,6 +325,14 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
         require(len(wire)<=1048576 and os.write(port,wire)==len(wire),'bounded native observation channel')
     def file_observation(key):
         require(key in('input_path','output_path'),'declared guest image role only')
+        if key=='output_path'and not cfg.get('output_path'):
+            root=Path(cfg['output_directory']);owned=Path.home()/('opemos-robot-'+nonce)
+            require(root==owned/'output'and root.resolve()==root and root.stat().st_uid==os.getuid()
+                    and stat.S_IMODE(root.stat().st_mode)==0o700,'same owned output directory')
+            choices=[p for p in root.iterdir()if p.name.endswith('.img')and
+                     Path(str(p)+'.manifest.json').is_file()]
+            require(len(choices)==1,'one actual application-exported image and normal manifest')
+            cfg[key]=str(choices[0])
         path=Path(cfg[key]);require(path.is_absolute()and path.resolve()==path,'canonical declared image path')
         if key=='output_path':
             owned=Path.home()/('opemos-robot-'+nonce)
@@ -416,6 +464,7 @@ def main():
     emit({'kind':'READY','nonce':sys.argv[1],'app':app,'process':birth,
           'baseline_windows':before,'port_custody':port_custody,
           'guest_boot_id':Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+          **({'input_path':cfg['input_path'],'input_carrier':cfg['input_carrier_observation']}if pipeline else{}),
           'display_connection':os.environ['DISPLAY'],'guest_uid':os.getuid(),
           'guest_architecture':os.uname().machine,
           'clock_ns':time.monotonic_ns()})

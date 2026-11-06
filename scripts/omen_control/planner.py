@@ -149,9 +149,29 @@ def candidate(r):
              sig(before) == sig(os.fstat(fd)) == sig(path.lstat()),
              'candidate held bytes/full9 changed')
     finally:os.close(fd)
-    return item
+    return dict(item,archive=dict(archive,identity={k:getattr(before,k)for k in FULL9}))
 
-def automatic_operation(pin, r, operation_root):
+def operation_policy(pin):
+    need(type(pin)is dict and set(pin)=={'path','sha256'}and SHA.fullmatch(pin['sha256']),
+         'existing registry normal operation policy pin')
+    path=Path(pin['path'])
+    need(path.parent.parent==Path('/var/lib/opemos-robot-control-r1/releases')and
+         NONCE.fullmatch(path.parent.name)and path.name=='fixed-policy.json',
+         'existing immutable deployment policy path')
+    for parent in(path.parent,*path.parent.parents):
+        s=parent.lstat();need(stat.S_ISDIR(s.st_mode)and s.st_uid==s.st_gid==0 and
+            not s.st_mode&0o022,'Root current normal deployment ancestry')
+    raw=held(path,1048576,pin['sha256'],0);first=path.lstat()
+    need(stat.S_IMODE(first.st_mode)==0o444,'immutable Root policy mode')
+    policy=strict(raw)
+    need(policy['kind']=='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1'and
+         policy['sourceAccepted']is True and policy['runtimeAuthorized']is True and
+         policy['network']=='none'and policy['swapBytes']==0,
+         'explicit reviewed normal Ubuntu operation scope')
+    return policy,dict(pin,bytes=len(raw),uid=0,identity={k:getattr(first,k)for k in FULL9})
+
+
+def automatic_operation(pin, r, operation_root, normal_policy_pin=None):
     """Bind only typed run data in the installed, hash-pinned normal recipe.
 
     This is the existing planner's data producer, not another launcher. JSON
@@ -160,7 +180,9 @@ def automatic_operation(pin, r, operation_root):
     """
     need(type(pin) is dict and set(pin) == {'path','sha256'} and
          SHA.fullmatch(pin['sha256']), 'installed normal operation recipe pin')
-    recipe = strict(held(pin['path'], 8*1048576, pin['sha256']))
+    policy=policy_ref=None
+    if normal_policy_pin is not None:policy,policy_ref=operation_policy(normal_policy_pin)
+    recipe = strict(held(pin['path'], 8*1048576, pin['sha256'],0 if policy is not None else None))
     need(type(recipe) is dict and set(recipe) == {'schema','documents','prepare','collect'} and
          type(recipe['schema']) is int and recipe['schema'] == 1 and
          type(recipe['documents']) is list, 'normal operation data schema')
@@ -192,9 +214,81 @@ def automatic_operation(pin, r, operation_root):
             need(name in c['descriptor'], 'declared candidate field only')
             return c['descriptor'][name]
         if tag == '$archive':
+            if name=='*':return c['archive']
             need(name in c['archive'], 'opaque archive field only')
             return c['archive'][name]
         if tag == '$path':return str(path(name))
+        if tag=='$normal_ubuntu_command':
+            need(policy is not None and name=='guest-gui'and
+                 {'normal-job.json','identity.json'}<=set(pins),'complete current normal job operands')
+            entry=Path(__file__).parent/'scripts/run_omen_robot_guest.py'
+            held(entry,8388608,policy['engineSHA256']['scripts/run_omen_robot_guest.py'])
+            env={'GITHUB_REPOSITORY':r['repository'],'OPEMOS_SOURCE_SHA':r['source_commit'],
+                 'GITHUB_RUN_ID':r['run_id'],'GITHUB_RUN_ATTEMPT':r['attempt'],
+                 'OPEMOS_TRANSACTION_NONCE':r['nonce']}
+            return ['/usr/bin/env',*[k+'='+v for k,v in env.items()],'/usr/bin/python3',str(entry),
+                '--normal-ubuntu-job',json.dumps(pins['normal-job.json'],sort_keys=True,separators=(',',':')),
+                json.dumps(pins['identity.json'],sort_keys=True,separators=(',',':'))]
+        if tag=='$operand':
+            need(policy is not None and name in{'base','code','vars_template','image_carrier','loginPin',
+                'ext4_dev','retained_union_bytes','pool_sha256','queue_entry','original_source'},
+                'declared operands from the same Root deployment definition')
+            return policy['operationOperands'][name]
+        if tag in('$policy','$program','$program_pin','$engine','$engine_pin','$engine_sha','$runtime'):
+            need(policy is not None,'Root selected current normal operation definition required')
+            if tag=='$policy':
+                need(name in('pin','value','path','sha256'),'declared normal policy data')
+                return policy_ref if name=='pin'else policy if name=='value'else policy_ref[name]
+            if tag=='$runtime':
+                need(name in('id','root','result','operation','stage'),'declared current Ubuntu runtime role')
+                if name=='id':return 'opemos-robot-ubuntu-'+r['nonce']
+                if name=='operation':return str(root)
+                if name=='stage':return str(Path('/media/connor/Games/OPEMOS/CI-artifacts')/root.name)
+                runtime=root/'runtime'
+                return str(runtime if name=='root'else runtime/'job-result.json')
+            if tag in('$program','$program_pin'):
+                need(name in policy['programSHA256']and Path(name).name==name,'Root selected normal program member')
+                source=Path(policy_ref['path']).parent/'proof-sources'/name
+                digest=policy['programSHA256'][name];uid=0
+            else:
+                need(name in policy['engineSHA256'],'Root selected existing Engine member')
+                source=Path(__file__).parent/name;digest=policy['engineSHA256'][name];uid=os.getuid()
+            raw=held(source,8*1048576,digest,uid);s=source.lstat()
+            if tag=='$engine_sha':return digest
+            observed={'path':str(source),'sha256':digest,'bytes':len(raw),
+                      'identity':{k:getattr(s,k)for k in FULL9}}
+            return str(source)if tag in('$program','$engine')else observed
+        if tag=='$json':return json.dumps(bind(name),sort_keys=True,separators=(',',':'),allow_nan=False)
+        if tag=='$result_field':
+            need(r['action']=='collect'and type(name)is list and len(name)==2
+                 and type(name[1])is list and all(type(k)is str for k in name[1]),
+                 'post-terminal declared result field only')
+            value=strict(held(path(name[0]),8*1048576))
+            for field in name[1]:value=value[field]
+            return value
+        if tag=='$normal_evidence':
+            need(r['action']=='collect'and name=='ubuntu-gui'and policy is not None,
+                 'read-only current normal Ubuntu public evidence only')
+            runtime=root/'runtime';values=[];charged=0;count=0
+            if not runtime.exists():return values
+            for item in sorted(runtime.rglob('*')):
+                count+=1;need(count<=4096,'bounded actual evidence traversal')
+                info=item.lstat();need(not stat.S_ISLNK(info.st_mode),'no evidence symlink')
+                if not stat.S_ISREG(info.st_mode):continue
+                kind=None
+                if item.suffix=='.png':kind='screenshot'
+                elif item.suffix=='.html':kind='robot-report'if item.name=='report.html'else'robot-log'
+                elif item.suffix=='.xml':kind='robot-xunit'if item.name=='xunit.xml'else'robot-output'
+                elif re.fullmatch(r'robot-[1-5]-action\.json',item.name):kind='pointer-action'
+                elif re.fullmatch(r'robot-[1-5]-life\.json',item.name):kind='pointer-sender-lifecycle'
+                elif re.fullmatch(r'robot-[1-5]-robot\.(stdout|stderr)',item.name):kind='log'
+                if kind is None:continue
+                raw=held(item,24*1048576);charged+=len(raw);need(charged<=policy['publicEvidenceMaxBytes'],
+                      'complete finite public evidence cap, no selection after overflow')
+                if kind=='screenshot':need(raw.startswith(b'\x89PNG\r\n\x1a\n'),'actual PNG capture bytes')
+                values.append({'path':str(item),'size':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),
+                    'identity':{k:getattr(info,k)for k in FULL9},'public':True,'kind':kind})
+            return values
         if tag == '$document':
             need(name in pins, 'previous ordinary JSON document reference')
             return pins[name]
@@ -275,7 +369,7 @@ def main():
                   'reason':'Root registry source differs from current protected consumer; fresh source and producer reconciliation required'}
     elif r['kind'] == 'artifact' and 'candidate' in r:
         row = registry['artifacts'][r['subject']['platform']]
-        result = automatic_operation(row['automatic_operation'], r, p['operation_root'])
+        result = automatic_operation(row['automatic_operation'], r, p['operation_root'],row.get('operation_policy'))
     elif r['action'] == 'collect':
         # Collection cannot adopt a historical request or invent evidence.
         result = {'identity':identity,'available':False,
