@@ -69,6 +69,55 @@ def operand():
 
 
 class RetainedMediaContract(unittest.TestCase):
+    def test_monitor_exit_keeps_numeric_remain_after_exit_as_observation_only(self):
+        """Manager/pool facts modeled; PID absence and source consumers are real."""
+        import time
+        from unittest.mock import patch
+        spec=importlib.util.spec_from_file_location('actual_normal_monitor_contract',SOURCE/'test_queue.py')
+        q=importlib.util.module_from_spec(spec);sys.modules[spec.name]=q;spec.loader.exec_module(q)
+        child=subprocess.Popen([sys.executable,'-I','-c','import time;time.sleep(.15)'])
+        held=os.open('/proc/'+str(child.pid),os.O_RDONLY|os.O_DIRECTORY|os.O_CLOEXEC)
+        raw=Path('/proc',str(child.pid),'stat').read_text();start=int(raw.rsplit(')',1)[1].split()[19])
+        child.wait(timeout=5);os.close(held)
+        unit='opemos-testq-'+uuid.uuid4().hex+'.service';invocation=uuid.uuid4().hex
+        row={'id':'actual-monitored-job','state':'running','unit':unit,'spec':'{}','cpus':'[0]','_poolBinding':{}}
+        props={'LoadState':'loaded','InvocationID':invocation,'MainPID':'0','ActiveState':'active',
+               'SubState':'exited','ControlGroup':'','ExecMainCode':'1','ExecMainStatus':'0'}
+        context=types.SimpleNamespace(unit=unit,invocation=invocation,ledger_current=lambda:None)
+        first={'originalFailure':{'type':'FileNotFoundError','reason':'actual reaped fixture child'},
+               'originalStart':'UNKNOWN_FIRST_OBSERVATION_INCOMPLETE','tid':child.pid}
+        known={'type':'TransientProcRevalidationObservation','reason':'previously observed proc task vanished during revalidation',
+               'errno':2,'tid':child.pid,'path':'/proc/'+str(child.pid),'stage':'previous-task-revalidation',
+               'process':{'tid':child.pid,'tgid':child.pid,'start':start,'ppid':os.getpid(),'uids':[os.getuid()]*4,
+                          'cgroup':'/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/'+unit},
+               'originalFailure':{'type':'FileNotFoundError','reason':'actual reaped fixture child'}}
+        error={'firstFailure':{'closeOutcomes':[{'label':'proc-'+str(child.pid),'closed':True}]}}
+        def call(method,typed,observed=None,empty=True,unknown=None):
+            observed=dict(props if observed is None else observed)
+            fresh={'admitted':True,'allOwnedDescriptorsClosed':True,'includesUID0':True,
+                   'completeBoundedTraversal':True,'unknownReservationsRetained':[]if unknown is None else unknown,
+                   'currentWholePoolEmpty':empty,'completedMonotonic':time.monotonic(),
+                   'unitProperties':{unit:{'properties':observed}}}
+            records=[{'jobId':row['id']}]
+            with patch.object(q,'boundary_pool_epoch',return_value=([row],fresh)),\
+                 patch.object(q,'ExpectedInvocation',return_value=context),\
+                 patch.object(q,'exact_unit_observation',return_value=observed):
+                return method(None,None,error,typed,[row],[row],records)
+        before=set(os.listdir('/proc/self/fd'))
+        for method,typed,marker in((q.monitor_first_proc_read_exit,first,'incompleteFirstReadObservation'),
+                                  (q.monitor_proc_revalidation_exit,known,'procRevalidationExitObservation')):
+            result=call(method,typed);last=result['originalReadonlyMonitor'][-1]
+            self.assertEqual(last[marker],typed)
+            self.assertIs(last['reservationRetained'],True);self.assertIs(last['operationOrReleaseAuthorized'],False)
+            self.assertIs(result['newAdmissionEffectsReleaseForbidden'],True)
+            for changed,empty,unknown in((dict(props,InvocationID='f'*32),True,None),
+                    (dict(props,ExecMainCode='',ExecMainStatus=''),True,None),
+                    (dict(props,SubState='running'),True,None),
+                    (dict(props,ActiveState='inactive'),False,None),(props,True,['foreign'])):
+                with self.subTest(method=method.__name__,changed=changed,empty=empty,unknown=unknown),self.assertRaises(ValueError):
+                    call(method,typed,changed,empty,unknown)
+        self.assertEqual(set(os.listdir('/proc/self/fd')),before)
+
     @unittest.skipUnless(os.geteuid() == 0 and sys.platform == 'linux', 'admitted Linux Root only')
     def test_whole_history_normal_record_to_real_issuer_beyond_metadata_leaf(self):
         import libvirt_producer as producer

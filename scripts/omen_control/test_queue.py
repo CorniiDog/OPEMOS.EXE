@@ -3500,7 +3500,7 @@ def monitor_first_proc_read_exit(db,backend,error,typed,rows,running,records):
         row=next(r for r in running if r['id']==record['jobId']);ctx=ExpectedInvocation(backend,db,row);ctx.ledger_current();props=exact_unit_observation(backend,ctx.unit);epoch=fresh['unitProperties'][ctx.unit]['properties']
         require(props.get('LoadState')=='loaded'and props.get('InvocationID')==ctx.invocation and props.get('ControlGroup')in('', '/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/'+ctx.unit)and all(props.get(k)==epoch.get(k)for k in('LoadState','InvocationID','MainPID','ActiveState','SubState','ControlGroup')),'fresh exact original invocation/manager epoch')
         require(int(props.get('MainPID','0'))!=typed['tid'],'known original MainPID absence never positive')
-        if fresh.get('currentWholePoolEmpty')is True:require(props.get('MainPID')=='0'and props.get('ActiveState')in('inactive','failed'),'empty pool alone never terminal proof')
+        if fresh.get('currentWholePoolEmpty')is True:require(terminal_observation(props),'empty pool alone never terminal proof')
         else:require(props.get('ActiveState')in('activating','active','deactivating','reloading'),'nonempty pool requires positively owned current invocation')
     require(0<=time.monotonic()-fresh['completedMonotonic']<=1,'bounded fresh first-read monitoring proof')
     records.append({'incompleteFirstReadObservation':typed,'freshWholePoolProof':fresh,'currentTaskAbsence':absent,'reservationRetained':True,'operationOrReleaseAuthorized':False})
@@ -3603,7 +3603,7 @@ def monitor_proc_revalidation_exit(db,backend,error,typed,rows,running,records):
         row=next(r for r in running if r['id']==record['jobId']);ctx=ExpectedInvocation(backend,db,row);ctx.ledger_current();props=exact_unit_observation(backend,ctx.unit);epoch=fresh['unitProperties'][ctx.unit]['properties']
         require(props.get('LoadState')=='loaded' and props.get('InvocationID')==ctx.invocation and props.get('ControlGroup')in('', '/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/'+ctx.unit) and all(props.get(k)==epoch.get(k)for k in ('LoadState','InvocationID','MainPID','ActiveState','SubState','ControlGroup')),'fresh exact original invocation/manager epoch')
         require(int(props.get('MainPID','0'))!=typed['tid'],'known original MainPID missing is not a positive monitoring proof')
-        if fresh.get('currentWholePoolEmpty')is True:require(props.get('MainPID')=='0' and props.get('ActiveState')in('inactive','failed'),'empty pool alone never terminal proof')
+        if fresh.get('currentWholePoolEmpty')is True:require(terminal_observation(props),'empty pool alone never terminal proof')
         else:require(props.get('ActiveState')in('activating','active','deactivating','reloading'),'nonempty current pool requires still-known invocation')
     require(0<=time.monotonic()-fresh['completedMonotonic']<=1,'fresh bounded proc exit observation')
     records.append({'procRevalidationExitObservation':typed,'freshWholePoolProof':fresh,'observedTaskAbsence':absent,'reservationRetained':True,'operationOrReleaseAuthorized':False})
