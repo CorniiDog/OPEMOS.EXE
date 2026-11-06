@@ -200,7 +200,39 @@ def owning_dispatcher(row,policy,state,starting=False):
              'quiescent exact old dispatcher identity')
     return ref
 
-def dispatcher_closed(ref):
+def dispatcher_lock_paths():
+    return (QUEUE/'state/worker.lock',Path('/run/user/1000/opemos-heavy.lock'))
+
+def admitted_dispatcher_lock_custody(refs):
+    """Verify borrowed, already-admitted OFDs without opening another lock OFD."""
+    fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+    need(type(refs)is list and len(refs)==2 and
+         all(type(r)is dict and set(r)=={'path','fd','identity'}for r in refs),
+         'exact two admitted normal lock capabilities')
+    need({r['path']for r in refs}=={str(p)for p in dispatcher_lock_paths()}and
+         all(type(r['fd'])is int and r['fd']>=0 for r in refs)and
+         len({r['fd']for r in refs})==2,'actual distinct fixed normal lock descriptors')
+    for ref in refs:
+        fd=ref['fd'];path=Path(ref['path']);st=os.fstat(fd)
+        identity=lambda s:{k:getattr(s,k)for k in fields}
+        need(stat.S_ISREG(st.st_mode)and st.st_uid==st.st_gid==1000 and
+             st.st_nlink==1 and st.st_size==0 and not st.st_mode&0o113 and
+             identity(st)==ref['identity']==identity(path.lstat()),
+             'same admitted held/named native normal lock full9')
+        rows=[line.split()for line in Path('/proc/self/fdinfo',str(fd)).read_text().splitlines()
+              if line.startswith('lock:')]
+        need(len(rows)==1 and len(rows[0])==9 and rows[0][2:5]==['FLOCK','ADVISORY','WRITE']and
+             rows[0][5]==str(os.getpid())and rows[0][7:]==['0','EOF'],
+             'kernel proves this process already owns the exclusive normal FLOCK')
+        device=rows[0][6].split(':')
+        need(len(device)==3 and int(device[0],16)==os.major(st.st_dev)and
+             int(device[1],16)==os.minor(st.st_dev)and int(device[2])==st.st_ino and
+             identity(st)==identity(os.fstat(fd))==identity(path.lstat()),
+             'admitted FLOCK inode and final held/named epoch unchanged')
+    return True
+
+def dispatcher_closed(ref,admitted_locks=None):
+    if admitted_locks is not None:admitted_dispatcher_lock_custody(admitted_locks)
     m=user_dispatcher(ref['unit'])
     need(m.get('LoadState')=='not-found'or m.get('InvocationID')==ref['invocation'],
          'same actual dispatcher invocation, never historical substitution')
@@ -217,13 +249,13 @@ def dispatcher_closed(ref):
         if worker is not None and worker['start']==old['start']:return False
         group=Path('/sys/fs/cgroup')/old['cgroup'].removeprefix('0::').lstrip('/')
         if group.exists()and(group/'cgroup.procs').read_text().strip():return False
-    else:
+    elif admitted_locks is None:
         # Legacy/quiescent manager has no retained child PID. Its actual normal
         # worker cannot be declared gone while either existing lock is held.
         fds=[]
         try:
             import fcntl
-            for path in(QUEUE/'state/worker.lock',Path('/run/user/1000/opemos-heavy.lock')):
+            for path in dispatcher_lock_paths():
                 fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC);fds.append(fd);st=os.fstat(fd)
                 fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
                 before=tuple(getattr(st,k)for k in fields)
@@ -239,6 +271,7 @@ def dispatcher_closed(ref):
         if not root.name.isdecimal():continue
         try:need(ref['unit']not in(root/'cgroup').read_text(),'actual dispatcher group still has an actor')
         except(FileNotFoundError,ProcessLookupError):continue
+    if admitted_locks is not None:admitted_dispatcher_lock_custody(admitted_locks)
     return True
 
 def wait_terminal(probe_module,policy,job_id,deadline,dispatcher_nonce=None,dispatchers=None):
@@ -260,7 +293,8 @@ def wait_terminal(probe_module,policy,job_id,deadline,dispatcher_nonce=None,disp
         time.sleep(2)
     raise RuntimeError('current ordinary canonical/actual dispatcher terminal timeout; retain nonce')
 
-def closed_receipt(row,m,dispatchers=None):
+def closed_receipt(row,m,dispatchers=None,admitted_locks=None):
+    if admitted_locks is not None:admitted_dispatcher_lock_custody(admitted_locks)
     need(row['unit']and row['state']in('passed','failed','timed_out','blocked','unknown','output_limit'),
          'exact old canonical closed row')
     tx=row['id'].removeprefix('root-github-robot-control-')
@@ -275,7 +309,7 @@ def closed_receipt(row,m,dispatchers=None):
              all(r['jobId']==row['id']and r['queueSourceSHA256']==dispatchers[0]['queueSourceSHA256']
                  for r in dispatchers),
              'same exact predecessor/actual dispatcher set')
-        for ref in dispatchers:need(dispatcher_closed(ref),'actual dispatcher still active')
+        for ref in dispatchers:need(dispatcher_closed(ref,admitted_locks=admitted_locks),'actual dispatcher still active')
         units=[ref['unit']for ref in dispatchers]
     for root in Path('/proc').iterdir():
         if not root.name.isdecimal():continue
@@ -288,6 +322,7 @@ def closed_receipt(row,m,dispatchers=None):
                  (b'/releases/'+tx.encode()+b'/control.py')not in argv,
                  'old or orphan listener/controller still present')
         except(FileNotFoundError,ProcessLookupError):continue
+    if admitted_locks is not None:admitted_dispatcher_lock_custody(admitted_locks)
     return {'currentManager':m,'oldDispatcherAbsent':True,'oldListenerAbsent':True,
             'fullUID0Group':{'absent':True},'oldRowId':row['id'],'oldRowSHA256':sha(enc(row)),
             'atUnix':int(time.time()),**({'normalDispatchers':dispatchers}if dispatchers is not None else{})}

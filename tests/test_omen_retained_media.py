@@ -612,7 +612,19 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                         unitProperties={u:{'known':True,'properties':props(u)}for u in(own,peer)},knownInvocations=invocations.copy(),
                         positiveMainPIDProofs={peer:{'process':leader.copy(),'invocation':invocations[peer]}},
                         tasks=[leader.copy()],rootParentCustody=[(pool,[7,8,0o40755,0,0,2,1,1])])
-                backend.validate_pool=proof
+                membership=q.PoolAdmissionFailure('current group membership/populated race',dict(
+                    admitted=False,reservationRetained=True,operationOrReleaseAuthorized=False,
+                    firstFailure=dict(operationOrReleaseAuthorized=False,
+                        firstFailure={'type':'ValueError','reason':'current group membership/populated race'},
+                        closeOutcomes=[dict(fd=7,label='modeled-pool-dir',closed=True,UNKNOWN=False)])))
+                cuts=[]
+                def complete_cut(rows,deadline):
+                    cuts.append((q._READONLY_BOUNDARY_PREPARATION,deadline))
+                    if len(cuts)==1:
+                        self.assertTrue(q._READONLY_BOUNDARY_PREPARATION)
+                        raise membership
+                    return proof(rows)
+                backend._validate_pool_cut=complete_cut
                 backend.inspect=lambda unit:('failed',props(unit),True)if unit==own else(None,props(unit),False)
                 backend.whole_owned_cgroup=lambda unit,p:dict(empty=unit==own,includesUID0=True,
                     completeTraversal=True,derivedPath=pool+'/'+unit,processes=[]if unit==own else[os.getpid()],absent=unit==own)
@@ -638,6 +650,9 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                     records=observed['originalReadonlyMonitor'];self.assertIs(records[0]['terminalUnitObservation']['ownedCgroupProof']['empty'],True)
                     self.assertNotIn('terminalUnitObservation',records[1])
                     self.assertIs(records[-1]['freshWholePoolProof']['currentWholePoolEmpty'],False)
+                    self.assertEqual(cuts[:2],[(True,cuts[0][1])]*2)
+                    self.assertEqual(records[-1]['freshWholePoolProof']['readonlyMembershipTransition'],membership.evidence)
+                    self.assertFalse(q._READONLY_BOUNDARY_PREPARATION)
                     self.assertIs(observed['newAdmissionEffectsReleaseForbidden'],True)
                     q.tick(root,db,backend,cfg)
                     final=dict(db.execute("SELECT * FROM jobs WHERE id='failed-ubuntu'").fetchone())
@@ -650,6 +665,46 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                 self.assertEqual([tuple(r)for r in db.execute('SELECT * FROM pool_unit_bindings')],bindings)
                 self.assertEqual((root/'logs/failed-ubuntu/stderr.log').read_text(),'actual preparation FIRST retained\n')
             finally:db.close()
+
+    def test_readonly_pool_membership_retry_keeps_original_deadline_and_unknown_refusals(self):
+        import copy,time
+        from unittest.mock import patch
+        import test_queue as q
+        backend=object.__new__(q.SystemdBackend)
+        evidence=dict(admitted=False,reservationRetained=True,operationOrReleaseAuthorized=False,
+            firstFailure=dict(operationOrReleaseAuthorized=False,
+                firstFailure={'type':'ValueError','reason':'current group membership/populated race'},
+                closeOutcomes=[dict(fd=7,label='modeled-pool-dir',closed=True,UNKNOWN=False)]))
+        def error(data=None):return q.PoolAdmissionFailure('modeled readonly membership cut',copy.deepcopy(evidence if data is None else data))
+        before=set(os.listdir('/proc/self/fd'))
+        # Normal admission never retries a failed kernel cut.
+        with patch.object(q,'_READONLY_BOUNDARY_PREPARATION',False),patch.object(backend,'_validate_pool_cut',side_effect=error(),create=True)as cut:
+            with self.assertRaises(q.PoolAdmissionFailure):backend.validate_pool([])
+            self.assertEqual(cut.call_count,1)
+        variants=[]
+        for key,value in(('admitted',True),('reservationRetained',False),('operationOrReleaseAuthorized',True),('unknownReservationsRetained',['foreign'])):
+            bad=copy.deepcopy(evidence);bad[key]=value;variants.append(bad)
+        for key,value in(('closed',False),('UNKNOWN',True),('fd',None)):
+            bad=copy.deepcopy(evidence);bad['firstFailure']['closeOutcomes'][0][key]=value;variants.append(bad)
+        bad=copy.deepcopy(evidence);bad['firstFailure']['firstFailure']['reason']='foreign or unowned process';variants.append(bad)
+        with patch.object(q,'_READONLY_BOUNDARY_PREPARATION',True):
+            for bad in variants:
+                with self.subTest(bad=bad),patch.object(backend,'_validate_pool_cut',side_effect=error(bad),create=True)as cut:
+                    with self.assertRaises(q.PoolAdmissionFailure):backend.validate_pool([])
+                    self.assertEqual(cut.call_count,1)
+            with patch.object(backend,'_validate_pool_cut',side_effect=[error(),error()],create=True)as cut:
+                with self.assertRaises(q.PoolAdmissionFailure)as failed:backend.validate_pool([])
+                self.assertEqual(cut.call_count,2)
+                self.assertEqual(cut.call_args_list[0].args[1],cut.call_args_list[1].args[1])
+                self.assertEqual(failed.exception.evidence['previousReadonlyPoolObservation'],evidence)
+            # Even a successful second cut cannot extend the original 15 seconds.
+            with patch.object(q.time,'monotonic',side_effect=[100.,101.,115.]),patch.object(backend,'_validate_pool_cut',side_effect=[error(),{}],create=True)as cut:
+                with self.assertRaisesRegex(ValueError,'original whole pool observation deadline'):backend.validate_pool([])
+                self.assertEqual([call.args[1]for call in cut.call_args_list],[115.,115.])
+            with patch.object(q.time,'monotonic',side_effect=[100.,115.]),patch.object(backend,'_validate_pool_cut',side_effect=error(),create=True)as cut:
+                with self.assertRaises(q.PoolAdmissionFailure):backend.validate_pool([])
+                self.assertEqual(cut.call_count,1)
+        self.assertEqual(set(os.listdir('/proc/self/fd')),before)
 
     @unittest.skipUnless(os.geteuid() == 0 and sys.platform == 'linux', 'admitted Linux Root only')
     def test_whole_history_normal_record_to_real_issuer_beyond_metadata_leaf(self):

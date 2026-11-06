@@ -2381,16 +2381,25 @@ class SystemdBackend:
         return {"version": 1, "job_id": job_id, "unit": unit, "stateRoot": str(self.root), "prefix": self.prefix, "specSHA256": hashlib.sha256(canonical(spec).encode()).hexdigest(), "cpus": cpus, "memory": spec["memory"], "invocation": props["InvocationID"], "recordedAtUnix": time.time(), "initialCurrentUnitProperties": props}
 
     def validate_pool(self, rows):
-        deadline=time.monotonic()+15;first=None
+        deadline=time.monotonic()+15;first=None;membership=None
         for cut in range(2):
             try:
                 proof=self._validate_pool_cut(rows,deadline)
                 require(time.monotonic()<deadline,'original whole pool observation deadline')
                 if first is not None:proof['runtimePublicationTransition']=first
+                if membership is not None:proof['readonlyMembershipTransition']=membership
                 return proof
+            except PoolAdmissionFailure as error:
+                if (not _READONLY_BOUNDARY_PREPARATION or first is not None or
+                        membership is not None or not readonly_pool_membership_transition(error)):
+                    if membership is not None:
+                        error.evidence=dict(error.evidence,previousReadonlyPoolObservation=membership)
+                    raise
+                membership=error.evidence
+                if time.monotonic()>=deadline:raise
             except RuntimePublisherTransition as error:
-                if first is not None:
-                    raise pool_observation_unavailable(error.evidence['after']['request'],error.evidence['recordedReservations'],{'kind':'SECOND_RUNTIME_PUBLICATION_TRANSITION_REFUSED','first':first,'second':error.evidence},True) from error
+                if first is not None or membership is not None:
+                    raise pool_observation_unavailable(error.evidence['after']['request'],error.evidence['recordedReservations'],{'kind':'SECOND_RUNTIME_PUBLICATION_TRANSITION_REFUSED','first':first,'previousReadonlyPoolObservation':membership,'second':error.evidence},True) from error
                 first=error.evidence
                 if time.monotonic()>=deadline:raise pool_observation_unavailable(first['after']['request'],first['recordedReservations'],{'kind':'ORIGINAL_POOL_DEADLINE_DURING_PUBLICATION_TRANSITION','first':first},True) from error
         raise ValueError('no stable complete pool cut')
@@ -3573,6 +3582,22 @@ def monitor_first_proc_absence(typed):
                 require(False,'initial task still live, reused or unknown; no adoption')
         require(io.fd_id(root)==meta==io.path_id('/proc'),'held proc root changed after first-read absence proof')
     return {'incompleteOriginalIdentityPreserved':True,'currentPathAbsenceOnly':records,'allOwnedDescriptorsClosed':True,'operationOrReleaseAuthorized':False}
+
+def readonly_pool_membership_transition(error):
+    """Only a closed-descriptor kernel membership race may repeat a readonly cut."""
+    if type(error)is not PoolAdmissionFailure:return False
+    evidence=error.evidence
+    if (type(evidence)is not dict or evidence.get('admitted')is not False or
+            evidence.get('reservationRetained')is not True or
+            evidence.get('operationOrReleaseAuthorized')is not False or
+            evidence.get('unknownReservationsRetained')not in(None,[])):return False
+    failure=evidence.get('firstFailure')
+    if (type(failure)is not dict or failure.get('operationOrReleaseAuthorized')is not False or
+            failure.get('firstFailure')!={'type':'ValueError','reason':'current group membership/populated race'}):return False
+    closes=failure.get('closeOutcomes')
+    return (type(closes)is list and 0<len(closes)<=1024 and
+            all(type(c)is dict and c.get('closed')is True and c.get('UNKNOWN')is False
+                and type(c.get('fd'))is int and c['fd']>=0 and type(c.get('label'))is str for c in closes))
 
 def monitor_current_unit(backend,ctx,props,fresh):
     # A live peer keeps the pool populated after another unit has exited.
