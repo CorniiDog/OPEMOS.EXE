@@ -208,7 +208,8 @@ def current_github(p,route_only=False):
     nonce=h.get('recovery_nonce')
     if type(nonce) is not str or not re.fullmatch(r'[0-9a-f]{32}',nonce):nonce=None
     return {'networkReachable':True,'protectedMain':True,
-            'mainCommit':p['mainCommit'],'protectedMainCommit':branch['commit']['sha'],
+            'mainCommit':branch['commit']['sha']if route_only else p['mainCommit'],
+            'protectedMainCommit':branch['commit']['sha'],
             'runnerOnline':runner.get('status')=='online',
             'runnerBusy':runner.get('busy') is True,
             'actionsInProgress':owned,
