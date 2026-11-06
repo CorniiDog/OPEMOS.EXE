@@ -257,7 +257,7 @@ class Engine:
             pin=robot['source_pins'][relative]
             expected_sha=hashlib.sha256(raw_file(Path(__file__).parents[1]/relative)).hexdigest()
             require(pin['sha256']==expected_sha and pin['path']in selected_job['files'],'Normal queue file custody omitted exact Robot source')
-            self.stage['load_pinned'](pin)
+            self.stage['pinned'](pin)
         entry=robot['source_pins']['scripts/run_omen_robot_guest.py']['path']
         require(entry in selected_job['command'],'Normal queue command does not actually execute the installed Robot step')
 

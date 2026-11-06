@@ -342,6 +342,64 @@ class RequiredProducerTests(unittest.TestCase):
       if fault in('wrong-root','no-package-space','no-control-space'):
        self.assertFalse(calls);self.assertFalse(list(root.glob('candidate-*')))
 
+ def test_real_transaction_reads_pinned_job_sources_as_bytes_before_submission(self):
+  """Real prepare consumer/FD readers; no queue, VM or source execution."""
+  import omen_robot as robot
+  import omen_ci_stage as stage
+  import time
+  repo=Path(__file__).parents[1]
+  required={'scripts/OPEMOSPointer.py','scripts/OPEMOSGuest.py','scripts/omen_robot.py',
+            'scripts/run_omen_robot_guest.py','tests/robot/guest.robot'}
+  for corrupt in(False,True):
+   with self.subTest(corrupt=corrupt),tempfile.TemporaryDirectory()as directory:
+    root=Path(directory);os.chmod(root,0o700)
+    def pin(path):return stage._READER.read_verified(path,8*1024**2,uid=os.getuid())[0]
+    def document(name,value):
+     path=root/name;stage.create_json(path,value);return pin(path)
+    sources={}
+    for relative in required:
+     path=root/relative;path.parent.mkdir(parents=True,exist_ok=True)
+     path.write_bytes((repo/relative).read_bytes());os.chmod(path,0o400);sources[relative]=pin(path)
+    original=root/'original-data';original.write_bytes(b'owned fixture input, never a VM')
+    original_pin=pin(original);observed=stage.artifact_read({**original_pin,'size':original_pin['bytes']},4096)
+    admission=document('admission.json',{'fixture_only':True,'runtime_authorized':False})
+    cfg=document('config.json',{'enabled':True,'version':1,'artifact_root':str(stage.ROOT),
+       'wait_seconds':60,'max_run_bytes':60000000000,'max_input_bytes':60000000000,
+       'dispatcher_mode':'join-existing',
+       'vm_admission_limits':{'max_vm_bytes':60000000000,'max_cpu':10,'max_memory_bytes':34359738368}})
+    entry=sources['scripts/run_omen_robot_guest.py']['path'];command=['/usr/bin/python3',entry]
+    manifest=document('manifest.json',{'version':1,'jobs':[{'id':'fixture-normal-job',
+       'cwd':str(root),'command':command,'files':[v['path']for v in sources.values()],'approval':admission}]})
+    request={'source_commit':SOURCE,'run_id':'50','attempt':'1','nonce':'f'*32}
+    operand={'case':'ubuntu-full-stack','inventory_vm_id':'OPEMOS-Ubuntu-Agent-UI',
+       'runtime_instance_id':'fixture-runtime','subject_role':'imaging_host','hardware_scope':'virtual-only',
+       'original_source':{k:observed[k]for k in('sha256','size','identity')},
+       'runtime_admission':admission,'inputs':[{**original_pin,'size':original_pin['bytes']}],
+       'artifacts':[],'manifest':manifest,'job_ids':['fixture-normal-job']}
+    prepared={'available':True,'expected':Metadata().value,'config':cfg,'operand':operand,
+       'plan':{'source_commit':SOURCE,'nonce':request['nonce']},
+       'robot_job':{**request,'job_id':'fixture-normal-job','queue_command':command,
+          'result_path':str(root/'not-created-result.json'),'source_pins':sources,
+          'library_sha256':sources['scripts/OPEMOSPointer.py']['sha256'],
+          'suite_sha256':hashlib.sha256((repo/'tests/robot/guest.robot').read_bytes()).hexdigest()},
+       # Stop at the next genuine production predicate, BEFORE stage/submit.
+       'additional_operations':None}
+    engine=robot.Engine.__new__(robot.Engine);engine.stage=dict(vars(stage))
+    engine.stage['queue_status']=lambda config:{} # External queue only is modeled.
+    engine.request=lambda *args:(request,prepared,root)
+    engine.deadline=time.monotonic()+60;engine.results={'OPEMOS-Ubuntu-Agent-UI':{}}
+    engine.runtime_original={};engine.source_original={}
+    if corrupt:
+     path=Path(sources['scripts/run_omen_robot_guest.py']['path']);os.chmod(path,0o600)
+     path.write_bytes(path.read_bytes()+b'\n# changed after pin\n')
+    if corrupt:
+     with self.assertRaises(stage._READER.SourceReadFailure):
+      engine.transaction('artifact',{'platform':'ubuntu'},expected_producer=prepared['expected'])
+    else:
+     with self.assertRaisesRegex(ValueError,'Finite complete artifact graph required'):
+      engine.transaction('artifact',{'platform':'ubuntu'},expected_producer=prepared['expected'])
+    self.assertFalse((root/'not-created-result.json').exists())
+
  def test_root_failure_retains_first_and_secondary(self):
   m=Metadata();req=dict(version=2,action='execute-produced-platform',subject=gate.target(m.value),repository=gate.REPO,source_commit=SOURCE,run_id='50',attempt='1',nonce='f'*32,consumer_started_epoch=1)
   class Engine:
