@@ -159,7 +159,27 @@ class Engine:
         self.stage['_EXECUTABLES']['descriptor'](expected)
         limit=self.profile['max_candidate_archive_bytes']
         require(type(limit)is int and 0<limit<=60000000000,'Existing whole-VM candidate bound')
-        path=self.output/('candidate-'+expected['artifact_id']+'-'+expected['artifact_archive_sha256']+'.zip')
+        root=Path(self.profile['candidate_storage_root'])
+        require(root==self.stage['ROOT'],'Existing dedicated CI candidate storage required')
+        self.stage['root_guard'](root)
+        contract=self.stage['_RESULT']['policy'](self.profile['result_contract'])
+        # Opaque multi-GB packages belong on existing CI storage. Keep complete
+        # result/diagnostic headroom on the separate private control volume too.
+        for directory,required in ((root,limit+contract['free_reserve_bytes']),
+                (self.output,2*contract['max_bytes']+contract['stderr_max_bytes']+contract['free_reserve_bytes'])):
+            space=os.statvfs(directory)
+            require(space.f_bavail*space.f_frsize>=required,'Candidate/control volume lacks bounded acquisition/result reserve')
+        require(all(re.fullmatch(r'[1-9][0-9]{0,19}',self.context[k])for k in ('run_id','attempt')),
+                'Exact current consumer run/attempt required')
+        folder=root/('candidate-'+self.context['run_id']+'-'+self.context['attempt']+'-'+
+                     expected['artifact_id']+'-'+expected['artifact_archive_sha256'])
+        folder.mkdir(mode=0o700)
+        os.chmod(folder,0o700);self.stage['real_dir'](folder)
+        # This prefix is outside ordinary run expiry. Preserve failed partials
+        # with provenance; never classify interrupted acquisition as VM closure.
+        dump(folder/'.owned.json',{'schema':1,'uid':os.getuid(),'identity':self.context,
+             'descriptor':expected,'max_bytes':limit,'role':'opaque candidate acquisition; not controller code'})
+        path=folder/'archive.zip'
         fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)
         try:
             with os.fdopen(fd,'wb',closefd=False)as stream:

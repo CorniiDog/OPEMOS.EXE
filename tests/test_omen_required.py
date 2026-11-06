@@ -290,26 +290,57 @@ class RequiredProducerTests(unittest.TestCase):
   payload=b'opaque candidate archive: retained data, never host code'
   expected=copy.deepcopy(Metadata().value)
   expected['artifact_archive_sha256']=hashlib.sha256(payload).hexdigest()
-  for fault in ('none','wrong-size','wrong-hash','over-cap'):
+  for fault in ('none','wrong-size','wrong-hash','over-cap','wrong-root','no-package-space','no-control-space','stream-error'):
    with self.subTest(fault=fault),tempfile.TemporaryDirectory()as directory:
     engine=robot.Engine.__new__(robot.Engine)
-    engine.profile={'max_candidate_archive_bytes':len(payload)-1 if fault=='over-cap'else 4096}
-    engine.output=Path(directory);os.chmod(engine.output,0o700)
+    root=Path(directory)/'ci';root.mkdir(mode=0o700);os.chmod(root,0o700)
+    (root/'.receipts').mkdir(mode=0o700);os.chmod(root/'.receipts',0o700)
+    stage.create_json(root/stage.MARKER,{'schema':1,'uid':os.getuid(),'purpose':'OPEMOS CI copies only'})
+    engine.context={'run_id':'50','attempt':'1','repository':gate.REPO,'source_commit':SOURCE}
+    engine.profile={'max_candidate_archive_bytes':len(payload)-1 if fault=='over-cap'else 4096,
+                    'candidate_storage_root':str(root if fault!='wrong-root'else Path(directory)),
+                    'result_contract':{'max_bytes':1048576,'stderr_max_bytes':65536,'free_reserve_bytes':4096}}
+    engine.output=Path(directory)/'control';engine.output.mkdir(mode=0o700);os.chmod(engine.output,0o700)
     # Real production reader and descriptor; only the HTTPS stream is modeled.
-    engine.stage={'_EXECUTABLES':{'descriptor':gate.descriptor},'artifact_read':stage.artifact_read}
+    engine.stage={'_EXECUTABLES':{'descriptor':gate.descriptor},'artifact_read':stage.artifact_read,
+                  'ROOT':root,'root_guard':stage.root_guard,'real_dir':stage.real_dir,'_RESULT':stage._RESULT}
     value=copy.deepcopy(expected)
     if fault=='wrong-hash':value['artifact_archive_sha256']='0'*64
+    calls=[];real_space=os.statvfs
     def download(descriptor,stream,cap):
-     self.assertEqual(descriptor,value);stream.write(payload)
+     calls.append(descriptor);self.assertEqual(descriptor,value)
+     if fault=='stream-error':stream.write(payload[:7]);raise OSError('actual acquisition failure fixture')
+     stream.write(payload)
      return len(payload)+1 if fault=='wrong-size'else len(payload)
-    if fault=='none':
-     archive=engine.stage_candidate(value,download)
-     self.assertEqual(archive['bytes'],len(payload)) # Existing downstream archive schema stays bytes.
-     self.assertEqual(Path(archive['path']).read_bytes(),payload)
-     self.assertEqual(archive['sha256'],hashlib.sha256(payload).hexdigest())
-     self.assertEqual(Path(archive['path']).stat().st_mode&0o777,0o400)
-    else:
-     with self.assertRaises(ValueError):engine.stage_candidate(value,download)
+    def space(path):
+     s=real_space(path)
+     if(fault=='no-package-space'and Path(path)==root)or(fault=='no-control-space'and Path(path)==engine.output):
+      import types
+      return types.SimpleNamespace(f_bavail=0,f_frsize=s.f_frsize)
+     return s
+    with patch.object(robot.os,'statvfs',side_effect=space):
+     if fault=='none':
+      archive=engine.stage_candidate(value,download)
+      self.assertEqual(archive['bytes'],len(payload)) # Existing downstream archive schema stays bytes.
+      self.assertEqual(Path(archive['path']).read_bytes(),payload)
+      self.assertEqual(Path(archive['path']).parent.parent,root)
+      self.assertFalse(list(engine.output.glob('candidate-*')))
+      self.assertEqual(archive['sha256'],hashlib.sha256(payload).hexdigest())
+      self.assertEqual(Path(archive['path']).stat().st_mode&0o777,0o400)
+      marker=json.loads(Path(archive['path']).with_name('.owned.json').read_bytes())
+      self.assertEqual(marker['descriptor'],expected);self.assertEqual(marker['identity'],engine.context)
+      with self.assertRaises(FileExistsError):engine.stage_candidate(value,download)
+      self.assertEqual(len(calls),1) # Current attempt never overwrites or reacquires a consumed archive.
+     elif fault=='stream-error':
+      with self.assertRaisesRegex(OSError,'acquisition failure'):engine.stage_candidate(value,download)
+      partial=list(root.glob('candidate-*/archive.zip'));self.assertEqual(len(partial),1)
+      self.assertEqual(partial[0].read_bytes(),payload[:7])
+      self.assertEqual(json.loads(partial[0].with_name('.owned.json').read_bytes())['descriptor'],expected)
+      self.assertFalse(list(engine.output.glob('candidate-*')))
+     else:
+      with self.assertRaises(ValueError):engine.stage_candidate(value,download)
+      if fault in('wrong-root','no-package-space','no-control-space'):
+       self.assertFalse(calls);self.assertFalse(list(root.glob('candidate-*')))
 
  def test_root_failure_retains_first_and_secondary(self):
   m=Metadata();req=dict(version=2,action='execute-produced-platform',subject=gate.target(m.value),repository=gate.REPO,source_commit=SOURCE,run_id='50',attempt='1',nonce='f'*32,consumer_started_epoch=1)
