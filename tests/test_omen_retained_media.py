@@ -69,6 +69,124 @@ def operand():
 
 
 class RetainedMediaContract(unittest.TestCase):
+    def test_retained_terminal_finalizer_preserves_live_peer_membership(self):
+        """Real SQL/history/finalizers; external kernel/manager facts are MODELED."""
+        import ast,time
+        from unittest.mock import patch
+        import test_queue as current
+        # Preserve the actual legacy producer and its history helper contracts.
+        # Only the already-reviewed capacity functions differ in this fixture.
+        original=enrolled_subject_body('physical_test_queue.py').decode()
+        functions=lambda text:{n.name:ast.get_source_segment(text,n)
+            for n in ast.parse(text).body if isinstance(n,ast.FunctionDef)}
+        before=functions(original);now=functions(Path(current.__file__).read_text())
+        for name in('enqueue','terminal_history_store','terminal_history_resolve'):
+            original=original.replace(before[name],now[name])
+        legacy=types.ModuleType('legacy_terminal_writer');legacy.__file__=str(SOURCE/'test_queue.py')
+        exec(compile(original,legacy.__file__,'exec'),legacy.__dict__)
+        with tempfile.TemporaryDirectory(prefix='opemos-live-peer-terminal-')as tmp:
+            base=Path(tmp);state=base/'state'
+            with contextlib.redirect_stdout(io.StringIO()):legacy.main(['--queue',str(state),'init'])
+            root,db=legacy.connect(state);cfg=legacy.config(db)
+            marker=base/'admission.json';marker.write_text('{"fixtureOnly":true}');marker.chmod(0o600)
+            try:
+                backend=legacy.SystemdBackend(root,cfg);prefix=backend.prefix
+                own,peer=prefix+'a'*32+'.service',prefix+'b'*32+'.service'
+                invocations={own:'c'*32,peer:'d'*32};pool='/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice'
+                def props(unit):
+                    live=unit==peer
+                    return dict(LoadState='loaded',ActiveState='active'if live else'failed',
+                        SubState='running'if live else'failed',InvocationID=invocations[unit],
+                        MainPID='100'if live else'0',ControlGroup=pool+'/'+peer if live else'',
+                        Result='success'if live else'exit-code',ExecMainCode='1',ExecMainStatus='0'if live else'1',
+                        AllowedCPUs='1'if live else'0',CPUQuotaPerSecUSec='1s',
+                        MemoryMax=str(1024**3),MemorySwapMax='0')
+                specs={}
+                for index,(job,unit)in enumerate((('failed-ubuntu',own),('live-runner',peer))):
+                    spec=legacy.normalize_job(dict(id=job,platform='fixture',owner='exe',
+                        command=['/usr/bin/true'],cwd=str(base),files=[str(marker)],cores=1,memory=1024**3,
+                        timeout_seconds=300,resources=[job],approval={'path':str(marker),
+                        'sha256':hashlib.sha256(marker.read_bytes()).hexdigest()}),base)
+                    specs[job]=spec
+                    db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',
+                        (job,legacy.canonical(spec),'running',legacy.canonical([index]),unit,1.0,None,None))
+                    binding=dict(version=1,job_id=job,unit=unit,invocation=invocations[unit],
+                        stateRoot=str(root),prefix=prefix,specSHA256=hashlib.sha256(legacy.canonical(spec).encode()).hexdigest(),
+                        cpus=[index],memory=1024**3)
+                    db.execute('INSERT INTO pool_unit_bindings VALUES(?,?)',(job,legacy.canonical(binding)))
+                db.commit();(root/'logs/failed-ubuntu').mkdir(parents=True)
+                (root/'logs/failed-ubuntu/stderr.log').write_text('NameError: original child failure retained\n')
+                leader=dict(tid=100,tgid=100,start=10,ppid=1,uids=[1000]*4,cgroup=pool+'/'+peer)
+                counter=[0];latest={}
+                def proof(rows):
+                    counter[0]+=1
+                    pid=1000+counter[0]if any(r['state']=='terminal_cleanup'for r in rows)else 1000
+                    process=dict(tid=pid,tgid=pid,start=pid,ppid=100,uids=[1000]*4,cgroup=pool+'/'+peer)
+                    thread=dict(process,tid=pid+10000)
+                    value=dict(admitted=True,includesUID0=True,completeBoundedTraversal=True,
+                        allOwnedDescriptorsClosed=True,canonicalPool=pool,completedMonotonic=time.monotonic(),
+                        systemdPoolProperties={'ControlGroup':pool},unknownReservationsRetained=[],
+                        unitProperties={u:{'known':True,'properties':props(u)}for u in(own,peer)},
+                        knownInvocations=invocations.copy(),positiveMainPIDProofs={peer:{'process':leader.copy(),'invocation':invocations[peer]}},
+                        tasks=[leader.copy(),process,thread],rootParentCustody=[(pool,[7,8,0o40755,0,0,2,1,1])])
+                    latest['epoch']=current.terminal_pool_epoch(db,rows,value)
+                    return value
+                def configure(module):
+                    b=module.SystemdBackend(root,cfg);b.validate_pool=proof
+                    b.inspect=lambda unit:('failed',props(unit),True)if unit==own else(None,props(unit),False)
+                    b.whole_owned_cgroup=lambda unit,p:dict(empty=True,completeTraversal=True,
+                        derivedPath=pool+'/'+unit,includesUID0=True,processes=[],groups=0,absent=True)
+                    return b
+                def manager(*args,**kwargs):
+                    self.assertEqual(args[0],'show','no operation on the live peer or stopped target')
+                    return props(args[1])
+                with patch.object(legacy,'_RAW_SYSTEMCTL',side_effect=manager):
+                    with self.assertRaisesRegex(ValueError,'New/changed/foreign/busy other task'):
+                        legacy.tick(root,db,configure(legacy),cfg)
+                rows=legacy.pool_rows(db,db.execute('SELECT * FROM jobs ORDER BY rowid').fetchall())
+                retained=next(r for r in rows if r['id']=='failed-ubuntu');saved=json.loads(retained['result'])
+                self.assertEqual(retained['state'],'terminal_cleanup')
+                self.assertIs(saved['terminalLifecycle']['reservationRetained'],True)
+                self.assertEqual(saved['terminalCleanupFailure']['reason'],'New/changed/foreign/busy other task')
+                epoch=legacy.terminal_history_load(db,saved['preservedReservationEpoch'],retained,invocations[own])
+                peer_before=dict(db.execute("SELECT * FROM jobs WHERE id='live-runner'").fetchone())
+                bindings=[tuple(r)for r in db.execute('SELECT * FROM pool_unit_bindings')]
+                with patch.object(current,'_RAW_SYSTEMCTL',side_effect=manager):
+                    current.finish_committed_terminal(db,configure(current),retained)
+                final=dict(db.execute("SELECT * FROM jobs WHERE id='failed-ubuntu'").fetchone())
+                result=json.loads(final['result'])
+                self.assertEqual(final['state'],'failed');self.assertIsNotNone(final['finished'])
+                self.assertEqual(result['terminalLifecycle']['phase'],'CLOSED')
+                self.assertIs(result['terminalLifecycle']['reservationRetained'],False)
+                self.assertEqual(result['terminalCleanupFailure'],saved['terminalCleanupFailure'])
+                self.assertEqual(result['preservedReservationEpoch'],saved['preservedReservationEpoch'])
+                self.assertEqual(result['ExecMainStatus'],'1')
+                self.assertEqual((root/'logs/failed-ubuntu/stderr.log').read_text(),
+                                 'NameError: original child failure retained\n')
+                self.assertEqual(dict(db.execute("SELECT * FROM jobs WHERE id='live-runner'").fetchone()),peer_before)
+                self.assertEqual([tuple(r)for r in db.execute('SELECT * FROM pool_unit_bindings')],bindings)
+                self.assertTrue(result['terminalLifecycle']['preservedBeforeStop']['livePeerMembershipTransitions'])
+                self.assertTrue(result['terminalLifecycle']['preservedAfterStop']['livePeerMembershipTransitions'])
+                self.assertGreater(counter[0],6)  # membership changed on every genuine API cut
+                present=latest['epoch'];owned=next(r for r in present['rows']if r['id']=='failed-ubuntu')
+                # Each negative starts from the same retained epoch and complete
+                # current proof. These are refusal cases, never native acceptance.
+                for fault in('scope','uid','lineage','invocation','leader','resource','row','binding','unknown','migration'):
+                    bad=copy.deepcopy(present);bp=bad['pool'];new_task=bp['tasks'][1]
+                    if fault=='scope':new_task['cgroup']=pool+'/foreign.service'
+                    elif fault=='uid':new_task['uids']=[2000]*4
+                    elif fault=='lineage':new_task['ppid']=999999
+                    elif fault=='invocation':bp['unitProperties'][peer]['properties']['InvocationID']='e'*32
+                    elif fault=='leader':bp['positiveMainPIDProofs'][peer]['process']['start']+=1
+                    elif fault=='resource':bp['unitProperties'][peer]['properties']['MemoryMax']='1'
+                    elif fault=='row':next(r for r in bad['rows']if r['id']=='live-runner')['spec']='{}'
+                    elif fault=='binding':bad['bindings'][0][1]='{}'
+                    elif fault=='unknown':bp['unknownReservationsRetained']=[peer]
+                    else:bp['tasks'][0]['cgroup']=pool+'/'+own
+                    with self.subTest(fault=fault),self.assertRaises(ValueError):
+                        current.verify_terminal_pool_transition(epoch,bad,owned,False)
+            finally:db.close()
+
     def test_real_uid1000_launcher_authenticates_control_grant_without_legacy_vm_scope(self):
         if os.geteuid()!=0:
             self.skipTest('actual Root-owned policy and real UID1000 reader require Root')

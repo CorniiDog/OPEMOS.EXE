@@ -1921,6 +1921,94 @@ def bind_terminal_pool_epoch(ctx):
     return epoch
 
 
+def terminal_live_peer_membership(initial, current, owned_row, *, receipt_hashes=True):
+    """Observe task churn only inside an unchanged, already-admitted live peer.
+
+    This grants no operation on that peer. Both complete raw pool epochs remain
+    evidence; the historical reason for a departed task remains unknown.
+    """
+    before,after=initial['pool'],current['pool'];own=owned_row['unit']
+    own_path=before['canonicalPool']+'/'+own
+    def original_others(pool):
+        return sorted([t for t in pool['tasks']if not(t['cgroup']==own_path or
+            t['cgroup'].startswith(own_path+'/'))],key=lambda t:t['tid'])
+    if original_others(before)==original_others(after):return []
+    def tasks(pool):
+        values=pool['tasks'];require(type(values)is list and len(values)<=40960,'Bounded full peer task set')
+        result={}
+        for task in values:
+            require(type(task)is dict and set(task)=={'tid','start','ppid','tgid','uids','cgroup'}and
+                    all(type(task[k])is int and task[k]>0 for k in('tid','start','tgid'))and
+                    type(task['ppid'])is int and task['ppid']>=0 and
+                    type(task['uids'])is list and len(task['uids'])==4 and
+                    all(type(uid)is int and uid>=0 for uid in task['uids'])and
+                    type(task['cgroup'])is str and task['tid']not in result,'Complete unique peer task identity')
+            result[task['tid']]=task
+        return result
+    old_all,new_all=tasks(before),tasks(after)
+    outside=lambda task:not(task['cgroup']==own_path or task['cgroup'].startswith(own_path+'/'))
+    old={tid:t for tid,t in old_all.items()if outside(t)}
+    new={tid:t for tid,t in new_all.items()if outside(t)}
+    if old==new:return []
+    require(all(before.get(k)is True for k in('admitted','includesUID0','completeBoundedTraversal','allOwnedDescriptorsClosed')),
+            'Original complete live peer proof required')
+    # Reuse of an observed TID or alteration of its identity is not task churn.
+    require(all(new_all[tid]==task for tid,task in old.items()if tid in new_all)and
+            all(old_all[tid]==task for tid,task in new.items()if tid in old_all),'Existing peer task identity changed')
+    changed={t['cgroup'].removeprefix(before['canonicalPool']+'/').split('/')[0]
+             for tid,t in {**old,**new}.items()if tid not in old or tid not in new}
+    changes=[]
+    for unit in sorted(changed):
+        peers=[r for r in initial['rows']if r.get('unit')==unit and r['state']=='running']
+        require(unit!=own and len(peers)==1,'New/foreign/ambiguous live peer scope')
+        peer=peers[0];binding=peer.get('_poolBinding')
+        require(peer['state']=='running'and peer['finished']is None and type(binding)is dict and
+                binding['job_id']==peer['id']and binding['unit']==unit and
+                re.fullmatch('[0-9a-f]{64}',binding['specSHA256'])is not None and
+                binding['cpus']==json.loads(peer['cpus']),
+                'Original live peer immutable job/source/resource binding')
+        if receipt_hashes:
+            spec=json.loads(peer['spec'])
+            require(binding['specSHA256']==hashlib.sha256(canonical(spec).encode()).hexdigest()and
+                    binding['memory']==spec['memory'],'Original complete live peer source/memory binding')
+        path=before['canonicalPool']+'/'+unit
+        first,last=before['unitProperties'][unit],after['unitProperties'][unit]
+        props=first['properties'];positive=before['positiveMainPIDProofs'].get(unit)
+        require(first==last and first['known']is True and props['LoadState']=='loaded'and
+                (props['ActiveState'],props['SubState'])==('active','running')and props['ControlGroup']==path and
+                props['InvocationID']==binding['invocation']==before['knownInvocations'][unit]and
+                type(positive)is dict and positive==after['positiveMainPIDProofs'].get(unit)and
+                positive['invocation']==binding['invocation'],'Same live peer manager/invocation/positive leader')
+        leader=positive['process'];main=int(props['MainPID'])
+        require(leader['tid']==leader['tgid']==main and leader['cgroup']==path and
+                old.get(main)==new.get(main)==leader,'Original positive live peer leader unchanged')
+        in_scope=lambda t:t['cgroup']==path or t['cgroup'].startswith(path+'/')
+        prior={tid:t for tid,t in old.items()if in_scope(t)}
+        now={tid:t for tid,t in new.items()if in_scope(t)}
+        scopes={t['cgroup']for t in prior.values()};uids={tuple(t['uids'])for t in prior.values()}
+        require(all(t['cgroup']in scopes and tuple(t['uids'])in uids for t in now.values()),
+                'New peer cgroup scope or UID vector')
+        anchors={tid for tid,t in now.items()if t['tid']==t['tgid']and prior.get(tid)==t}
+        for tid,task in now.items():
+            if tid in prior:continue
+            process=now.get(task['tgid'])
+            require(process is not None and process['tid']==process['tgid']and
+                    process['uids']==task['uids']and process['cgroup']==task['cgroup']and
+                    process['ppid']==task['ppid'],'New peer thread has actual same-scope process leader')
+            cursor=process;seen=set()
+            while cursor['tid']not in anchors:
+                require(cursor['tid']not in seen and len(seen)<=len(now),'Peer lineage cycle/bound')
+                seen.add(cursor['tid']);parent=now.get(cursor['ppid'])
+                require(parent is not None and parent['tid']==parent['tgid'],'New peer process lacks an authenticated live ancestor')
+                cursor=parent
+            anchors.update(seen)
+        changes.append({'kind':'SAME_INVOCATION_LIVE_PEER_MEMBERSHIP_V1','peerJob':peer['id'],
+            'peerUnit':unit,'peerInvocation':binding['invocation'],'positiveLeader':leader,
+            'addedTids':sorted(set(now)-set(prior)),'departedTids':sorted(set(prior)-set(now)),
+            'historicalDepartureReason':'UNKNOWN','peerOperationAuthorized':False})
+    return changes
+
+
 def verify_terminal_pool_transition(initial, current, owned_row, collected, *, receipt_hashes=True):
     # Preserve every other full row/result/binding/resource/config value, not
     # merely the unknown-unit names. Both full raw pool epochs stay in result.
@@ -1942,18 +2030,16 @@ def verify_terminal_pool_transition(initial, current, owned_row, collected, *, r
     unknown=after['unknownReservationsRetained']
     require(type(unknown)is list and len(unknown)==len(set(unknown)) and set(unknown)==expected,
             'New/removed/changed unknown reservation beyond exact collected own unit')
-    def others(tasks):
-        path=before['canonicalPool']+'/'+unit
-        return sorted([t for t in tasks if not(t['cgroup']==path or t['cgroup'].startswith(path+'/'))],key=lambda t:t['tid'])
-    require(others(before['tasks'])==others(after['tasks']), 'New/changed/foreign/busy other task')
     for field in ('knownInvocations','positiveMainPIDProofs'):
         require({u:v for u,v in after[field].items()if u!=unit}=={u:v for u,v in before[field].items()if u!=unit}, 'Other original positive identity proof changed')
+    membership=terminal_live_peer_membership(initial,current,owned_row,receipt_hashes=receipt_hashes)
     old_custody=before['rootParentCustody'];new_custody=after['rootParentCustody']
     # An owned stop/GC may change cgroup parent nlink/timestamps. Every full raw
     # row is retained, but canonical path/dev/inode/type/UID/GID must not change.
     require([(p,m[:5])for p,m in old_custody]==[(p,m[:5])for p,m in new_custody], 'Pool held ancestor identity/type/owner changed')
     return {'otherRowsPreserved':len(old)-1,'initialEpochSHA256':hashlib.sha256(canonical(initial).encode()).hexdigest() if receipt_hashes else None,
             'retainedUnknownUnits':list(before['unknownReservationsRetained']),'onlyOwnUnitCollectionPermitted':True,
+            'livePeerMembershipTransitions':membership,
             'currentLedgerSHA256':hashlib.sha256(canonical({k:v for k,v in current.items()if k!='pool'}).encode()).hexdigest() if receipt_hashes else None}
 
 
