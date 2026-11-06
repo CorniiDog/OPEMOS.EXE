@@ -1564,7 +1564,7 @@ print(json.dumps({'ordinaryUID1000':True,'isolatedInstalledQueue':True,'runtimeM
                     # Actual held /run checks exceed the former4096 transcript
                     # counter; only the current native witness is authoritative.
                     baseline=set(os.listdir('/proc/self/fd'))
-                    with adapter.RootInputs(request['currentControl'])as repeated:
+                    with adapter.RootInputs(request['currentControl'],implementation['sourceContractPin']if prior_version else None)as repeated:
                         for _ in range(4100):repeated.borrowed_run()
                     self.assertEqual(set(os.listdir('/proc/self/fd')),baseline)
                     normal_queue=queue_assignment.load_queue(implementation['queuePrograms'][0],implementation_definition=implementation['sourceContractPin'])
