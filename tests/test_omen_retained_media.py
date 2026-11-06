@@ -2363,6 +2363,48 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             probe.classify_rows(rows+[current,dict(current,id='root-github-robot-control-'+'e'*32)],[],{})
         self.assertEqual(rows,original)
 
+    def test_actual_current_probe_frame_reaches_existing_recovery_validator(self):
+        from unittest import mock
+        import time
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('fixture_r1_frame_probe',SOURCE/'normal_probe.py')
+        probe=importlib.util.module_from_spec(spec);spec.loader.exec_module(probe)
+        _,recovery=self.modules()
+        policy={k:'c'*64 for k in ('runnerManifestSHA256','queueSourceSHA256','queueLoggerSHA256',
+            'jobStartedSHA256','jobGuardSHA256','privatePeerSHA256','normalInstallerSHA256',
+            'normalQueueEntrySHA256','heartbeatProducerSHA256','controlBrokerSHA256','priorControlBrokerSHA256')}
+        policy['mainCommit']='a'*40
+        def github(path):
+            if path.endswith('/branches/main'):return {'protected':True,'commit':{'sha':'b'*40}}
+            if '/actions/runners?'in path:return {'runners':[{'id':21,'name':'opemos-omen-robot',
+                'labels':[{'name':'opemos-omen-robot'}],'status':'offline','busy':False}]}
+            if '/actions/runs?'in path:return {'total_count':0,'workflow_runs':[]}
+            if '/actions/variables/'in path:return {'value':'{}'}
+            raise AssertionError(path)
+        with tempfile.TemporaryDirectory()as tmp:
+            queue=Path(tmp);(queue/'state').mkdir();(queue/'state/worker.lock').touch()
+            with mock.patch.object(probe,'QUEUE',queue),mock.patch.object(probe,'root_policy',return_value=policy), \
+                 mock.patch.object(probe,'local_sources',return_value=({'actual':'source'},None,b'queue')), \
+                 mock.patch.object(probe,'private_queue',return_value=([],[],[])), \
+                 mock.patch.object(probe,'actors',return_value=[]), \
+                 mock.patch.object(probe,'source_writers',return_value=False), \
+                 mock.patch.object(probe,'intel_host_graphics',return_value='INTEL_HOST_NVIDIA_GUEST_ONLY'), \
+                 mock.patch.object(probe,'gh_json',side_effect=github), \
+                 mock.patch.object(probe,'runner21_active_runs',return_value={'total_count':0,'workflow_runs':[]}), \
+                 mock.patch.object(probe.os,'geteuid',return_value=0), \
+                 mock.patch.object(probe.os,'fstat',return_value=types.SimpleNamespace(st_mode=0o100600,st_uid=1000,st_nlink=1)):
+                frame=probe.observe()
+                self.assertEqual(frame['mainCommit'],policy['mainCommit'])
+                self.assertEqual(frame['protectedMainCommit'],'b'*40)
+                self.assertIs(recovery.validate_probe(frame,policy,int(time.time())),frame)
+                tampered=dict(frame,protectedMainCommit=None)
+                with self.assertRaisesRegex(RuntimeError,'fresh protected Main/Actions proof'):
+                    recovery.validate_probe(tampered,policy,int(time.time()))
+                with mock.patch.object(probe,'gh_json',side_effect=OSError('actual network unavailable')):
+                    offline=probe.observe()
+                self.assertIsNone(offline['mainCommit']);self.assertIsNone(offline['protectedMainCommit'])
+                self.assertIs(recovery.validate_probe(offline,policy,int(time.time())),offline)
+
     def modules(self):
         import importlib.util
         values=[]

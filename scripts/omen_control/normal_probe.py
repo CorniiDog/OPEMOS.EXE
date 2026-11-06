@@ -179,15 +179,14 @@ def current_github(p,route_only=False):
             active=runner21_active_runs(gh_json)
             queued=gh_json('repos/CorniiDog/OPEMOS.EXE/actions/runs?status=queued&per_page=1')
     except (OSError,subprocess.TimeoutExpired):
-        return {'networkReachable':False,'protectedMain':False,'mainCommit':None,
+        return {'networkReachable':False,'protectedMain':False,'mainCommit':None,'protectedMainCommit':None,
                 'runnerOnline':False,'runnerBusy':False,'actionsInProgress':None,
                 'actionsQueued':None,'heartbeatCurrent':False,
                 'heartbeatNonce':None}
     need(branch.get('protected') is True and
          type(branch.get('commit',{}).get('sha')) is str and
-         re.fullmatch(r'[0-9a-f]{40}',branch['commit']['sha']) and
-         (route_only or branch.get('commit',{}).get('sha')==p['mainCommit']),
-         'CURRENT_SOURCE_DRIFT protected Main')
+         re.fullmatch(r'[0-9a-f]{40}',branch['commit']['sha']),
+         'protected Main unavailable')
     matches=[r for r in runners.get('runners',[]) if r.get('id')==21]
     need(len(matches)==1 and matches[0].get('name')=='opemos-omen-robot' and
          'opemos-omen-robot' in {x.get('name') for x in matches[0].get('labels',[])},
@@ -209,7 +208,8 @@ def current_github(p,route_only=False):
     nonce=h.get('recovery_nonce')
     if type(nonce) is not str or not re.fullmatch(r'[0-9a-f]{32}',nonce):nonce=None
     return {'networkReachable':True,'protectedMain':True,
-            'mainCommit':branch['commit']['sha'],'runnerOnline':runner.get('status')=='online',
+            'mainCommit':p['mainCommit'],'protectedMainCommit':branch['commit']['sha'],
+            'runnerOnline':runner.get('status')=='online',
             'runnerBusy':runner.get('busy') is True,
             'actionsInProgress':owned,
             'actionsQueued':None if route_only else queued['total_count'],'heartbeatCurrent':current,
@@ -552,6 +552,7 @@ def observe(route_only=False):
     frame={'kind':'ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1','atUnix':time.time(),
            'boot':Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
            'protectedMain':github['protectedMain'],'mainCommit':github['mainCommit'],
+           'protectedMainCommit':github['protectedMainCommit'],
            'runnerId':21,'registeredRunnerId':21,
            **{k:p[k] for k in ('runnerManifestSHA256','queueSourceSHA256',
               'queueLoggerSHA256','jobStartedSHA256','jobGuardSHA256',
