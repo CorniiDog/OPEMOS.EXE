@@ -131,6 +131,44 @@ def exact_partition_export(frame,expected_bytes):
          'reviewed guest partition export/geometry is not exact ext4')
     return values
 
+def readonly_partition_probe(cow,owner,offset,identity,frames):
+    """Wait at most two seconds for this same owned read-only export.
+
+    NBD can publish its PID/RO state before blkid identifies the new view.
+    Only an empty exit-2 result is eligible for another complete probe.
+    Every actual result is retained; filesystem acceptance remains separate.
+    """
+    fd=os.open(cow,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    deadline=time.monotonic()+2
+    def same_view():
+        need(job.sig(os.fstat(fd))==identity==job.sig(cow.lstat()),
+             'readonly partition source epoch changed')
+        proc=Path('/proc')/str(owner['pid'])
+        need(owner['read_only']is True and owner['offset']==offset and
+             str(cow)in owner['argv'] and '--read-only'in owner['argv'] and
+             '--offset='+str(offset)in owner['argv'] and
+             proc.exists()and
+             (proc/'stat').read_text().rsplit(')',1)[1].split()[19]==owner['start_ticks']and
+             [x.decode()for x in(proc/'cmdline').read_bytes().split(b'\0')if x]==owner['argv']and
+             (SYS/'pid').read_text().strip()==str(owner['pid'])and
+             (SYS/'ro').read_text().strip()=='1'and not list((SYS/'holders').iterdir()),
+             'readonly partition association changed; no further probe')
+    try:
+        while True:
+            same_view();remaining=deadline-time.monotonic()
+            need(remaining>0,'original readonly partition probe deadline expired')
+            frame=cmd(['/usr/bin/sudo','-n','/usr/sbin/blkid','-p','-o','export',NODE],
+                      timeout=min(40,remaining))
+            frames.append(frame)
+            need(time.monotonic()<deadline,'late readonly partition probe refused')
+            same_view()
+            if frame['numeric']!=2 or frame['stdout']or frame['stderr']:
+                return frame
+            remaining=deadline-time.monotonic()
+            if remaining<=.25:return frame
+            time.sleep(min(.25,remaining))
+    finally:os.close(fd)
+
 def main():
     resource.setrlimit(resource.RLIMIT_FSIZE,(4_000_000_000,4_000_000_000))
     def deadline(_signal,_frame):
@@ -204,12 +242,13 @@ def main():
                           'start':selected[0]['start'],'size':selected[0]['size']}
         out['raw_detach']=detach(owner);owner=None
         out['partition_nbd_ro']=attach(cow,True,offset);owner=out['partition_nbd_ro']
-        # The actual stopped COW gave numeric 2/empty streams for `-o value
-        # -s TYPE` although the same uncached probe with `-o export` returned
-        # TYPE=ext4 and debugfs read the root inode. Preserve the complete
-        # command frame before any refusal; never infer a filesystem from an
-        # unrecorded exit or magic alone.
-        kind=cmd(['/usr/bin/sudo','-n','/usr/sbin/blkid','-p','-o','export',NODE])
+        # The actual RO NBD diagnostic returned empty/2 initially and exact
+        # ext4 export later in the same association, without a cache flush.
+        # Retain every frame and require the unchanged exact export below;
+        # neither read timing nor superblock magic establishes acceptance.
+        out['partition_type_probes']=[]
+        kind=readonly_partition_probe(cow,owner,offset,
+                                     out['cow_before']['identity'],out['partition_type_probes'])
         out['partition_type_probe']=kind
         out['partition_type_values']=exact_partition_export(
              kind,selected[0]['size']*table['sectorsize'])

@@ -142,6 +142,110 @@ class MetadataOwnedClosure(unittest.TestCase):
             finally:path.chmod(0o600)
 
 
+class OwnedReadonlyPartitionReadiness(unittest.TestCase):
+    """Real source FD custody; modeled NBD/proc and clock, not VM acceptance."""
+    def fixture(self):
+        import sys
+        import types
+        directory=tempfile.TemporaryDirectory();self.addCleanup(directory.cleanup)
+        root=Path(directory.name);source=Path(__file__).resolve().parents[1]/'scripts/omen_control'
+        job_spec=importlib.util.spec_from_file_location('readiness_actual_job',source/'job.py')
+        job=importlib.util.module_from_spec(job_spec)
+        mask=os.umask(0o077)
+        try:job_spec.loader.exec_module(job)
+        finally:os.umask(mask)
+        spec=importlib.util.spec_from_file_location('readiness_actual_helper',source/'provision_observer_rule.py')
+        helper=importlib.util.module_from_spec(spec)
+        with mock.patch.dict(sys.modules,{'job':job}):spec.loader.exec_module(helper)
+        cow=root/'owned-cow';cow.write_bytes(b'opaque private source fixture')
+        proc=root/'proc/42';proc.mkdir(parents=True)
+        fields=['0']*20;fields[19]='123'
+        (proc/'stat').write_text('42 (modeled-nbd) '+' '.join(fields))
+        owner={'pid':42,'start_ticks':'123','offset':1128267776,'read_only':True,
+               'argv':['/usr/bin/qemu-nbd','--read-only','--format=qcow2',
+                       '--offset=1128267776','--connect=/dev/nbd0',str(cow)]}
+        (proc/'cmdline').write_bytes(b'\0'.join(x.encode()for x in owner['argv'])+b'\0')
+        sysfs=root/'sys';sysfs.mkdir();(sysfs/'pid').write_text('42\n')
+        (sysfs/'ro').write_text('1\n');(sysfs/'holders').mkdir()
+        helper.SYS=sysfs;helper.Path=lambda p:root/'proc'if p=='/proc'else Path(p)
+        clock=types.SimpleNamespace(now=0)
+        clock.monotonic=lambda:clock.now
+        clock.sleep=lambda seconds:setattr(clock,'now',clock.now+seconds)
+        helper.time=clock
+        return helper,cow,owner,job.sig(cow.lstat()),clock,proc
+
+    @staticmethod
+    def positive():
+        return {'numeric':0,'stdout':'DEVNAME=/dev/nbd0\nTYPE=ext4\nUSAGE=filesystem\n'
+                'FSBLOCKSIZE=4096\nFSSIZE=38869663744\n','stderr':''}
+
+    def test_initial_empty_two_then_strict_export_preserves_both_actual_frames(self):
+        p,cow,owner,identity,clock,_=self.fixture();frames=[]
+        initial={'numeric':2,'stdout':'','stderr':''};positive=self.positive()
+        with mock.patch.object(p,'cmd',side_effect=[initial,positive])as command:
+            result=p.readonly_partition_probe(cow,owner,owner['offset'],identity,frames)
+        self.assertEqual(frames,[initial,positive]);self.assertIs(result,positive)
+        self.assertEqual(command.call_count,2);self.assertEqual(clock.now,.25)
+        self.assertTrue(all(0<x.kwargs['timeout']<=2 for x in command.call_args_list))
+        p.exact_partition_export(result,38869663744)
+        wrong=dict(positive,stdout=positive['stdout'].replace('TYPE=ext4','TYPE=xfs'))
+        with self.assertRaisesRegex(RuntimeError,'not exact ext4'):
+            p.exact_partition_export(wrong,38869663744)
+
+    def test_other_cli_failure_or_output_never_retried_or_promoted(self):
+        for frame in({'numeric':1,'stdout':'','stderr':''},
+                      {'numeric':2,'stdout':'partial','stderr':''},
+                      {'numeric':2,'stdout':'','stderr':'I/O error'},
+                      dict(self.positive(),stdout='DEVNAME=/dev/nbd0\nTYPE=xfs\n')):
+            with self.subTest(frame=frame):
+                p,cow,owner,identity,_,_=self.fixture();frames=[]
+                with mock.patch.object(p,'cmd',return_value=frame)as command:
+                    result=p.readonly_partition_probe(cow,owner,owner['offset'],identity,frames)
+                command.assert_called_once();self.assertEqual(frames,[frame])
+                with self.assertRaises(RuntimeError):p.exact_partition_export(result,38869663744)
+
+    def test_fixed_deadline_exhaustion_and_late_positive_still_refuse(self):
+        p,cow,owner,identity,clock,_=self.fixture();frames=[]
+        with mock.patch.object(p,'cmd',return_value={'numeric':2,'stdout':'','stderr':''})as command:
+            result=p.readonly_partition_probe(cow,owner,owner['offset'],identity,frames)
+        self.assertLessEqual(command.call_count,9);self.assertLess(clock.now,2)
+        with self.assertRaises(RuntimeError):p.exact_partition_export(result,38869663744)
+        p,cow,owner,identity,clock,_=self.fixture();frames=[]
+        def late(*args,**kwargs):clock.now=2.01;return self.positive()
+        with mock.patch.object(p,'cmd',side_effect=late):
+            with self.assertRaisesRegex(RuntimeError,'late readonly'):
+                p.readonly_partition_probe(cow,owner,owner['offset'],identity,frames)
+        self.assertEqual(frames,[self.positive()])  # late evidence retained, not accepted
+        p,cow,owner,identity,clock,_=self.fixture()
+        clock.monotonic=mock.Mock(side_effect=[0,3])
+        with mock.patch.object(p,'cmd')as command:
+            with self.assertRaisesRegex(RuntimeError,'deadline expired'):
+                p.readonly_partition_probe(cow,owner,owner['offset'],identity,[])
+        command.assert_not_called()
+
+    def test_changed_identity_or_association_refuses_before_next_probe(self):
+        mutations=[lambda p,c,o,r:(p.SYS/'pid').write_text('99'),
+                   lambda p,c,o,r:(p.SYS/'ro').write_text('0'),
+                   lambda p,c,o,r:(p.SYS/'holders/foreign').write_text(''),
+                   lambda p,c,o,r:(r/'cmdline').write_bytes(b'foreign\0'),
+                   lambda p,c,o,r:(r/'stat').write_text('42 (other) '+' '.join(['0']*20)),
+                   lambda p,c,o,r:c.write_bytes(b'changed-source'),
+                   lambda p,c,o,r:o.update(read_only=False),
+                   lambda p,c,o,r:o.update(offset=0)]
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                p,cow,owner,identity,clock,proc=self.fixture();frames=[]
+                def first(*args,**kwargs):
+                    mutate(p,cow,owner,proc)
+                    return {'numeric':2,'stdout':'','stderr':''}
+                before=set(os.listdir('/proc/self/fd'))
+                with mock.patch.object(p,'cmd',side_effect=first)as command:
+                    with self.assertRaises(RuntimeError):
+                        p.readonly_partition_probe(cow,owner,1128267776,identity,frames)
+                command.assert_called_once();self.assertEqual(len(frames),1)
+                self.assertEqual(set(os.listdir('/proc/self/fd')),before)
+
+
 class RequiredCanonicalAdmission(unittest.TestCase):
     def test_public_safety_or_old_source_cannot_substitute_for_required_actual_omen_fixture(self):
         pins={name:"a"*64 for name in stage.QUALIFICATION_FILES}
