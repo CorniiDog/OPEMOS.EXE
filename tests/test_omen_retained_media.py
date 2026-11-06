@@ -250,8 +250,21 @@ import os,sys,json,stat,time,subprocess
 from pathlib import Path
 sys.path.insert(0,sys.argv[1])
 import provision_observer_rule as storage
+import run_approved as approved
 import owned_command as owned
-root=Path(sys.argv[2]);root.mkdir(mode=0o700)
+root=Path(sys.argv[2]);root.mkdir(mode=0o711)
+base=root/'games-owned';base.mkdir(mode=0o700);os.chown(base,1000,1000)
+basefd=os.open(base,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+generation,generationfd,generation_id=approved.storage_generation(basefd,base,'a'*32)
+assert generation_id['st_uid']==0 and generation_id['st_gid']==1000 and stat.S_IMODE(generation_id['st_mode'])==0o710
+bad=root/'wrong-owner';bad.mkdir(mode=0o700);os.chown(bad,2000,2000)
+badfd=os.open(bad,os.O_RDONLY|os.O_DIRECTORY|os.O_CLOEXEC)
+try:
+ for descriptor,path in((badfd,bad),(basefd,bad),(basefd,base/'..'/base.name)):
+  try:approved.storage_generation(descriptor,path,'b'*32)
+  except ValueError:pass
+  else:raise AssertionError('wrong owner/path accepted')
+finally:os.close(badfd)
 fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
 class C:
  K=fields
@@ -267,12 +280,34 @@ class N:
   value=owned.run_owned_command(argv,None,seconds,paths,stream_limit=1048576)
   assert value['numericExit']==0 and value['lifecycleClosed']is True and value['errors']==[],value
   return paths[0].read_bytes(),paths[1].read_bytes()
-config={'fixedBacking':str(root/'generated.raw'),'mount':str(root/'scratch'),'fixedStorageBytes':33554432,
+config={'fixedBacking':str(generation/'generated.raw'),'mount':str(root/'scratch'),'fixedStorageBytes':33554432,
  'outerMountNamespace':sys.argv[3],'jobId':'actual-fixture-owned-storage','boot':Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
 baseline=set(os.listdir('/proc/self/fd'));store=storage.Storage(config,C,N,None);store.open()
 actual=store.check('real-private-mount');assert actual['device']==Path(config['mount']).stat().st_dev
 assert store.loopfd is not None and stat.S_ISBLK(os.fstat(store.loopfd).st_mode)
 Path(config['mount'],'actual-owned-data').write_bytes(b'actual retained private ext4 data\n')
+def ordinary():
+ os.setgroups([]);os.setgid(1000);os.setuid(1000)
+user_code=r"""
+import os,sys,json,hashlib
+from pathlib import Path
+sys.path.insert(0,sys.argv[1]);sys.path.insert(0,str(Path(sys.argv[1]).parent));import virtual_usb as usb
+assert os.getresuid()==(1000,1000,1000)and os.getresgid()==(1000,1000,1000)
+try:os.open(sys.argv[3],os.O_RDONLY)
+except PermissionError:pass
+else:raise AssertionError('ordinary owner could read Root raw backing')
+with usb.virtual_usb_backing(sys.argv[2],1048576,0)as(backing,fd):
+ os.pwrite(fd,b'actual UID1000 traversal/write/readback',0);os.fsync(fd)
+ actual=os.pread(fd,1048576,0);assert actual.startswith(b'actual UID1000 traversal/write/readback')and len(actual)==1048576
+ s=usb.virtual_usb_identity(backing,fd);assert s.st_uid==s.st_gid==1000 and s.st_nlink==1
+ fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+ assert {k:getattr(s,k)for k in fields}=={k:getattr(Path(backing['path']).lstat(),k)for k in fields}
+ print(json.dumps({'uid':os.getuid(),'bytesRead':len(actual),'sha256':hashlib.sha256(actual).hexdigest(),'RootRawRefused':True}))
+"""
+user=subprocess.run([sys.executable,'-I','-B','-',sys.argv[1],str(generation/'usb'),config['fixedBacking']],
+ input=user_code,text=True,capture_output=True,timeout=15,preexec_fn=ordinary)
+assert user.returncode==0,user.stderr;unprivileged=json.loads(user.stdout)
+assert unprivileged['uid']==1000 and unprivileged['bytesRead']==1048576 and unprivileged['RootRawRefused']is True
 child=subprocess.Popen([sys.executable,'-I','-c','import os,sys,time;f=os.open(sys.argv[1],os.O_RDONLY);print(f,flush=True);time.sleep(30)',config['fixedBacking']],stdout=subprocess.PIPE,text=True)
 fd=int(child.stdout.readline());real=Path('/proc')/str(child.pid)/'fd'/str(fd)
 assert real.stat().st_ino==Path(config['fixedBacking']).stat().st_ino
@@ -289,9 +324,11 @@ assert not real.exists();quiet.update(foreignHolders=[],allOwnChildrenReaped=Tru
 result=store.close(quiet);assert result['unmountedNormally']and result['loopDetachedNormally']and result['errors']==[]
 assert Path(config['fixedBacking']).stat().st_size==config['fixedStorageBytes']
 assert set(os.listdir('/proc/self/fd'))==baseline
+os.close(generationfd);os.close(basefd)
 print(json.dumps({'realPrivateNamespace':True,'loopFDHeldThroughUnmount':True,'liveHolderRefused':True,'backingRetained':True}))
 '''
         with tempfile.TemporaryDirectory(prefix='normal-private-ext4-ci-')as directory:
+            Path(directory).chmod(0o711)  # fixture ancestor only; no private inputs
             before=os.readlink('/proc/self/ns/mnt')
             result=subprocess.run([shutil.which('unshare'),'--mount','--propagation','private',
                 sys.executable,'-I','-B','-',str(source),str(Path(directory)/'operation'),before],

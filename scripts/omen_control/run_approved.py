@@ -55,6 +55,41 @@ def create(path,raw,mode):
         os.fsync(fd)
     finally:os.close(fd)
 
+def storage_generation(base_fd,base,nonce):
+    """Create one Root-protected generation with UID1000 traversal only.
+
+    The USB directory is private to its ordinary owner. Its Root parent cannot
+    be listed or renamed by that owner, and the raw backing remains Root-only.
+    """
+    base=Path(base);need(os.getresuid()==(0,0,0)and re.fullmatch('[0-9a-f]{32}',nonce),
+                         'Root fresh storage generation identity')
+    signature=lambda s:{k:getattr(s,k)for k in FIELDS}
+    before=os.fstat(base_fd)
+    need(base.is_absolute()and base.resolve()==base and stat.S_ISDIR(before.st_mode)and
+         before.st_uid in(0,1000)and not before.st_mode&0o022 and
+         signature(before)==signature(base.lstat()),'same trusted owned storage base')
+    os.mkdir(nonce,0o700,dir_fd=base_fd)
+    fd=os.open(nonce,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=base_fd)
+    try:
+        os.fchown(fd,0,1000);os.fchmod(fd,0o710)
+        os.mkdir('usb',0o700,dir_fd=fd)
+        usb=os.open('usb',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd)
+        try:
+            os.fchown(usb,1000,1000);os.fchmod(usb,0o700)
+            info=os.fstat(usb)
+            need(info.st_uid==info.st_gid==1000 and stat.S_IMODE(info.st_mode)==0o700 and
+                 signature(info)==signature(os.stat('usb',dir_fd=fd,follow_symlinks=False)),
+                 'actual ordinary private USB child ownership')
+        finally:os.close(usb)
+        info=os.fstat(fd)
+        need(info.st_uid==0 and info.st_gid==1000 and stat.S_IMODE(info.st_mode)==0o710 and
+             signature(info)==signature(os.stat(nonce,dir_fd=base_fd,follow_symlinks=False))==
+             signature((base/nonce).lstat()),'actual Root generation, ordinary traversal only')
+        os.fsync(fd);os.fsync(base_fd)
+        return base/nonce,fd,signature(info)
+    except BaseException:
+        os.close(fd);raise  # keep partial data; never adopt or overwrite it
+
 def archive_pin(ref):
     path=Path(ref['path']);need(path.is_absolute()and path.resolve()==path,'canonical downloaded candidate')
     fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
@@ -276,10 +311,8 @@ def owned_storage(config_ref):
              'whole original/archive/fixed scratch/USB/retained/metadata charge')
         sv=os.fstatvfs(fd);need(sv.f_bavail*sv.f_frsize>=total+usb_bytes+500_000_000,
                               'actual Games free capacity for all new allocations')
-        os.mkdir(nonce,0o700,dir_fd=fd);generation=base/nonce
-        generation_fd=os.open(nonce,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd)
-        held.append((generation,generation_fd,signature(os.fstat(generation_fd))))
-        os.mkdir('usb',0o700,dir_fd=generation_fd);os.chown(generation/'usb',1000,1000)
+        generation,generation_fd,generation_identity=storage_generation(fd,base,nonce)
+        held.append((generation,generation_fd,generation_identity))
         libc=ctypes.CDLL(None,use_errno=True)
         need(libc.unshare(0x00020000)==0,'actual private mount namespace: '+str(ctypes.get_errno()))
         Commands.checked(['/usr/bin/mount','--make-rprivate','/'],10,'private-propagation')
