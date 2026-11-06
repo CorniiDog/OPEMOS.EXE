@@ -252,7 +252,7 @@ sys.path.insert(0,sys.argv[1])
 import provision_observer_rule as storage
 import run_approved as approved
 import owned_command as owned
-root=Path(sys.argv[2]);root.mkdir(mode=0o711)
+root=Path(sys.argv[2]);root.mkdir(mode=0o711);root.chmod(0o711)
 base=root/'games-owned';base.mkdir(mode=0o700);os.chown(base,1000,1000)
 basefd=os.open(base,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
 generation,generationfd,generation_id=approved.storage_generation(basefd,base,'a'*32)
@@ -286,7 +286,7 @@ baseline=set(os.listdir('/proc/self/fd'));store=storage.Storage(config,C,N,None)
 actual=store.check('real-private-mount');assert actual['device']==Path(config['mount']).stat().st_dev
 assert store.loopfd is not None and stat.S_ISBLK(os.fstat(store.loopfd).st_mode)
 Path(config['mount'],'actual-owned-data').write_bytes(b'actual retained private ext4 data\n')
-readable=root/'user-modules';readable.mkdir(mode=0o755)
+readable=root/'user-modules';readable.mkdir(mode=0o755);readable.chmod(0o755)
 for name,path in(('virtual_usb.py',Path(sys.argv[1])/'virtual_usb.py'),
                  ('vm_write_ceiling.py',Path(sys.argv[1]).parent/'vm_write_ceiling.py')):
  source_bytes=path.read_bytes();target=readable/name
