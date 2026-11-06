@@ -69,6 +69,55 @@ def operand():
 
 
 class RetainedMediaContract(unittest.TestCase):
+    def test_normal_storage_reads_full_canonical_job_not_public_status_summary(self):
+        """Real queue init/submit/status and readonly membership as its owner."""
+        import stat
+        import run_approved as approved
+        with tempfile.TemporaryDirectory(prefix='opemos-normal-membership-')as tmp:
+            base=Path(tmp);queue=base/'test_queue.py';state=base/'state'
+            source=(SOURCE/'test_queue.py').read_bytes();queue.write_bytes(source)
+            marker=base/'admission.json';marker.write_text('{"fixtureOnly":true}')
+            manifest=base/'jobs.json'
+            manifest.write_text(json.dumps({'version':1,'jobs':[{
+                'id':'actual-normal-membership','platform':'ubuntu','owner':'exe',
+                'command':['/usr/bin/true'],'cwd':str(base),'files':[str(marker)],
+                'cores':1,'memory':'1GiB','timeout_seconds':30,
+                'resources':['fixture-normal-membership'],
+                'approval':{'path':str(marker),'sha256':hashlib.sha256(marker.read_bytes()).hexdigest()}
+            }]}))
+            ordinary=None
+            if os.geteuid()==0:
+                for path in(base,queue,marker,manifest):os.chown(path,1000,1000)
+                def ordinary():
+                    os.setgroups([]);os.setgid(1000);os.setuid(1000)
+            base.chmod(0o700)
+            for path in(queue,marker,manifest):path.chmod(0o600)
+            def call(args,body=None):
+                p=subprocess.run([sys.executable,'-I','-B',*args],input=body,
+                    capture_output=True,timeout=30,preexec_fn=ordinary)
+                self.assertEqual(p.returncode,0,p.stderr.decode())
+                return json.loads(p.stdout)
+            call([str(queue),'--queue',str(state),'init'])
+            call([str(queue),'--queue',str(state),'submit',str(manifest)])
+            public=call([str(queue),'--queue',str(state),'status'])
+            self.assertEqual(public['jobs'][0]['state'],'pending')
+            self.assertNotIn('spec',public['jobs'][0])
+            database=state/'queue.sqlite3';before=hashlib.sha256(database.read_bytes()).hexdigest()
+            current=call(['-'],approved.normal_queue_membership_source(queue,source,'actual-normal-membership'))
+            self.assertEqual(len(current['jobs']),1)
+            row=current['jobs'][0];spec=json.loads(row['spec'])
+            self.assertEqual(row['id'],'actual-normal-membership')
+            self.assertEqual(spec['command'],['/usr/bin/true'])
+            self.assertEqual((spec['owner'],spec['cores'],spec['memory']),('exe',1,1024**3))
+            self.assertEqual(spec['resources'],['fixture-normal-membership'])
+            self.assertEqual(hashlib.sha256(database.read_bytes()).hexdigest(),before)
+            self.assertTrue(stat.S_ISREG(database.lstat().st_mode))
+            bad=subprocess.run([sys.executable,'-I','-B','-'],
+                input=approved.normal_queue_membership_source(queue,source,'foreign-job'),
+                capture_output=True,timeout=30,preexec_fn=ordinary)
+            self.assertNotEqual(bad.returncode,0)
+            self.assertIn(b'one exact canonical normal job',bad.stderr)
+
     def test_retained_terminal_finalizer_preserves_live_peer_membership(self):
         """Real SQL/history/finalizers; external kernel/manager facts are MODELED."""
         import ast,time
