@@ -69,6 +69,57 @@ def operand():
 
 
 class RetainedMediaContract(unittest.TestCase):
+    def test_real_uid1000_launcher_authenticates_control_grant_without_legacy_vm_scope(self):
+        if os.geteuid()!=0:
+            self.skipTest('actual Root-owned policy and real UID1000 reader require Root')
+        import time
+        with tempfile.TemporaryDirectory(prefix='launcher-policy-')as tmp:
+            root=Path(tmp);os.chmod(root,0o711)
+            modules=root/'modules';modules.mkdir();os.chmod(modules,0o755)
+            for name in('launch.py','host_engine.py'):
+                target=modules/name;target.write_bytes((SOURCE/name).read_bytes());os.chmod(target,0o444)
+            now=int(time.time())
+            header=dict(repository='CorniiDog/OPEMOS.EXE',sourceCommit='a'*40,
+                runtimeAuthorized=True,notBefore=now-1,expiresAt=now+21600)
+            values={
+                'normal':dict(header,kind='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1',
+                    scope='NORMAL_UBUNTU_GUI_BUILD_WRITE_VIRTUAL_USB_ONLY',network='none',swapBytes=0),
+                'legacy':dict(header,kind='ROOT_FIXED_SCOPED_CONNECTION_POLICY_V1'),
+                'wrong-source':dict(header,sourceCommit='b'*40),
+                'expired':dict(header,expiresAt=now-1),
+                'unowned':dict(header),
+            }
+            leases={}
+            for name,value in values.items():
+                policy=root/(name+'.json');raw=json.dumps(value,sort_keys=True).encode()
+                policy.write_bytes(raw);os.chmod(policy,0o444)
+                if name=='unowned':os.chown(policy,1000,1000)
+                leases[name]=dict(repository=header['repository'],engine_source_commit=header['sourceCommit'],
+                    connection_fixed_policy={'path':str(policy),'sha256':hashlib.sha256(raw).hexdigest()})
+            leases['tampered']=copy.deepcopy(leases['normal'])
+            leases['tampered']['connection_fixed_policy']['sha256']='0'*64
+            source=r'''import os,sys,json
+assert os.getresuid()==(1000,1000,1000)
+sys.path.insert(0,sys.argv[1])
+import launch
+leases=json.loads(sys.argv[2]);result={}
+for name,lease in leases.items():
+    try:
+        raw,policy,digest=launch.control_policy_bytes(lease)
+        result[name]={'accepted':True,'kind':policy.get('kind'),'sha256':digest}
+    except (RuntimeError,ValueError):result[name]={'accepted':False}
+assert result['normal']['accepted']and result['legacy']['accepted']
+assert all(not result[name]['accepted']for name in('wrong-source','expired','unowned','tampered'))
+print(json.dumps({'uid':os.getresuid(),'results':result},sort_keys=True))
+'''
+            def ordinary():os.setgroups([]);os.setgid(1000);os.setuid(1000)
+            child=subprocess.run([sys.executable,'-I','-B','-c',source,str(modules),json.dumps(leases)],
+                preexec_fn=ordinary,capture_output=True,text=True,timeout=10)
+            self.assertEqual(child.returncode,0,child.stderr)
+            self.assertEqual(child.stderr,'')
+            result=json.loads(child.stdout);self.assertEqual(result['uid'],[1000,1000,1000])
+            self.assertEqual(result['results']['normal']['kind'],values['normal']['kind'])
+
     def test_monitor_exit_keeps_numeric_remain_after_exit_as_observation_only(self):
         """Manager/pool facts modeled; PID absence and source consumers are real."""
         import time
