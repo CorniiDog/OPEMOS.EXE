@@ -373,7 +373,7 @@ def classify_rows(rows,bindings,p):
               'timed_out','blocked','unknown','output_limit')]
     own=[r for r in rows if r['id'].startswith('root-github-robot-control-')]
     own_active=[r for r in own if r['state'] in ('pending','running','terminal_cleanup')]
-    need(len(own_active)<=1 and len(own)<=128,'one bounded current control lineage')
+    need(len(own_active)<=1,'one current control lineage')
     selected=(own_active[0] if own_active else
               max(own,key=lambda x:(x.get('started') or 0,x.get('finished') or 0,x['id']))
               if own else None)

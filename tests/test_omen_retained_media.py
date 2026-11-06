@@ -2347,6 +2347,22 @@ print(json.dumps({'ordinaryUID1000':True,'isolatedInstalledQueue':True,'runtimeM
 class NormalRunnerMaterializationTests(unittest.TestCase):
     """Existing R1 programs; OS/GitHub facts modeled, no runtime deployment."""
 
+    def test_current_control_lineage_preserves_terminal_history(self):
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('fixture_r1_history_probe',SOURCE/'normal_probe.py')
+        probe=importlib.util.module_from_spec(spec);spec.loader.exec_module(probe)
+        rows=[dict(id='root-github-robot-control-'+format(i,'032x'),state='passed',
+                   started=i,finished=i+1)for i in range(300)]
+        original=[dict(row)for row in rows]
+        selected,foreign,unknown=probe.classify_rows(rows,[],{})
+        self.assertEqual(selected,rows[-1]);self.assertEqual((foreign,unknown),([],[]))
+        current=dict(id='root-github-robot-control-'+'f'*32,state='running',started=301,finished=None)
+        selected,foreign,unknown=probe.classify_rows(rows+[current],[],{})
+        self.assertEqual(selected,current);self.assertEqual((foreign,unknown),([],[]))
+        with self.assertRaisesRegex(RuntimeError,'one current control lineage'):
+            probe.classify_rows(rows+[current,dict(current,id='root-github-robot-control-'+'e'*32)],[],{})
+        self.assertEqual(rows,original)
+
     def modules(self):
         import importlib.util
         values=[]
