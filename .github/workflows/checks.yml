@@ -104,7 +104,7 @@ jobs:
 
       - name: Exercise retained-media queue consumer through actual protected Root metadata
         run: |
-          sudo apt-get install --yes python3-libvirt libvirt-daemon-system
+          sudo apt-get install --yes python3-libvirt libvirt-daemon-system genisoimage
           sudo systemctl start libvirtd
           sudo python3 -m unittest discover -s tests -p 'test_omen_retained_media.py' -v
 
