@@ -96,7 +96,7 @@ def candidate_paths(c):
 
 def _need(ok, reason):
     if not ok:
-        raise ValueError(reason)
+        raise RuntimeError(reason)
 
 
 def _held_source(ref, cap):
