@@ -329,6 +329,111 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
             result=json.loads(child.stdout);self.assertEqual(result['uid'],[1000,1000,1000])
             self.assertEqual(result['results']['normal']['kind'],values['normal']['kind'])
 
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'actual Linux proc field lifecycle')
+    def test_actual_open_proc_field_esrch_reaches_strict_monitor(self):
+        """Real proc read/exit and FD custody; manager/pool facts are modeled."""
+        import ast
+        import errno
+        import time
+        from unittest.mock import patch
+        spec=importlib.util.spec_from_file_location('actual_proc_read_queue',SOURCE/'test_queue.py')
+        q=importlib.util.module_from_spec(spec);sys.modules[spec.name]=q;spec.loader.exec_module(q)
+        ns={};exec(compile(q.POOL_PROOF_SOURCE,'root_pool_proof_r1.py','exec'),ns)
+        tree=ast.parse(q.POOL_PROOF_SOURCE)
+        pool=next(n for n in tree.body if isinstance(n,ast.FunctionDef)and n.name=='readonly_pool')
+        # Execute the unchanged production proc/read/owned-FD functions, including
+        # their real procfs type, held-directory and close checks. No typed error
+        # dictionary is injected in place of the failing lower read.
+        names={'owned','read','first_pid_directory_identity','proc_once','proc'}
+        pieces=[ast.unparse(n)for n in pool.body if isinstance(n,ast.FunctionDef)and n.name in names]
+        self.assertEqual(len(pieces),len(names))
+        factory='def actual_production_probe(io):\n    fd_states=[]\n    field_reads=0\n    def clock(): pass\n'
+        for piece in pieces:
+            factory+='\n'+'\n'.join('    '+line for line in piece.splitlines())+'\n'
+        factory+='    return proc,read,fd_states\n'
+        exec(compile(factory,'actual-production-proc-functions','exec'),ns)
+        typed_first=None;first_closes=None;exited_pid=None
+        for previous_read,denied in ((False,False),(True,False),(False,True)):
+            with self.subTest(previous_read=previous_read,denied=denied):
+                child=subprocess.Popen([sys.executable,'-I','-c','import time;time.sleep(30)'])
+                before=set(os.listdir('/proc/self/fd'))
+                class ActualExitIO(ns['KernelIO']):
+                    armed=False;target=None;original=None
+                    def open_field(self,fd,name):
+                        opened=super().open_field(fd,name)
+                        if name=='cgroup':self.target=opened
+                        return opened
+                    def read(self,fd,count):
+                        if self.armed and fd==self.target:
+                            self.armed=False
+                            if denied:raise PermissionError(errno.EACCES,'actual field access denied')
+                            child.terminate();child.wait(timeout=5)
+                            try:return super().read(fd,count)
+                            except OSError as error:
+                                self.original=error
+                                raise
+                        return super().read(fd,count)
+                io=ActualExitIO();probe,read,closes=ns['actual_production_probe'](io)
+                try:
+                    previous=probe(child.pid)if previous_read else None
+                    io.armed=True
+                    with self.assertRaises(ns['OwnedFDProofFailure'])as caught:
+                        probe(child.pid,previous)
+                    evidence=caught.exception.evidence;typed=evidence['firstFailure']
+                    if denied:
+                        self.assertEqual(typed['type'],'PermissionError')
+                        self.assertNotIn('errno',typed)
+                    else:
+                        self.assertEqual(io.original.errno,errno.ESRCH)
+                        self.assertIsNone(io.original.filename)
+                        self.assertEqual(typed['type'],'TransientProcRevalidationObservation'if previous_read else'TransientProcFirstReadObservation')
+                        self.assertEqual(typed['errno'],errno.ESRCH)
+                        self.assertEqual(typed['tid'],child.pid)
+                        self.assertEqual(typed['originalFailure']['type'],'ProcessLookupError')
+                        if not previous_read:
+                            self.assertEqual(typed['field'],'cgroup')
+                            self.assertEqual(typed['originalStart'],'UNKNOWN_FIRST_OBSERVATION_INCOMPLETE')
+                            typed_first=typed;first_closes=evidence['closeOutcomes'];exited_pid=child.pid
+                    self.assertTrue(evidence['closeOutcomes'])
+                    self.assertTrue(all(x['closed']and not x['UNKNOWN']for x in evidence['closeOutcomes']))
+                    self.assertIs(evidence['operationOrReleaseAuthorized'],False)
+                finally:
+                    if child.poll()is None:child.terminate()
+                    child.wait(timeout=5)
+                self.assertEqual(set(os.listdir('/proc/self/fd')),before)
+        self.assertIsNotNone(typed_first)
+        unit='opemos-testq-'+uuid.uuid4().hex+'.service';invocation=uuid.uuid4().hex
+        job={'memory':1024,'resources':['actual-proc-monitor'],'timeout_seconds':300}
+        row={'id':'actual-read-monitor','state':'running','unit':unit,'spec':q.canonical(job),
+             'cpus':'[0]','started':time.time(),'_poolBinding':{}}
+        bound={'version':1,'specSHA256':hashlib.sha256(q.canonical(job).encode()).hexdigest(),'cpus':[0],'memory':1024}
+        context=types.SimpleNamespace(unit=unit,invocation=invocation,bound=bound,ledger_current=lambda:None)
+        props={'LoadState':'loaded','InvocationID':invocation,'MainPID':'0','ActiveState':'active',
+               'SubState':'exited','ControlGroup':'','ExecMainCode':'1','ExecMainStatus':'0'}
+        db=types.SimpleNamespace(execute=lambda _:types.SimpleNamespace(fetchall=lambda:[]))
+        error=q.PoolAdmissionFailure('actual lower proc read',{'admitted':False,'reservationRetained':True,
+            'operationOrReleaseAuthorized':False,'firstFailure':{'firstFailure':typed_first,'closeOutcomes':first_closes},
+            'recordedReservations':[{'unit':unit,'cpus':[0],'memory':1024,'resources':job['resources'],'invocation':invocation}]})
+        def monitor(e):
+            fresh={'admitted':True,'allOwnedDescriptorsClosed':True,'includesUID0':True,
+                   'completeBoundedTraversal':True,'unknownReservationsRetained':[],
+                   'currentWholePoolEmpty':True,'completedMonotonic':time.monotonic(),
+                   'unitProperties':{unit:{'properties':props}}}
+            with patch.object(q,'pool_rows',return_value=[row]),patch.object(q,'ExpectedInvocation',return_value=context),\
+                 patch.object(q,'exact_unit_observation',return_value=props),\
+                 patch.object(q,'boundary_pool_epoch',return_value=([row],fresh)):
+                return q.monitor_membership_race(db,None,e)
+        result=monitor(error)
+        self.assertIs(result['newAdmissionEffectsReleaseForbidden'],True)
+        self.assertEqual(result['originalReadonlyMonitor'][-1]['incompleteFirstReadObservation'],typed_first)
+        self.assertFalse(os.path.exists('/proc/'+str(exited_pid)))
+        for change in ({'errno':errno.EACCES},{'path':'/proc/1'},{'field':'unbound-field'}):
+            broken=copy.deepcopy(error.evidence);broken['firstFailure']['firstFailure'].update(change)
+            with self.subTest(change=change),self.assertRaises(ValueError):
+                monitor(q.PoolAdmissionFailure('wrong observation',broken))
+        broken=copy.deepcopy(error.evidence);broken['firstFailure']['closeOutcomes'][0]['UNKNOWN']=True
+        with self.assertRaises(ValueError):monitor(q.PoolAdmissionFailure('unknown close',broken))
+
     def test_monitor_exit_keeps_numeric_remain_after_exit_as_observation_only(self):
         """Manager/pool facts modeled; PID absence and source consumers are real."""
         import time
