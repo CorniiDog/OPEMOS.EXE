@@ -6,6 +6,7 @@ normal GUI Build/write observations retain separate results; neither alone
 establishes SteamOS boot, installation or NVIDIA acceptance.
 """
 import hashlib
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -96,7 +97,10 @@ def connect_owned(path,pid,timeout=35):
 class QMP:
     def __init__(self,s):
         self.s=s;self.f=s.makefile('rwb',buffering=0);self.n=0
-        need('QMP'in self.read(),'QMP greeting absent');self.call('qmp_capabilities')
+        try:
+            need('QMP'in self.read(),'QMP greeting absent');self.call('qmp_capabilities')
+        except BaseException:
+            self.close();raise
     def read(self):
         raw=self.f.readline(1048577);need(raw and len(raw)<=1048576,'QMP response missing/oversize')
         return json.loads(raw)
@@ -110,6 +114,14 @@ class QMP:
                 need('error'not in row,'QMP command error: '+repr(row.get('error')))
                 return row['return']
     def close(self):self.f.close();self.s.close()
+
+@contextlib.contextmanager
+def owned_qmp(path,pid,timeout=35):
+    """Release the single owned QMP client even if READY/bootstrap refuses."""
+    with connect_owned(path,pid,timeout) as channel:
+        q=QMP(channel)
+        try:yield q
+        finally:q.close()
 
 def frame(q,path):
     need(not os.path.lexists(path),'frame output must be absent')

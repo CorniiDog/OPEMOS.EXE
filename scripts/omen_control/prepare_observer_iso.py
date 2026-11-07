@@ -244,6 +244,22 @@ media=/media/opemosgui/OPROBOT
 owned="$HOME/opemos-robot-$nonce"
 mkdir -m 700 -- "$owned"
 mkdir -m 700 -- "$owned/output"
+phase=port_custody
+port_ready=0
+on_exit() {
+    numeric=$?
+    if (( numeric != 0 )); then
+        printf 'BOOTSTRAP_REFUSED phase=%s numeric=%s\\n' "$phase" "$numeric" >> "$owned/bootstrap.txt"
+        if (( port_ready == 1 )); then
+            app_log=$(tail -c 8192 -- "$owned/app.log" 2>/dev/null | base64 -w0 || true)
+            observer_log=$(tail -c 8192 -- "$owned/observer.log" 2>/dev/null | base64 -w0 || true)
+            printf '{"kind":"BOOTSTRAP_REFUSED","nonce":"%s","phase":"%s","numeric":%s,"app_log_base64":"%s","observer_log_base64":"%s"}\\n' \\
+                "$nonce" "$phase" "$numeric" "$app_log" "$observer_log" > "$node" || true
+        fi
+    fi
+}
+trap on_exit EXIT
+printf 'BOOTSTRAP_ONLY nonce=%s boot=%s uid=%s\\n' "$nonce" "$(cat /proc/sys/kernel/random/boot_id)" "$(id -u)" > "$owned/bootstrap.txt"
 node=$(readlink -f -- /dev/virtio-ports/opemos.robot.observer)
 [[ "$node" == /dev/vport* && -c "$node" ]]
 [[ "$(cat "/sys/class/virtio-ports/${node##*/}/name")" == opemos.robot.observer ]]
@@ -252,6 +268,8 @@ before=$(stat -Lc '%F %u %g %a %t:%T' -- "$node")
 [[ -r "$node" && -w "$node" ]]
 after=$(stat -Lc '%F %u %g %a %t:%T' -- "$node")
 [[ "$before" == "$after" ]]
+port_ready=1
+phase=verified_package
 export OPROBOT_PORT_BEFORE="$before" OPROBOT_PORT_AFTER="$after" OPROBOT_PORT_SUDO=NOT_NEEDED
 app="$owned/"'''+shlex.quote(basename)+'''
 cp --no-clobber -- '''+shlex.quote(package)+''' "$app"
@@ -259,6 +277,7 @@ cp -a --no-clobber -- '''+shlex.quote(package+'.runtime')+''' "$app.runtime"
 printf '%s  %s\\n' '''+shlex.quote(descriptor['package_sha256'])+''' "$app" | sha256sum --check --strict
 chmod u+x -- "$app"
 export OPROBOT_NONCE="$nonce" OPEMOS_EXPERIMENTAL_LINUX=1 OPEMOS_LINUX_ACCEL=kvm GDK_BACKEND=x11
+phase=native_app_and_observer
 "$app" --appimage-extract-and-run > "$owned/app.log" 2>&1 &
 DISPLAY="${DISPLAY:-:0}" python3 "$media/observer_guest.py" "$nonce" 'OPEMOS EXE' --pipeline "$media/operation.json" '''+shlex.quote(hashlib.sha256(operation_raw).hexdigest())+''' > "$owned/observer.log" 2>&1
 '''
