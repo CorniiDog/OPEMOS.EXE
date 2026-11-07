@@ -3281,6 +3281,22 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
         _,r=self.modules();policy,state,probe,_,_=self.pending(r);now=int(time.time())
         policy.update(controllerCycleSHA256='2'*64,maxCycles=1000,maxTotalCycles=1000,
                       renewalAuthorizedUntilUnix=state['epochExpiresUnix'])
+        # This exercises the real recovery validator as well as orchestration.
+        # Native/API facts below are modeled, but the frame must be the complete
+        # authenticated producer ABI, not the smaller pending-lineage fixture.
+        for key in ('runnerManifestSHA256','queueLoggerSHA256','jobStartedSHA256',
+                    'jobGuardSHA256','privatePeerSHA256','normalInstallerSHA256',
+                    'normalQueueEntrySHA256','heartbeatProducerSHA256'):
+            policy[key]='3'*64
+        policy.update(controlBrokerSHA256='4'*64,priorControlBrokerSHA256='5'*64,
+                      currentReleaseTx='e'*32)
+        probe.update({key:policy[key] for key in (
+            'runnerManifestSHA256','queueSourceSHA256','queueLoggerSHA256',
+            'jobStartedSHA256','jobGuardSHA256','privatePeerSHA256',
+            'normalInstallerSHA256','normalQueueEntrySHA256','heartbeatProducerSHA256')})
+        probe.update(atUnix=now,boot='00000000-0000-4000-8000-000000000000',
+                     runnerId=21,registeredRunnerId=21,
+                     controlBrokerSHA256=policy['controlBrokerSHA256'],effects=[])
         original='root-github-robot-control-'+'a'*32;renewal=state['inflight']
         state['lastOutcome']={'action':'GRACEFUL_RENEW','nonce':renewal,'controlJobId':original,
                             'numeric':1,'reaped':True,'first':'wait_terminal timeout after retire; original retained'}
@@ -3290,7 +3306,7 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                                  'first':None,'stdout':r.canonical(value),'stderr':b''}
         with tempfile.TemporaryDirectory()as tmp,mock.patch.object(r,'ROOT',Path(tmp)), \
              mock.patch.object(r,'load_code',return_value=b'authenticated controller source'), \
-             mock.patch.object(r,'validate_probe'),mock.patch.object(r,'renew_epoch',return_value='UNCHANGED'), \
+             mock.patch.object(r,'renew_epoch',return_value='UNCHANGED'), \
              mock.patch.object(r,'write_state')as saved:
             before=copy.deepcopy(state)
             dispatch={'kind':'ROOT_RUNNER21_ORPHAN_DISPATCH_CONTROLLER_V1','nonce':'c'*32,
@@ -3326,7 +3342,7 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             # Only a later full proof of REAL original CLOSED/released permits
             # bookkeeping reconciliation, then the already-existing CREATE
             # decision. No original listener/writer/lease is replayed.
-            closed=copy.deepcopy(probe);closed['control'].update(state='failed',terminalLifecycle='CLOSED',reservationRetained=False)
+            closed=copy.deepcopy(probe);closed['control'].update(state='failed',terminalLifecycle='CLOSED',reservationRetained=False,ownUnitBound=False)
             with mock.patch.object(r,'start_held_python',return_value=object())as spawned, \
                  mock.patch.object(r,'capture',return_value=native(closed)):
                 result=r.run_cycle(policy,state,now)
