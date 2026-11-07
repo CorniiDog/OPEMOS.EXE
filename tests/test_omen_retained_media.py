@@ -2486,6 +2486,21 @@ print(json.dumps({'ordinaryUID1000':True,'isolatedInstalledQueue':True,'runtimeM
                         with acl.Held(c['run'])as directory:
                             with self.assertRaisesRegex(Exception,'no current kernel socket'):acl.runtime_socket(directory.fd,c['run'],'CLOSED')
                         vnc.close();os.chown(nvram,0,0) # MODEL of libvirt's own owner restoration; no host effect.
+                        # close() releases our real descriptor; the kernel's
+                        # Unix-socket inventory can still expose its teardown.
+                        # Observe genuine absence before modeling CLOSED, using
+                        # the unchanged production predicate and a finite clock.
+                        socket_deadline=time.monotonic()+2
+                        with acl.Held(c['run'])as directory:
+                            while True:
+                                try:acl.runtime_socket(directory.fd,c['run'],'CLOSED')
+                                except peer.Refused as error:
+                                    if str(error)!='closed VNC node has no current kernel socket':raise
+                                    if time.monotonic()>=socket_deadline:
+                                        error.add_note('real fixture VNC teardown did not complete within two seconds')
+                                        raise
+                                    time.sleep(min(.02,max(0,socket_deadline-time.monotonic())))
+                                else:break
                         closed={'domainAbsent':True,'originalPIDStartAbsent':True,'cgroupEmpty':True,
                             'VFIOFDsAbsent':True,'hostRestored':True,'unknown':[],
                             'qemuExitStatus':None,'controllerWaitpidClaimed':False,'explicitNativeClosureModel':True}
