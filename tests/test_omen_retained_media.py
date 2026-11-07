@@ -4305,6 +4305,7 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
         for fault in(None,'expired','source','job','native','listener','unknown'):
             _,r=self.modules();policy,state,probe,_,_=self.pending(r);now=int(time.time())
             policy.update(renewLeadSeconds=19000,controlBrokerSHA256='f'*64,
+                          renewalAuthorizedUntilUnix=now+30*86400,
                           heartbeatProducerSHA256=hashlib.sha256(heartbeat).hexdigest())
             state['lastOutcome']['action']='CREATE';original=copy.deepcopy(state['lastOutcome'])
             probe.update(runnerOnline=True,atUnix=now,controlBrokerSHA256=policy['controlBrokerSHA256'],
