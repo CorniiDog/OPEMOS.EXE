@@ -90,19 +90,41 @@ def attach(cow,readonly,offset=None):
 
 def detach(owner):
     if owner is None:return None
+    import select
     pid=owner['pid'];proc=Path('/proc')/str(pid)
-    need(proc.exists() and
-         (proc/'stat').read_text().split(')')[-1].split()[19]==owner['start_ticks'] and
-         [x.decode() for x in (proc/'cmdline').read_bytes().split(b'\0') if x]==owner['argv'] and
-         (SYS/'pid').read_text().strip()==str(pid),
-         'NBD birth/argv changed before exact detach')
-    result=cmd(['/usr/bin/sudo','-n','/usr/bin/qemu-nbd','--disconnect',NODE],timeout=40)
-    need(result['numeric']==0,'owned NBD disconnect refused')
-    for _ in range(100):
-        if not (SYS/'pid').exists() or not (SYS/'pid').read_text().strip():break
-        time.sleep(.1)
-    need(not proc.exists(),'owned NBD process not gone after disconnect')
-    return {'disconnect_numeric':0,'pid_absent':True,**idle()}
+    def same_attached_birth():
+        need(proc.exists()and
+             (proc/'stat').read_text().rsplit(')',1)[1].split()[19]==owner['start_ticks']and
+             [os.fsdecode(x)for x in(proc/'cmdline').read_bytes().split(b'\0')if x]==owner['argv']and
+             (SYS/'pid').read_text().strip()==str(pid),
+             'NBD birth/argv changed before exact detach')
+    same_attached_birth();pidfd=os.pidfd_open(pid,0)
+    try:
+        same_attached_birth()
+        exited=select.poll();exited.register(pidfd,select.POLLIN)
+        result=cmd(['/usr/bin/sudo','-n','/usr/bin/qemu-nbd','--disconnect',NODE],timeout=40)
+        need(result['numeric']==0,'owned NBD disconnect refused')
+        started=time.monotonic();deadline=started+10
+        while True:
+            need(time.monotonic()<deadline,'owned NBD closure observation deadline expired')
+            try:associated=(SYS/'pid').read_text().strip()
+            except FileNotFoundError:associated=''
+            need(associated in('',str(pid)),'NBD association replaced after owned disconnect')
+            try:birth=(proc/'stat').read_text().rsplit(')',1)[1].split()[19]
+            except FileNotFoundError:birth=None
+            need(birth is None or birth==owner['start_ticks'],'NBD PID reused during exact closure observation')
+            gone=birth is None and bool(exited.poll(0))
+            need(time.monotonic()<deadline,'late owned NBD closure refused')
+            # sysfs may clear BEFORE the same daemon disappears from /proc.
+            # Wait for BOTH in the original finite window; never detach again,
+            # signal a process or infer native closure from sysfs alone.
+            if not associated and gone:break
+            remaining=deadline-time.monotonic()
+            need(remaining>0,'owned NBD process/association not gone after disconnect')
+            time.sleep(min(.1,remaining))
+        return {'disconnect_numeric':0,'pid_absent':True,'original_pidfd_exited':True,
+                'closure_wait_seconds':time.monotonic()-started,**idle()}
+    finally:os.close(pidfd)
 
 def debugfs(request,writable=False,cap=65536):
     args=['/usr/bin/sudo','-n','/usr/sbin/debugfs']
@@ -130,6 +152,44 @@ def exact_partition_export(frame,expected_bytes):
          values.get('FSSIZE')==str(expected_bytes),
          'reviewed guest partition export/geometry is not exact ext4')
     return values
+
+def readonly_partition_probe(cow,owner,offset,identity,frames):
+    """Wait at most two seconds for this same owned read-only export.
+
+    NBD can publish its PID/RO state before blkid identifies the new view.
+    Only an empty exit-2 result is eligible for another complete probe.
+    Every actual result is retained; filesystem acceptance remains separate.
+    """
+    fd=os.open(cow,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    deadline=time.monotonic()+2
+    def same_view():
+        need(job.sig(os.fstat(fd))==identity==job.sig(cow.lstat()),
+             'readonly partition source epoch changed')
+        proc=Path('/proc')/str(owner['pid'])
+        need(owner['read_only']is True and owner['offset']==offset and
+             str(cow)in owner['argv'] and '--read-only'in owner['argv'] and
+             '--offset='+str(offset)in owner['argv'] and
+             proc.exists()and
+             (proc/'stat').read_text().rsplit(')',1)[1].split()[19]==owner['start_ticks']and
+             [x.decode()for x in(proc/'cmdline').read_bytes().split(b'\0')if x]==owner['argv']and
+             (SYS/'pid').read_text().strip()==str(owner['pid'])and
+             (SYS/'ro').read_text().strip()=='1'and not list((SYS/'holders').iterdir()),
+             'readonly partition association changed; no further probe')
+    try:
+        while True:
+            same_view();remaining=deadline-time.monotonic()
+            need(remaining>0,'original readonly partition probe deadline expired')
+            frame=cmd(['/usr/bin/sudo','-n','/usr/sbin/blkid','-p','-o','export',NODE],
+                      timeout=min(40,remaining))
+            frames.append(frame)
+            need(time.monotonic()<deadline,'late readonly partition probe refused')
+            same_view()
+            if frame['numeric']!=2 or frame['stdout']or frame['stderr']:
+                return frame
+            remaining=deadline-time.monotonic()
+            if remaining<=.25:return frame
+            time.sleep(min(.25,remaining))
+    finally:os.close(fd)
 
 def main():
     resource.setrlimit(resource.RLIMIT_FSIZE,(4_000_000_000,4_000_000_000))
@@ -204,12 +264,13 @@ def main():
                           'start':selected[0]['start'],'size':selected[0]['size']}
         out['raw_detach']=detach(owner);owner=None
         out['partition_nbd_ro']=attach(cow,True,offset);owner=out['partition_nbd_ro']
-        # The actual stopped COW gave numeric 2/empty streams for `-o value
-        # -s TYPE` although the same uncached probe with `-o export` returned
-        # TYPE=ext4 and debugfs read the root inode. Preserve the complete
-        # command frame before any refusal; never infer a filesystem from an
-        # unrecorded exit or magic alone.
-        kind=cmd(['/usr/bin/sudo','-n','/usr/sbin/blkid','-p','-o','export',NODE])
+        # The actual RO NBD diagnostic returned empty/2 initially and exact
+        # ext4 export later in the same association, without a cache flush.
+        # Retain every frame and require the unchanged exact export below;
+        # neither read timing nor superblock magic establishes acceptance.
+        out['partition_type_probes']=[]
+        kind=readonly_partition_probe(cow,owner,offset,
+                                     out['cow_before']['identity'],out['partition_type_probes'])
         out['partition_type_probe']=kind
         out['partition_type_values']=exact_partition_export(
              kind,selected[0]['size']*table['sectorsize'])
@@ -285,7 +346,17 @@ class Storage:
   b,_=N.checked(['/usr/sbin/losetup','--find','--show','--nooverlap',c['fixedBacking']],15,'loop-create');self.loop=b.decode().strip();self.acquired.append('returned-loop');C.require(self.loop.startswith('/dev/loop')and self.loop[9:].isdigit(),'actual returned loop association',self.loop)
   self.association('loop-before-format');self.loopfd=os.open(self.loop,os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC);self.acquired.append('held-own-loop-FD');C.require(stat.S_ISBLK(os.fstat(self.loopfd).st_mode)and os.major(os.fstat(self.loopfd).st_rdev)==7,'exact owned mutable storage loop FD');N.checked(['/usr/sbin/mkfs.ext4','-F','-q','-m','0',self.loop],120,'mkfs');os.mkdir(c['mount'],0o700);self.acquired.append('created-mount-directory')
   N.checked(['/usr/bin/mount','-t','ext4','-o','rw,nosuid,nodev,noexec',self.loop,c['mount']],15,'mount');self.mounted=True;self.acquired.append('mounted')
-  self.mountfd=os.open(c['mount'],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);self.mountIdentity=C.F(os.fstat(self.mountfd));os.chown(c['mount'],1000,1000);self.mountIdentity=C.F(os.fstat(self.mountfd));self.check('mounted');return self
+  self.mountfd=os.open(c['mount'],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+  self.mountIdentity=C.F(os.fstat(self.mountfd));self.check('before-mounted-root-permissions')
+  C.require(os.fstat(self.mountfd).st_dev==os.fstat(self.loopfd).st_rdev,
+            'held mounted root belongs to exact own loop')
+  # Mounting hides the 0700 mountpoint with ext4's newly formatted root (0755).
+  # Change only that held filesystem root, never a pathname or a prior volume.
+  os.fchown(self.mountfd,1000,1000);os.fchmod(self.mountfd,0o700);os.fsync(self.mountfd)
+  root=os.fstat(self.mountfd)
+  C.require(root.st_uid==root.st_gid==1000 and stat.S_IMODE(root.st_mode)==0o700 and
+            Fsame(root,Path(c['mount']).lstat(),C),'actual private ordinary mounted root owner/mode')
+  self.mountIdentity=C.F(root);self.check('mounted');return self
  def association(self,stem):
   b,_=self.N.checked(['/usr/sbin/losetup','--json','--list','--output','NAME,BACK-FILE,BACK-INO,BACK-MAJ:MIN,OFFSET,SIZELIMIT,RO',self.loop],15,stem)
   rows=json.loads(b)['loopdevices'];self.C.require(len(rows)==1,'one exact owned loop');r=rows[0];self.C.require(r['name']==self.loop and r['back-file']==self.c['fixedBacking']and int(r['back-ino'])==self.rawIdentity['st_ino']and r['back-maj:min']==str(os.major(self.rawIdentity['st_dev']))+':'+str(os.minor(self.rawIdentity['st_dev']))and r['ro']is False and int(r['offset'])==0 and int(r['sizelimit'])in(0,self.c['fixedStorageBytes']),'loop backed by exact generated inode',r);return r
