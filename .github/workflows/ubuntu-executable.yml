@@ -122,7 +122,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: executable-producer-ubuntu-${{ github.run_id }}-${{ github.run_attempt }}
-          path: executable-producer.json
+          path: source-build-results/${{ github.run_id }}-${{ github.run_attempt }}/executable-producer.json
           if-no-files-found: error
           retention-days: ${{ github.ref == 'refs/heads/main' && 90 || 1 }}
       - name: Retain actual guest compiler and closure reports
@@ -130,7 +130,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ubuntu-guest-build-${{ github.run_id }}-${{ github.run_attempt }}
-          path: source-build-results/
+          path: source-build-results/${{ github.run_id }}-${{ github.run_attempt }}/
           if-no-files-found: error
           retention-days: 1
 

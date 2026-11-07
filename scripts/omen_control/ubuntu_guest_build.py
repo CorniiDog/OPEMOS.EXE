@@ -97,6 +97,15 @@ def run(argv, cwd, env, log, end, owned):
                      'sha256':sha(str(log)+suffix)} for suffix in('.stdout','.stderr')]}
 
 
+def prerequisite_install_argv(root, debs):
+    # --no-download consumes APT's archive cache. Local path operands alone
+    # can still be queued for acquisition (including a repository copy of the
+    # same version); bind the cache to the exact extracted, authenticated debs.
+    return ['/usr/bin/apt-get','--yes','--no-download','--no-install-recommends',
+            '--no-remove','-o','Dir::Cache::archives='+str(root),
+            'install',*[str(root/d['name']) for d in debs]]
+
+
 def install_prerequisites(config):
     """Only the nonce-bound, new disposable guest's Root may install inputs."""
     need(os.getuid() == os.geteuid() == 0, 'guest prerequisite owner')
@@ -135,12 +144,19 @@ def install_prerequisites(config):
         need(result['debs'], 'actual offline prerequisite packages absent')
         # No external guest networking or silent package fallback. All package
         # bytes came from this admitted operation's authenticated input medium.
-        completed = subprocess.run(['/usr/bin/apt-get','--yes','--no-download',
-            '--no-install-recommends','install',*[str(root/d['name']) for d in result['debs']]],
+        completed = subprocess.run(prerequisite_install_argv(root, result['debs']),
             stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=600)
         (root/'apt.log').write_bytes(completed.stdout)
         result['apt_numeric'] = completed.returncode
-        need(completed.returncode == 0, 'offline guest prerequisite installation failed')
+        result['apt_log'] = {'name':'apt.log','bytes':len(completed.stdout),
+                             'sha256':hashlib.sha256(completed.stdout).hexdigest()}
+        # The existing bootstrap event carries the build-log tail. Preserve
+        # apt's actual refusal there, instead of only this wrapper traceback.
+        need(completed.returncode == 0,
+             'offline guest prerequisite installation failed (exit '+
+             str(completed.returncode)+', apt.log sha256 '+
+             result['apt_log']['sha256']+'):\n'+
+             completed.stdout[-4096:].decode('utf8','replace'))
         for name in ('qemu-img','qemu-system-x86_64','genisoimage','ssh','ssh-keygen','python3'):
             need(shutil.which(name), 'required installed guest executable absent: '+name)
         need(Path('/usr/share/OVMF/OVMF_CODE_4M.fd').is_file(), 'installed guest OVMF absent')

@@ -25,6 +25,91 @@ import normal_probe
 import types
 
 
+class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
+    @unittest.skipUnless(os.getuid() == 0 and shutil.which('apt-get') and shutil.which('dpkg-deb'),
+                         'real protected Root APT cache regression')
+    def test_actual_offline_apt_local_archive_cache_without_installing_on_test_host(self):
+        """Real .deb/APT acquisition; download-only, private status/cache, no dpkg effects."""
+        import ubuntu_guest_build as guest
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            name = 'opemos-offline-cache-' + uuid.uuid4().hex
+            package = root / 'package'
+            (package / 'DEBIAN').mkdir(parents=True)
+            (package / 'DEBIAN/control').write_text(
+                'Package: '+name+'\nVersion: 1\nArchitecture: all\n'
+                'Maintainer: OPEMOS fixture <fixture@example.invalid>\n'
+                'Description: non-executable offline acquisition fixture\n')
+            cache = root / 'archives'; cache.mkdir()
+            deb = cache / (name + '_1_all.deb')
+            subprocess.run(['dpkg-deb','--build',str(package),str(deb)],
+                           capture_output=True,check=True,timeout=10)
+            before = deb.read_bytes()
+            argv = guest.prerequisite_install_argv(cache,[{'name':deb.name}])
+            isolation = ['--download-only','-o','Dir::State::status=/dev/null',
+                         '-o','Dir::Etc::sourcelist=/dev/null',
+                         '-o','Dir::Etc::sourceparts=-']
+            # Reproduce the actual old missing-cache join without installing a
+            # package or downloading anything. Then run the production argv.
+            old_cache = root / 'empty-cache'; old_cache.mkdir()
+            broken = [*argv[:argv.index('install')], '-o',
+                      'Dir::Cache::archives='+str(old_cache), *isolation,
+                      *argv[argv.index('install'):]]
+            failed = subprocess.run(broken,capture_output=True,timeout=20)
+            self.assertEqual(failed.returncode,100,failed.stdout+failed.stderr)
+            fixed = subprocess.run([*argv[:argv.index('install')],*isolation,
+                                    *argv[argv.index('install'):]],capture_output=True,timeout=20)
+            self.assertEqual(fixed.returncode,0,fixed.stdout+fixed.stderr)
+            self.assertEqual(deb.read_bytes(),before)
+
+    def test_real_archive_extraction_returns_actual_apt_refusal_to_existing_event_log(self):
+        """Real extractor/result files; DMI, mount, UID and apt execution modeled."""
+        import tarfile
+        from unittest.mock import patch
+        import ubuntu_guest_build as guest
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            nonce = 'a' * 32
+            dmi = root / 'product-name'
+            dmi.write_text('opemos-robot-ubuntu-' + nonce + '\n')
+            archive = root / 'source-inputs.tar'
+            payload = b'offline package fixture, not installed'
+            with tarfile.open(archive, 'w') as output:
+                info = tarfile.TarInfo('debs/package_1_amd64.deb')
+                info.size = len(payload)
+                output.addfile(info, io.BytesIO(payload))
+            apt_output = b'old output\n' * 1000 + b'E: exact fixture dependency conflict\n'
+            actual_path = guest.Path
+            def path(value):
+                if str(value) == '/sys/class/dmi/id/product_name': return dmi
+                if str(value) == '/var/lib': return root
+                return actual_path(value)
+            def command(argv, **kwargs):
+                if argv[0] == '/usr/bin/findmnt':
+                    return subprocess.CompletedProcess(argv, 0, stdout='iso9660 ro,nodev\n')
+                self.assertEqual(argv[:4], ['/usr/bin/apt-get', '--yes', '--no-download',
+                                           '--no-install-recommends'])
+                self.assertIn('Dir::Cache::archives='+str(root/('opemos-guest-prerequisites-'+nonce)),argv)
+                self.assertEqual(Path(argv[argv.index('install')+1]).read_bytes(), payload)
+                return subprocess.CompletedProcess(argv, 100, stdout=apt_output)
+            config = {'nonce':nonce, 'input_archive':str(archive),
+                      'input_sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),
+                      'expanded_bytes':len(payload)}
+            with patch.object(guest, 'Path', side_effect=path), \
+                 patch.object(guest.os, 'getuid', return_value=0), \
+                 patch.object(guest.os, 'geteuid', return_value=0), \
+                 patch.object(guest.subprocess, 'run', side_effect=command):
+                with self.assertRaisesRegex(ValueError, 'exact fixture dependency conflict') as refusal:
+                    guest.install_prerequisites(config)
+            self.assertLess(len(str(refusal.exception).encode()), 4500)
+            logs = root / ('opemos-guest-prerequisites-' + nonce)
+            self.assertEqual((logs / 'apt.log').read_bytes(), apt_output)
+            result = json.loads((logs / 'result.json').read_bytes())
+            self.assertEqual(result['apt_numeric'], 100)
+            self.assertEqual(result['apt_log']['sha256'], hashlib.sha256(apt_output).hexdigest())
+            self.assertEqual(result['apt_log']['bytes'], len(apt_output))
+
+
 @unittest.skipUnless(getattr(os, 'geteuid', lambda: -1)() == 0,
                      'real ISO tools are installed by the protected Root CI step')
 class UbuntuCandidateDiscLayout(unittest.TestCase):

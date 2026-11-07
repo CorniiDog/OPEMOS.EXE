@@ -533,6 +533,13 @@ def source_package_pin(path,expected):
  finally:os.close(fd)
 
 
+def source_results_directory():
+ run_id=os.environ['GITHUB_RUN_ID'];attempt=os.environ['GITHUB_RUN_ATTEMPT']
+ require(all(re.fullmatch('[1-9][0-9]{0,19}',x)for x in(run_id,attempt)),
+         'exact source-build result run/attempt')
+ return Path('source-build-results')/(run_id+'-'+attempt)
+
+
 def build_source_on_omen():
  require(os.getuid()==os.geteuid()==1000 and os.environ.get('GITHUB_JOB')=='appimage-package',
          'trusted source-producer Actions job')
@@ -555,7 +562,7 @@ def build_source_on_omen():
    block=connection.recv(min(65536,1048577-len(raw)));require(block,'source build reply EOF');raw.extend(block)
   require(len(raw)<=1048576 and raw.endswith(b'\n'),'bounded complete source-build reply')
  reply=strict(raw)
- save('source-build-results/actual-source-build.json',reply)
+ save(source_results_directory()/'actual-source-build.json',reply)
  require(reply['identity']=={k:req[k]for k in('repository','source_commit','run_id','attempt','nonce')}and
          reply['action']==req['action']and reply['subject']==req['subject'],'actual source-build correlation')
  require(reply['status']=='passed','actual source build failed; correlated original stage retained')
@@ -585,7 +592,7 @@ def build_source_on_omen():
 
 
 def record_guest_package():
- reply=strict(Path('source-build-results/actual-source-build.json').read_bytes())
+ reply=strict((source_results_directory()/'actual-source-build.json').read_bytes())
  require(reply['status']=='passed'and reply['action']=='build-source-platform',
          'actual guest build must finish before producer binding')
  result=reply['source_build'];source=os.environ['GITHUB_SHA']
@@ -604,7 +611,7 @@ def record_guest_package():
         'artifact_archive_sha256':os.environ['PRODUCER_ARTIFACT_SHA256'],
         'package_name':package['name'],'package_sha256':package['sha256'],'package_bytes':package['bytes'],
         'executable_name':native['name'],'executable_sha256':native['sha256'],'executable_bytes':native['bytes']}
- descriptor(value,source);save('executable-producer.json',value)
+ descriptor(value,source);save(source_results_directory()/'executable-producer.json',value)
  return 0
 
 

@@ -47,6 +47,46 @@ class Metadata:
  def verify(self):return gate.producer_ready(SOURCE,self.value['platform'],'10','2',self.read,self.download)
 
 class RequiredProducerTests(unittest.TestCase):
+ def test_source_build_failure_report_uses_current_attempt_and_keeps_old_results(self):
+  """Real result writer/consumer; only broker transport and caller UID modeled."""
+  class Broker:
+   def __init__(self,*args):pass
+   def __enter__(self):return self
+   def __exit__(self,*args):pass
+   def settimeout(self,value):pass
+   def connect(self,path):pass
+   def getsockopt(self,*args):return gate.struct.pack('3i',0,1000,1000)
+   def sendall(self,raw):
+    req=json.loads(raw)
+    self.reply=gate.canonical({'identity':{k:req[k]for k in
+        ('repository','source_commit','run_id','attempt','nonce')},
+        'action':req['action'],'subject':req['subject'],'status':'failed',
+        'first_failure':{'stage':'guest_prerequisites','apt_numeric':100}})+b'\n'
+   def recv(self,size):raw=self.reply[:size];self.reply=self.reply[size:];return raw
+  with tempfile.TemporaryDirectory()as temp:
+   previous=Path.cwd();os.chdir(temp)
+   try:
+    stale=Path('source-build-results/actual-source-build.json')
+    stale.parent.mkdir();stale.write_text('{"status":"stale prior run"}')
+    env={'GITHUB_REPOSITORY':gate.REPO,'GITHUB_JOB':'appimage-package',
+         'GITHUB_RUN_ID':'100','GITHUB_RUN_ATTEMPT':'2',
+         'OPEMOS_SOURCE_SHA':SOURCE,'OPEMOS_ROBOT_CONTROL_SOCKET':'/run/opemos-ci/control/control.sock'}
+    with patch.dict(os.environ,env),patch.object(gate.os,'getuid',return_value=1000),\
+         patch.object(gate.os,'geteuid',return_value=1000),patch.object(gate.socket,'socket',Broker):
+     with self.assertRaisesRegex(gate.Refusal,'actual source build failed'):
+      gate.build_source_on_omen()
+     path=gate.source_results_directory()/'actual-source-build.json'
+     actual=json.loads(path.read_bytes())
+     self.assertEqual(actual['identity']['attempt'],'2')
+     self.assertEqual(actual['first_failure']['apt_numeric'],100)
+     with self.assertRaisesRegex(gate.Refusal,'actual guest build must finish'):
+      gate.record_guest_package()
+     # Same-attempt repetition still refuses instead of overwriting evidence.
+     with self.assertRaises(FileExistsError):gate.build_source_on_omen()
+     self.assertEqual(json.loads(path.read_bytes()),actual)
+    self.assertEqual(stale.read_text(),'{"status":"stale prior run"}')
+   finally:os.chdir(previous)
+
  def test_actual_dispatch_pages_past_lifetime_history_for_fresh_non_main_candidate(self):
   """Real issuer/result verifier, modeled GitHub/native result, no VM claim."""
   m=Metadata();m.run['head_branch']='work/dev';m.value['ref']='refs/heads/work/dev'
