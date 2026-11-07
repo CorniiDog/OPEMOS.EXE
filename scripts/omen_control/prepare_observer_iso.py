@@ -277,6 +277,12 @@ cp -a --no-clobber -- '''+shlex.quote(package+'.runtime')+''' "$app.runtime"
 printf '%s  %s\\n' '''+shlex.quote(descriptor['package_sha256'])+''' "$app" | sha256sum --check --strict
 chmod u+x -- "$app"
 export OPROBOT_NONCE="$nonce" OPEMOS_EXPERIMENTAL_LINUX=1 OPEMOS_LINUX_ACCEL=kvm GDK_BACKEND=x11
+phase=guest_display
+# Set the guest framebuffer before launching the app. Its 800px minimum
+# window height also needs room for the GNOME panel and window decoration.
+read -r display_width display_height < <(python3 -c 'import json,sys; print(*json.load(open(sys.argv[1]))["display"])' "$media/operation.json")
+display_output=$(xrandr --query | awk '$2 == "connected" && !output { output=$1 } END { print output }')
+xrandr --output "$display_output" --mode "${display_width}x${display_height}" >> "$owned/bootstrap.txt" 2>&1
 phase=native_app_and_observer
 "$app" --appimage-extract-and-run > "$owned/app.log" 2>&1 &
 DISPLAY="${DISPLAY:-:0}" python3 "$media/observer_guest.py" "$nonce" 'OPEMOS EXE' --pipeline "$media/operation.json" '''+shlex.quote(hashlib.sha256(operation_raw).hexdigest())+''' > "$owned/observer.log" 2>&1

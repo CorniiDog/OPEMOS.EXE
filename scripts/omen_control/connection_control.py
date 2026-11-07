@@ -123,13 +123,14 @@ def owned_qmp(path,pid,timeout=35):
         try:yield q
         finally:q.close()
 
-def frame(q,path):
+def frame(q,path,display=None):
     need(not os.path.lexists(path),'frame output must be absent')
     q.call('screendump',{'filename':str(path),'format':'png'})
     raw=held(path,16*1024*1024)
     need(raw[:8]==b'\x89PNG\r\n\x1a\n','real PNG frame absent')
     width,height=struct.unpack('>II',raw[16:24])
-    need((width,height)==(1280,800),'actual disposable GUI geometry differs')
+    need(width>0 and height>0 and (display is None or (width,height)==tuple(display)),
+         'actual disposable GUI geometry differs from current guest display')
     return {'path':str(path),'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),
             'width':width,'height':height}
 
@@ -674,8 +675,9 @@ class RobotPipeline:
             'inventory_vm_id':config['inventory_vm_id'],'runtime_instance_id':b['vm_name'],
             'queue_job_ids':[config['queue_job_id']],'original_source':config['original_source'],
             'executable':d}
-        display={'id':r['display_connection'],'width':1280,'height':800,'scale':1,
-            'coordinate_width':1280,'coordinate_height':800,'origin_x':0,'origin_y':0,
+        width,height=config['display']
+        display={'id':r['display_connection'],'width':width,'height':height,'scale':1,
+            'coordinate_width':width,'coordinate_height':height,'origin_x':0,'origin_y':0,
             'coordinate_space':'physical-pixels'}
         self.session={'runtime_instance_id':b['vm_name'],'platform':'linux','architecture':'x86_64',
             'boot_id':r['guest_boot_id'],'id':r['display_connection']+':uid1000','display':display}
@@ -696,7 +698,7 @@ class RobotPipeline:
 
     def capture(self,prefix):
         import uuid
-        tick=time.monotonic_ns();value=frame(self.p.q,self.p.root/(prefix+'.png'))
+        tick=time.monotonic_ns();value=frame(self.p.q,self.p.root/(prefix+'.png'),self.p.cfg['display'])
         ref=prefix+'-png';self.retain(ref,value['path'],'screenshot')
         record={'capture_id':uuid.uuid4().hex,'clock':self.clock,'tick':tick,
             'frame_ref':ref,'frame_sha256':value['sha256'],'session':self.session,'acquired':True}
@@ -939,7 +941,7 @@ class Pipeline:
         need(control['pid']==native['pid']and control['window_id']==native['window_id']and
              control['enabled']is True and control['visible']is True and control['readOnlyObservation']is True,
              'current genuine native control process/window/state')
-        before=frame(self.q,self.root/(str(len(self.actions)).zfill(3)+'-'+name+'-before.png'))
+        before=frame(self.q,self.root/(str(len(self.actions)).zfill(3)+'-'+name+'-before.png'),self.cfg['display'])
         self.check();process(self.binding);need(time.monotonic()<self.end,'original deadline before actual pointer')
         rect=control['rect'];need(rect[0]<=point['x']<rect[0]+rect[2]<=before['width']and
             rect[1]<=point['y']<rect[1]+rect[3]<=before['height'],'actual native target and observed display point')
@@ -1018,7 +1020,7 @@ class Pipeline:
         self.wait_text(labels['write_success'])
         repeated=self.request('FILE',role='output_path')
         need(repeated['value']==output['value'],'actual built image unchanged through GUI write/readback')
-        after=frame(self.q,self.root/'gui-write-complete.png')
+        after=frame(self.q,self.root/'gui-write-complete.png',self.cfg['display'])
         self.request('CLOSE')
         return {'kind':'ACTUAL_UBUNTU_GUI_BUILD_WRITE_OBSERVATIONS','nonce':self.binding['nonce'],
             'source_commit':self.cfg['source_commit'],'package_sha256':self.cfg['package_sha256'],
@@ -1033,7 +1035,9 @@ def pipeline_main(binding_path):
     need(hashlib.sha256(raw).hexdigest()==ref['sha256'],'same normal planner pipeline config')
     cfg=json.loads(raw);need(cfg['kind']=='ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1' and
         type(cfg['whole_seconds'])is int and 0<cfg['whole_seconds']<=7200 and
-        cfg['display']==[1280,800] and re.fullmatch('[0-9a-f]{40}',cfg['source_commit']),
+        type(cfg['display'])is list and len(cfg['display'])==2 and
+        all(type(v)is int and v>0 for v in cfg['display']) and
+        re.fullmatch('[0-9a-f]{40}',cfg['source_commit']),
         'finite source-bound normal GUI pipeline')
     root=Path(b['run_directory']);need(root.is_absolute()and root.resolve()==root and
         root.stat().st_uid==os.getuid()and stat.S_IMODE(root.stat().st_mode)==0o700,
@@ -1049,7 +1053,7 @@ def pipeline_main(binding_path):
     except BaseException as error:
         result['first']={'type':type(error).__name__,'reason':str(error)}
         if 'operation'in locals():result.update(actions=operation.actions,nativeObservations=operation.observations)
-        try:result['failureFrame']=frame(q,root/'pipeline-first-failure.png')
+        try:result['failureFrame']=frame(q,root/'pipeline-first-failure.png',cfg['display'])
         except BaseException as secondary:result['frameFailure']=str(secondary)
         raise
     finally:
