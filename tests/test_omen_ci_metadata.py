@@ -417,7 +417,7 @@ class LosslessHistoryRepack(unittest.TestCase):
         import sqlite3
         q=self.q;rows=[];pins=[]
         with q.history_directory(self.root,self.uid,True)as fd:
-            for i in range(4094):
+            for i in range(10):
                 row={'id':'archived-'+str(i),'unit':'original-'+str(i)+'.service',
                      'state':'failed','spec':'exact-original','cpus':'[0]',
                      'result':q.canonical({'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False}})}
@@ -430,10 +430,15 @@ class LosslessHistoryRepack(unittest.TestCase):
             own={'id':'new-current','unit':'new-current.service','state':'running','spec':'exact-current','cpus':'[1]','result':None}
             epoch={'rows':rows+[own],'pool':{'modeled':True},'bindings':[],'config':[]}
             db.execute('BEGIN IMMEDIATE')
-            with mock.patch.object(q,'terminal_history_maintain',side_effect=AssertionError('no physical capacity pressure')):
+            # Scale only the entry-count fixture bound: ten real archived
+            # originals exceed eight slots, yet their actual two files plus
+            # current row/manifest occupy four. The old logical-slot bug still
+            # fails; thousands of redundant durable fsyncs add no coverage.
+            self.assertGreater(len(rows),8)
+            with mock.patch.object(q,'HISTORY_ENTRY_MAX',8),mock.patch.object(q,'terminal_history_maintain',side_effect=AssertionError('no physical capacity pressure')):
                 ref=q.terminal_history_store(db,epoch,own,'a'*32)
-            db.commit()
-            actual=q.terminal_history_resolve(self.root,self.uid,ref,own['id'],own['unit'],'a'*32)
+                db.commit()
+                actual=q.terminal_history_resolve(self.root,self.uid,ref,own['id'],own['unit'],'a'*32)
             self.assertEqual(actual['rows'],[q.terminal_closed_row(r)for r in rows]+[own])
             with q.history_directory(self.root,self.uid)as fd:
                 self.assertEqual(len(os.listdir(fd)),4) # two archive files, current row, manifest

@@ -3133,7 +3133,13 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                 self.assertEqual(state['vm_admission'],'UNVERIFIED')
                 self.assertEqual(frame['otherActiveJobs'],[rows[1]['id']])
                 self.assertEqual(frame['unclassifiedRuntimeActors'],[])
-                with self.assertRaisesRegex(RuntimeError,'original VM observation/schema refuses'):n.observe()
+                # The deliberately full-role call has its own GitHub metadata
+                # contract; the route-only HTTP fixture above must stay strict
+                # against repository enumeration on the connectivity path.
+                full_github=dict(n.current_github(policy,route_only=True),
+                                 mainCommit=policy['mainCommit'],actionsInProgress=1,actionsQueued=0)
+                with mock.patch.object(n,'current_github',return_value=full_github):
+                    with self.assertRaisesRegex(RuntimeError,'original VM observation/schema refuses'):n.observe()
                 # The full VM reader retains its original refusal. Presence
                 # cannot be passed as a readiness/admission observation.
                 with self.assertRaises(RuntimeError):r.validate_probe(frame,policy,int(time.time()))
