@@ -110,23 +110,28 @@ def qmp_call(q,ident,cmd,args=None):
         part=q.recv(65536);need(part,'QMP EOF')
         buf.extend(part);need(len(buf)<=1048576,'QMP cap exceeded')
 
-def qmp_connect(path,pid):
+def qmp_connect(path,pid,connect,child=None):
     deadline=time.monotonic()+remaining(20)
-    while time.monotonic()<deadline and not os.path.exists(path):time.sleep(.05)
-    st=os.lstat(path);need(stat.S_ISSOCK(st.st_mode)and st.st_uid==os.getuid(),
-                           'new private QMP socket missing')
-    s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.settimeout(remaining(20));s.connect(str(path))
-    peer=struct.unpack('3i',s.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
-    need(peer[0]==pid and peer[1]==os.getuid(),'QMP peer identity differs')
-    intro=bytearray()
-    while b'\n' not in intro:
-        part=s.recv(65536);need(part,'QMP greeting EOF')
-        intro.extend(part);need(len(intro)<=1048576,'QMP greeting cap exceeded')
-    greeting,sep,rest=intro.partition(b'\n')
-    need(sep and b'QMP' in greeting,'complete QMP greeting missing')
-    QMP_BUFFERS[s.fileno()]=bytearray(rest)
-    qmp_call(s,1,'qmp_capabilities')
-    return s
+    while not os.path.exists(path):
+        if child is not None:
+            code=child.poll()
+            need(code is None,'QEMU exited before QMP startup: numeric '+str(code)+
+                 '; original qemu.stdout/qemu.stderr retained')
+        need(time.monotonic()<deadline,'QMP startup deadline; original QEMU streams retained')
+        time.sleep(min(.05,max(0,deadline-time.monotonic())))
+    s=connect(path,pid,remaining(20))
+    try:
+        intro=bytearray()
+        while b'\n' not in intro:
+            part=s.recv(65536);need(part,'QMP greeting EOF')
+            intro.extend(part);need(len(intro)<=1048576,'QMP greeting cap exceeded')
+        greeting,sep,rest=intro.partition(b'\n')
+        need(sep and b'QMP' in greeting,'complete QMP greeting missing')
+        QMP_BUFFERS[s.fileno()]=bytearray(rest)
+        qmp_call(s,1,'qmp_capabilities')
+        return s
+    except BaseException:
+        QMP_BUFFERS.pop(s.fileno(),None);s.close();raise
 
 def readonly_qemu_holders(pid, pins):
     found={str(Path(p['path'])):0 for p in pins}
@@ -429,7 +434,7 @@ def main():
         need(allocated+reserve<=500_000_000,'actual whole operation metadata reserve exhausted')
         return allocated
     metadata_guard(192*1024**2)  # QEMU stream caps plus one complete Robot action
-    first=None;q=None;qemu_pidfd=None;qemu_streams={};qemu_readers=[];qemu_launch_attempted=False;control=None;socket_pins={};usb_scope=None;usb_fd=None
+    first=None;q=None;qemu_pidfd=None;qemu_streams={};qemu_readers=[];qemu_launch_attempted=False;control=None;socket_pins={};usb_scope=None;usb_fd=None;runtime_fd=None
     result={'kind':'NORMAL_UBUNTU_GUI_BUILD_WRITE_JOB_V1','nonce':nonce,
             'source_commit':C['source_commit'],'candidate_source_commit':C['candidate']['descriptor']['source_commit'],'package_sha256':C['candidate']['descriptor']['package_sha256'],
             'fullStackAccepted':False,'SteamOSOrGPUAcceptance':False,'originals':originals,
@@ -500,6 +505,12 @@ def main():
              'rule_sha256':rule_receipt['rule_sha256']}
         result['effects'].append('exact-offline-rule-in-fresh-private-cow-only')
         name='opemos-robot-ubuntu-'+nonce
+        runtime_fd=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+        runtime_identity=os.fstat(runtime_fd)
+        need(stat.S_ISDIR(runtime_identity.st_mode)and runtime_identity.st_uid==os.getuid()and
+             not runtime_identity.st_mode&0o077 and
+             (runtime_identity.st_dev,runtime_identity.st_ino)==(root.lstat().st_dev,root.lstat().st_ino),
+             'held original private VM runtime directory')
         qmp=root/'qmp.sock';vnc=root/'vnc.sock';obs=root/'observer.sock'
         argv=['/usr/bin/qemu-system-x86_64','-name',name,'-machine','q35,accel=kvm',
               '-cpu','host','-smp',str(C['cores']),'-m',str(C['guest_memory_bytes']//1048576),
@@ -513,19 +524,19 @@ def main():
               '-device','ide-cd,id=observer-cd,bus=ide.1,unit=0,drive=observer',
               '-device','virtio-vga','-device','qemu-xhci,id=xhci',
               '-device','usb-tablet,bus=xhci.0','-device','usb-kbd,bus=xhci.0',
-              '-chardev',f'socket,path={obs},server=on,wait=off,id=obs',
+              '-chardev','socket,path=observer.sock,server=on,wait=off,id=obs',
               '-device','virtio-serial-pci',
               '-device','virtserialport,chardev=obs,name=opemos.robot.observer',
-              '-nic','none','-display','none','-vnc','unix:'+str(vnc),
-              '-qmp','unix:'+str(qmp)+',server=on,wait=off',
+              '-nic','none','-display','none','-vnc','unix:vnc.sock',
+              '-qmp','unix:qmp.sock,server=on,wait=off',
               '-monitor','none','-serial','none','-parallel','none',
               '-sandbox','on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny','-S']
         argv+=USB.virtual_usb_qemu_arguments(backing,usb_fd,nonce)
         def limit():
             resource.setrlimit(resource.RLIMIT_FSIZE,(cow_limit,cow_limit))
         qemu_launch_attempted=True
-        q=subprocess.Popen(argv,cwd=root,stdin=subprocess.DEVNULL,
-             stdout=subprocess.PIPE,stderr=subprocess.PIPE,preexec_fn=limit,start_new_session=True,pass_fds=(usb_fd,))
+        q=subprocess.Popen(argv,cwd=f'/proc/self/fd/{runtime_fd}',stdin=subprocess.DEVNULL,
+             stdout=subprocess.PIPE,stderr=subprocess.PIPE,preexec_fn=limit,start_new_session=True,pass_fds=(usb_fd,runtime_fd))
         qemu_pidfd=os.pidfd_open(q.pid)
         qemu_streams,qemu_readers=qemu_output(q,root)
         raw=(Path('/proc')/str(q.pid)/'stat').read_text();tick=raw[raw.rfind(')')+2:].split()[19]
@@ -538,7 +549,7 @@ def main():
                  'vm_name':name,'run_directory':str(root),'artifact_source':C['candidate']['descriptor']['source_commit'],
                  'package_sha256':C['candidate']['descriptor']['package_sha256']}
         write_json(root/'binding.json',binding)
-        control=qmp_connect(qmp,q.pid)
+        control=qmp_connect(qmp,q.pid,CONTROL.connect_owned,q)
         need((Path('/proc')/str(q.pid)/'cgroup').read_text().strip()==binding['queue_cgroup'],
              'new QEMU not in exact admitted queue cgroup')
         socket_identity=sig(os.lstat(qmp))
@@ -632,7 +643,7 @@ def main():
                 need(sig(os.lstat(qmp))==socket_identity,
                      'owned QMP socket identity changed before finalizer')
                 readonly_qemu_holders(q.pid,[C['base'],C['code'],C['image_carrier'],observer_iso])
-                control=qmp_connect(qmp,q.pid)
+                control=qmp_connect(qmp,q.pid,CONTROL.connect_owned,q)
                 need(qmp_call(control,9,'query-name')['name']==name,
                      'finalizer VM name differs')
                 try:qmp_call(control,10,'system_powerdown')
@@ -651,7 +662,7 @@ def main():
                     need(sig(os.lstat(qmp))==socket_identity,
                          'owned QMP socket identity changed before bounded quit')
                     readonly_qemu_holders(q.pid,[C['base'],C['code'],C['image_carrier'],observer_iso])
-                    control=qmp_connect(qmp,q.pid)
+                    control=qmp_connect(qmp,q.pid,CONTROL.connect_owned,q)
                     need(qmp_call(control,11,'query-name')['name']==name,
                          'bounded quit VM name differs')
                     try:qmp_call(control,12,'quit')
@@ -748,6 +759,9 @@ def main():
         if qemu_pidfd is not None:
             try:os.close(qemu_pidfd)
             except OSError as error:secondary.append('QEMU owned pidfd close: '+str(error))
+        if runtime_fd is not None:
+            try:os.close(runtime_fd)
+            except OSError as error:secondary.append('owned VM runtime directory FD closure: '+str(error))
         if usb_scope is not None:
             try:usb_scope.__exit__(None,None,None)
             except BaseException as error:secondary.append('owned USB FD closure: '+str(error))

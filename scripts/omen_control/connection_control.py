@@ -62,13 +62,36 @@ def process(binding):
     return proc
 
 def connect_owned(path,pid,timeout=35):
-    info=os.lstat(path)
-    need(stat.S_ISSOCK(info.st_mode)and info.st_uid==os.getuid()and
-         not info.st_mode&0o077,'owned private VM socket required')
-    s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.settimeout(timeout);s.connect(str(path))
-    peer=struct.unpack('3i',s.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
-    need(peer[0]==pid and peer[1]==os.getuid(),'socket peer is not exact QEMU')
-    return s
+    path=Path(path);parent=path.parent
+    need(path.is_absolute()and parent.resolve()==parent,
+         'canonical private VM socket directory required')
+    fd=os.open(parent,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    s=None
+    try:
+        directory=os.fstat(fd)
+        stable=lambda st:(st.st_dev,st.st_ino,st.st_mode,st.st_uid,st.st_gid)
+        need(stat.S_ISDIR(directory.st_mode)and directory.st_uid==os.getuid()and
+             not directory.st_mode&0o077 and stable(directory)==stable(parent.lstat()),
+             'owned private VM socket directory required')
+        info=os.stat(path.name,dir_fd=fd,follow_symlinks=False)
+        need(stat.S_ISSOCK(info.st_mode)and info.st_uid==os.getuid()and
+             not info.st_mode&0o077,'owned private VM socket required')
+        # Linux resolves this short address through our held parent FD. Keep
+        # the logical operation path in every binding/receipt; never truncate it
+        # or reuse another operation's socket to fit sockaddr_un.sun_path.
+        address=f'/proc/self/fd/{fd}/{path.name}'
+        need(len(os.fsencode(address))<108,'finite Linux Unix socket address')
+        s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.settimeout(timeout);s.connect(address)
+        peer=struct.unpack('3i',s.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
+        need(peer[0]==pid and peer[1]==os.getuid(),'socket peer is not exact QEMU')
+        need(tuple(getattr(info,k)for k in FULL9)==tuple(getattr(os.stat(path.name,dir_fd=fd,follow_symlinks=False),k)for k in FULL9)and
+             stable(directory)==stable(os.fstat(fd))==stable(parent.lstat()),
+             'VM socket/directory identity changed during connect')
+        return s
+    except BaseException:
+        if s is not None:s.close()
+        raise
+    finally:os.close(fd)
 
 class QMP:
     def __init__(self,s):

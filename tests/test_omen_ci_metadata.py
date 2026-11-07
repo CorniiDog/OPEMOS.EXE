@@ -20,6 +20,91 @@ stage=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(stage)
 
 
+class UbuntuOwnedUnixSockets(unittest.TestCase):
+    """Actual Linux sockets at a future normal operation path over108 bytes."""
+    def setUp(self):
+        for role in ('connection_control','job'):
+            source=Path(__file__).resolve().parents[1]/'scripts/omen_control'/(role+'.py')
+            spec=importlib.util.spec_from_file_location('long_socket_'+role,source)
+            module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+            setattr(self,role,module)
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name)/('future-owned-operation-'+'a'*64)/('runtime-'+'b'*64)
+        self.root.mkdir(parents=True);self.root.chmod(0o700)
+        self.assertGreater(len(os.fsencode(self.root/'observer.sock')),108)
+
+    def test_long_logical_paths_connect_all_three_socket_roles_with_real_peer_and_qmp(self):
+        import subprocess,sys
+        program="""import os,socket,sys,json,selectors
+os.umask(0o077)
+sel=selectors.DefaultSelector();servers=[]
+for name in ('qmp.sock','vnc.sock','observer.sock'):
+ s=socket.socket(socket.AF_UNIX);s.bind(name);s.listen(1);servers.append(s);sel.register(s,selectors.EVENT_READ,name)
+print('READY',flush=True)
+for _ in range(3):
+ key=sel.select(5)[0][0];c,_=key.fileobj.accept();sel.unregister(key.fileobj)
+ with c:
+  if key.data=='qmp.sock':
+   c.sendall(b'{"QMP":{}}\\n');f=c.makefile('rb')
+   for response in ({},{'name':'same-owned-VM'}):
+    request=json.loads(f.readline());c.sendall((json.dumps({'return':response,'id':request['id']})+'\\n').encode())
+   f.close()
+  else:c.sendall(key.data.encode())
+for s in servers:s.close()
+sel.close()
+"""
+        directory=os.open(self.root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+        child=None
+        try:
+            child=subprocess.Popen([sys.executable,'-I','-B','-c',program],
+                cwd=f'/proc/self/fd/{directory}',pass_fds=(directory,),
+                stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            self.assertEqual(child.stdout.readline(),b'READY\n')
+            q=self.job.qmp_connect(self.root/'qmp.sock',child.pid,self.connection_control.connect_owned,child)
+            try:self.assertEqual(self.job.qmp_call(q,2,'query-name'),{'name':'same-owned-VM'})
+            finally:self.job.QMP_BUFFERS.pop(q.fileno(),None);q.close()
+            for name in ('vnc.sock','observer.sock'):
+                with self.connection_control.connect_owned(self.root/name,child.pid)as sock:
+                    self.assertEqual(sock.recv(64),name.encode())
+            out,err=child.communicate(timeout=5)
+            self.assertEqual((child.returncode,out,err),(0,b'',b''))
+            self.assertEqual(os.fstat(directory).st_ino,self.root.lstat().st_ino)
+        finally:
+            if child is not None:
+                if child.poll()is None:child.kill()
+                child.communicate(timeout=5)
+            os.close(directory)
+
+    def test_private_socket_custody_and_exact_peer_remain_required(self):
+        import socket
+        path=self.root/'qmp.sock';server=socket.socket(socket.AF_UNIX)
+        fd=os.open(self.root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+        old=os.umask(0o077)
+        try:
+            server.bind(f'/proc/self/fd/{fd}/qmp.sock');server.listen(3)
+            with self.assertRaisesRegex(RuntimeError,'exact QEMU'):
+                self.connection_control.connect_owned(path,os.getpid()+100000)
+            self.root.chmod(0o755)
+            with self.assertRaisesRegex(RuntimeError,'private VM socket directory'):
+                self.connection_control.connect_owned(path,os.getpid())
+            self.root.chmod(0o700);path.rename(self.root/'original.sock');path.symlink_to(self.root/'original.sock')
+            with self.assertRaisesRegex(RuntimeError,'private VM socket required'):
+                self.connection_control.connect_owned(path,os.getpid())
+        finally:os.umask(old);os.close(fd);server.close()
+
+    def test_known_child_exit_is_first_before_twenty_second_qmp_wait(self):
+        import subprocess,sys,time
+        child=subprocess.Popen([sys.executable,'-I','-B','-c',
+            'import sys;sys.stderr.write("original startup failure\\n");sys.exit(7)'],
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        out,err=child.communicate(timeout=5);self.assertEqual(child.returncode,7)
+        started=time.monotonic()
+        with self.assertRaisesRegex(RuntimeError,'QEMU exited before QMP startup: numeric 7'):
+            self.job.qmp_connect(self.root/'qmp.sock',child.pid,self.connection_control.connect_owned,child)
+        self.assertLess(time.monotonic()-started,1)
+        self.assertEqual((out,err),(b'',b'original startup failure\n'))
+
+
 class LosslessHistoryRepack(unittest.TestCase):
     """Real owned files/exchange/readback; no canonical-job acceptance claim."""
     def setUp(self):
