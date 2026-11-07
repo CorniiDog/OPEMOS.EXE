@@ -19,7 +19,6 @@ def normal_ubuntu_job(config_ref,request_ref):
     import time,types,stat,re
     cfg=strict(raw_file(config_ref['path'],1048576,config_ref['sha256'],os.getuid()))
     request=strict(raw_file(request_ref['path'],1048576,request_ref['sha256'],os.getuid()))
-    source_build=cfg['kind']=='ROOT_ADMITTED_UBUNTU_SOURCE_BUILD_V1'
     current={k:request[k]for k in('source_commit','run_id','attempt')}
     require(all(identity()[k]==v for k,v in current.items())and
         request['nonce']==os.environ['OPEMOS_TRANSACTION_NONCE']==cfg['nonce']and
@@ -36,6 +35,7 @@ def normal_ubuntu_job(config_ref,request_ref):
         policy['sourceCommit']==cfg['source_commit']and policy['network']=='none'and
         policy['swapBytes']==0 and 0<cfg['whole_seconds']<=policy['wholeSeconds']<=7200,
         'exact explicit normal Ubuntu source/effects boundary')
+    source_build=cfg['kind']=='ROOT_ADMITTED_UBUNTU_SOURCE_BUILD_V1'
     bundle=path.parent/'proof-sources';programs={}
     for name,digest in policy['programSHA256'].items():
         require(name.endswith('.py')and Path(name).name==name,'fixed Root normal program member')

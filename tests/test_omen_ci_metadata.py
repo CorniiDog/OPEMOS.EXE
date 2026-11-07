@@ -195,7 +195,7 @@ s.close()
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
         nonce='a'*32;digest='b'*64;commit='c'*40
         operation={'nonce':nonce,'source_commit':commit,'package_sha256':digest,
-                   'usb_serial':'opemos-'+nonce,'native_executable_sha256':'d'*64}
+                   'usb_serial':'opemos-'+nonce,'native_executable_sha256':'d'*64,'display':[1600,900]}
         descriptor={'source_commit':commit,'package_sha256':digest,'executable_sha256':'d'*64}
         config={'nonce':nonce,'source_commit':commit,'candidate':{'descriptor':descriptor,'archive':{}},
                 'prepared_directory':str(self.root/'prepared'),'guest_operation':operation,
