@@ -28,6 +28,16 @@ def held(path,cap,uid,mode):
 def module(raw,name):
     m=types.ModuleType(name);m.__file__=name
     exec(compile(raw,name,'exec'),m.__dict__);return m
+def require_remote_effect(child):
+    ok=(child.returncode==0 and child.stderr==b'' and
+        len(child.stdout)<=1048576 and child.stdout.count(b'\n')==1)
+    if not ok and child.stderr:
+        # Existing wrapper capture retains this stream. Preserve the real
+        # remote FIRST instead of leaving only a digest after failed CREATE.
+        sys.stderr.buffer.write(child.stderr[-65536:]);sys.stderr.buffer.flush()
+    need(ok,'finite remote ordinary effect; numeric='+str(child.returncode)+
+         '; stderrSHA='+sha(child.stderr))
+
 def run(action,nonce,policy_sha,probe_sha):
     raw=held(ROOT/'policy.json',65536,0,0o400)
     need(sha(raw)==policy_sha,'same exact Root policy passed by wrapper')
@@ -80,10 +90,7 @@ def run(action,nonce,policy_sha,probe_sha):
               'sudo -n /usr/bin/python3 -I -B -']
         child=subprocess.run(argv,input=wire,stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,timeout=650,check=False)
-        need(child.returncode==0 and child.stderr==b'' and
-             len(child.stdout)<=1048576 and child.stdout.count(b'\n')==1,
-             'finite remote ordinary effect; numeric='+str(child.returncode)+
-             '; stderrSHA='+sha(child.stderr))
+        require_remote_effect(child)
         remote=trigger.strict(child.stdout)
         need(remote.get('kind')=='ROOT_RUNNER21_REMOTE_ACTION_RESULT_V1' and
              remote.get('nonce')==nonce and remote.get('action')==action and

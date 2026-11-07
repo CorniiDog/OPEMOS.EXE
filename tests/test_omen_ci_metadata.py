@@ -49,6 +49,51 @@ class SourceProducerInstallationCustody(unittest.TestCase):
                         with self.assertRaisesRegex(RuntimeError,'installed target drift producerWorkflow'):
                             installer.original_custody(before,dict(before),outcomes,root,payload)
 
+    def test_normal_create_materializer_uses_same_source_enabled_target_set(self):
+        import types
+        root=Path(__file__).resolve().parents[1]/'scripts/omen_control'
+        def load(name):
+            spec=importlib.util.spec_from_file_location('actual_create_'+name,root/(name+'.py'))
+            value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value);return value
+        cycle=load('normal_cycle');installer=(root/'install_remote.py').read_bytes()
+        control=b'Root source fixture DATA';hook=b'Root hook fixture DATA'
+        sha=lambda data:hashlib.sha256(data).hexdigest()
+        for enabled in (False,True):
+            template={'kind':'ROOT_REVIEWED_ROBOT_CONTROL_MATERIALIZATION_V1','mainCommit':'a'*40,
+                'runnerId':21,'queueSourceSHA256':'b'*64,'queueLoggerSHA256':'c'*64,
+                'sources':{'control.py':{'hex':control.hex(),'sha256':sha(control)},
+                           'job-started.sh':{'hex':hook.hex(),'sha256':sha(hook)}},
+                'policy':{'kind':'ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1','sourceCommit':'a'*40,
+                    'queueSourceSHA256':'b'*64,'queueLoggerSHA256':'c'*64,'sourceBuildEnabled':enabled},
+                'registry':{'artifacts':{'ubuntu':{}}},'profile':{'fixed_registry':{}}}
+            raw=cycle.enc(template)
+            policy={'normalTemplateSHA256':sha(raw),'currentReleaseTx':'d'*32,
+                'normalInstallerSHA256':sha(installer),'mainCommit':'a'*40,'queueSourceSHA256':'b'*64,
+                'queueLoggerSHA256':'c'*64,'controlBrokerSHA256':sha(control),'jobStartedSHA256':sha(hook)}
+            probe=types.SimpleNamespace(pin_source=lambda *args:(installer,{}))
+            # Source custody and predecessor/process facts are modeled here;
+            # actual production materialize() and targets() build the payload.
+            with mock.patch.object(cycle,'REMOTE_TEMPLATE_HEX',raw.hex(),create=True), \
+                 mock.patch.object(cycle,'closed_receipt',return_value={'MODELED_CLOSED_PREDECESSOR':True}):
+                payload,actual_installer=cycle.materialize(policy,probe,'e'*32,{}, {})
+            result=json.loads(payload)
+            self.assertEqual(set(result['prior']),set(actual_installer.targets(result)))
+            self.assertEqual('producerWorkflow'in result['prior'],enabled)
+            self.assertEqual(result['transaction'],'e'*32)
+
+    def test_remote_create_failure_preserves_actual_stderr_in_existing_wrapper_capture(self):
+        import io,types,subprocess
+        source=Path(__file__).resolve().parents[1]/'scripts/omen_control/controller_cycle.py'
+        spec=importlib.util.spec_from_file_location('actual_remote_effect_capture',source)
+        cycle=importlib.util.module_from_spec(spec);spec.loader.exec_module(cycle)
+        for raw in (b"KeyError: 'producerWorkflow'\n",b'x'*70000+b'actual final failure'):
+            stream=io.BytesIO();child=subprocess.CompletedProcess(['modeled SSH'],1,b'',raw)
+            with mock.patch.object(cycle.sys,'stderr',types.SimpleNamespace(buffer=stream)):
+                with self.assertRaisesRegex(RuntimeError,'finite remote ordinary effect; numeric=1'):
+                    cycle.require_remote_effect(child)
+            self.assertEqual(stream.getvalue(),raw[-65536:])
+        cycle.require_remote_effect(subprocess.CompletedProcess(['modeled SSH'],0,b'{}\n',b''))
+
 
 class OwnedNBDDisconnect(unittest.TestCase):
     """Real owned PID/pidfd exit, with device/sysfs operations modeled."""
