@@ -75,7 +75,7 @@ class SourceProducerInstallationCustody(unittest.TestCase):
             # actual production materialize() and targets() build the payload.
             with mock.patch.object(cycle,'REMOTE_TEMPLATE_HEX',raw.hex(),create=True), \
                  mock.patch.object(cycle,'closed_receipt',return_value={'MODELED_CLOSED_PREDECESSOR':True}):
-                payload,actual_installer=cycle.materialize(policy,probe,'e'*32,{}, {})
+                payload,actual_installer=cycle.materialize(policy,probe,'e'*32,{'unit':'opemos-testq-aa-bb.service'}, {})
             result=json.loads(payload)
             self.assertEqual(set(result['prior']),set(actual_installer.targets(result)))
             self.assertEqual('producerWorkflow'in result['prior'],enabled)

@@ -378,7 +378,9 @@ def materialize(policy,probe_module,nonce,old_row,old_manager,dispatchers=None):
              policy['jobStartedSHA256'],
          'new host broker lease fence and unchanged sandbox hook pins')
     data['transaction']=nonce
-    data['prior']={name:installer.full(path) for name,path in installer.targets(data).items()}
+    selected_targets=(installer.targets(data) if data['policy'].get('sourceBuildEnabled')is True
+                      else installer.targets())
+    data['prior']={name:installer.full(path) for name,path in selected_targets.items()}
     data['oldControl']={'unit':old_row['unit'],'liveMainPID':0,
                         'liveUID0Absent':True,
                         'closedReceiptHex':enc(receipt).hex(),
