@@ -1154,8 +1154,8 @@ def run_cycle(policy, state, now):
         # lifecycle outcome stays held; independently proven connectivity does
         # not require an idle acknowledgement or clear that in-flight intent.
         presence=(refresh_current_presence(policy)if action in
-                  ('WAIT_ACTIVE_ACTION_OR_SOURCE_OWNER','WAIT_SHARED_OWNER_OR_GPU',
-                   'HOLD_INFLIGHT')else None)
+                  ('WAIT_ACTIVE_ACTION_OR_SOURCE_OWNER','WAIT_SHARED_OWNER_OR_GPU')or
+                  (action=='HOLD_INFLIGHT'and probe['runnerOnline']is True)else None)
         return {'decision':action,'probeSHA256':sha(observed['stdout']),'effect':False,
                 **({'presence':presence}if presence is not None else {})}
     cycle_raw=load_code(CYCLE,policy['controllerCycleSHA256'])
