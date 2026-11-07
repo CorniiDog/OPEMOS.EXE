@@ -99,6 +99,115 @@ class UbuntuSourceProducerInputs(unittest.TestCase):
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
         return module
 
+    def test_nbd_task_group_join_real_uid1000_pidfd_and_disconnect(self):
+        """Real /proc, Root payload, ordinary reader and PIDFD; NBD transport is modeled."""
+        import threading
+        with tempfile.TemporaryDirectory(prefix='nbd-task-')as temp:
+            root=Path(temp);root.chmod(0o711)
+            modules=root/'reviewed';modules.mkdir();modules.chmod(0o755)
+            for name in('job.py','provision_observer_rule.py'):
+                p=modules/name;p.write_bytes((SOURCE/name).read_bytes());p.chmod(0o444)
+            ordinary=root/'ordinary';ordinary.mkdir();os.chown(ordinary,1000,1000);ordinary.chmod(0o700)
+            server_body=r'''
+import os,sys,threading,json
+ready=threading.Event();stop=threading.Event()
+def client():ready.set();stop.wait(30)
+t=threading.Thread(target=client);t.start();assert ready.wait(2)
+print(json.dumps({'pid':os.getpid(),'tid':t.native_id}),flush=True)
+sys.stdin.buffer.read(1);stop.set();t.join(2);assert not t.is_alive()
+'''
+            server=subprocess.Popen([sys.executable,'-I','-B','-u','-c',server_body],
+                stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+            reaper=None
+            try:
+                identity=json.loads(server.stdout.readline());self.assertEqual(identity['pid'],server.pid)
+                self.assertNotEqual(identity['pid'],identity['tid'])
+                reaper=threading.Thread(target=server.wait);reaper.start()
+                body=r'''
+import os,sys,json,copy
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0,sys.argv[1]);import provision_observer_rule as m
+assert os.getresuid()==(1000,1000,1000)
+root=Path(sys.argv[2]);leader,tid,exit_fd=map(int,sys.argv[3:])
+sysfs=root/'sysfs';sysfs.mkdir();sysfs.chmod(0o700)
+(sysfs/'pid').write_text(str(tid));m.SYS=sysfs
+identity=m.nbd_process_identity(tid)
+assert identity['pid']==leader and identity['sysfs_pid']==tid
+owner=dict(identity,read_only=True,offset=None)
+try:
+ fd=os.pidfd_open(tid,0)
+except OSError:pass
+else:os.close(fd);raise AssertionError('nonleader task unexpectedly accepted as process PIDFD')
+m.same_nbd_owner(owner)
+with patch.object(m,'cmd')as command:
+ for key,value in(('pid',os.getpid()),('start_ticks','0'),('sysfs_start_ticks','0'),
+                   ('argv',owner['argv']+['foreign']),('cgroup','0::/foreign\n')):
+  wrong=copy.deepcopy(owner);wrong[key]=value
+  try:m.detach(wrong)
+  except RuntimeError:pass
+  else:raise AssertionError('changed owner accepted: '+key)
+ command.assert_not_called()
+calls=[]
+def disconnect(argv,**kwargs):
+ assert argv==['/usr/bin/sudo','-n','/usr/bin/qemu-nbd','--disconnect',m.NODE]
+ calls.append(argv);os.write(exit_fd,b'x');(sysfs/'pid').unlink()
+ return {'numeric':0,'stdout':'','stderr':''}
+# Only the kernel/device transport is modeled. The spawned Root payload and
+# client thread really exit/reap, and the ordinary reader polls the real PIDFD.
+before=set(os.listdir('/proc/self/fd'))
+with patch.object(m,'cmd',side_effect=disconnect),patch.object(m,'idle',return_value={'sysfs_pid_absent':True}):
+ closed=m.detach(owner)
+assert len(calls)==1 and closed['original_pidfd_exited']and closed['pid_absent']and closed['client_task_absent']
+assert set(os.listdir('/proc/self/fd'))==before
+print(json.dumps({'realTaskProcessJoin':True,'ordinaryReader':1000,'rootPayload':0,
+                  'nativePIDFDExit':True,'NBDDeviceModeled':True}))
+'''
+                child=subprocess.run([sys.executable,'-I','-B','-c',body,str(modules),str(ordinary),
+                    str(identity['pid']),str(identity['tid']),str(server.stdin.fileno())],
+                    user=1000,group=1000,extra_groups=[],pass_fds=(server.stdin.fileno(),),
+                    cwd=ordinary,capture_output=True,text=True,timeout=20)
+                self.assertEqual(child.returncode,0,child.stderr)
+                self.assertTrue(json.loads(child.stdout)['nativePIDFDExit'])
+                reaper.join(5);self.assertFalse(reaper.is_alive())
+                self.assertEqual(server.returncode,0)
+                self.assertEqual(server.stderr.read(),b'')
+            finally:
+                if server.poll()is None:
+                    server.stdin.close()
+                    try:server.wait(timeout=5)
+                    except subprocess.TimeoutExpired:server.kill();server.wait(timeout=5)
+                if reaper is not None:reaper.join(5)
+                for pipe in(server.stdin,server.stdout,server.stderr):
+                    if pipe is not None:pipe.close()
+
+    def test_actual_kernel_nbd_task_process_and_readonly_disconnect(self):
+        """Use real qemu-nbd in this disposable CI guest when its kernel provides NBD."""
+        module=self.load('provision_observer_rule')
+        self.assertIsNotNone(shutil.which('qemu-img'));self.assertIsNotNone(shutil.which('qemu-nbd'))
+        if not module.SYS.is_dir():
+            tool=shutil.which('modprobe')
+            if tool is None:self.skipTest('kernel NBD unavailable; native task/PIDFD case remains mandatory')
+            loaded=subprocess.run([tool,'nbd','max_part=16'],capture_output=True,timeout=10)
+            if loaded.returncode!=0:self.skipTest('disposable CI kernel has no NBD module')
+        if not Path(module.NODE).exists():self.skipTest('disposable CI kernel has no NBD device')
+        try:module.idle()
+        except RuntimeError:self.skipTest('existing NBD association is foreign; never detach it')
+        with tempfile.TemporaryDirectory(prefix='actual-nbd-cow-')as temp:
+            cow=Path(temp)/'only-test.qcow2'
+            subprocess.run(['qemu-img','create','-q','-f','qcow2',str(cow),'16M'],check=True)
+            before=hashlib.sha256(cow.read_bytes()).hexdigest()
+            for offset in(None,4096):
+                owner=module.attach(cow,True,offset)
+                try:
+                    self.assertEqual(owner['sysfs_pid'],int((module.SYS/'pid').read_text()))
+                    module.same_nbd_owner(owner)
+                    fd=os.pidfd_open(owner['pid'],0);os.close(fd)
+                finally:closed=module.detach(owner)
+                self.assertTrue(closed['original_pidfd_exited'])
+                self.assertTrue(closed['pid_absent']and closed['client_task_absent'])
+            self.assertEqual(hashlib.sha256(cow.read_bytes()).hexdigest(),before)
+
     def test_normal_create_materializer_reaches_actual_preflight_with_optional_workflow(self):
         from unittest import mock
         cycle=self.load('normal_cycle')

@@ -59,6 +59,41 @@ def idle():
     return {'sysfs_pid_absent':True,'holders_empty':True,'mounts_empty':True,
             'sysfs_read_only_when_idle':ro,'fuser_numeric':1}
 
+def nbd_process_identity(tid):
+    """Bind the kernel NBD client task to its process, without treating a TID as a PIDFD."""
+    def task(pid):
+        proc=Path('/proc')/str(pid)
+        birth=(proc/'stat').read_text().rsplit(')',1)[1].split()[19]
+        fields={}
+        for line in (proc/'status').read_text().splitlines():
+            key,sep,value=line.partition(':')
+            if sep and key in ('Pid','Tgid','Uid'):
+                need(key not in fields,'ambiguous NBD task identity')
+                fields[key]=value.split()
+        need(set(fields)=={'Pid','Tgid','Uid'} and fields['Pid']==[str(pid)] and
+             len(fields['Tgid'])==1 and fields['Tgid'][0].isdecimal() and
+             fields['Uid']==['0']*4,'same uniform Root NBD payload task')
+        argv=[os.fsdecode(x)for x in(proc/'cmdline').read_bytes().split(b'\0')if x]
+        group=(proc/'cgroup').read_text()
+        need(birth==(proc/'stat').read_text().rsplit(')',1)[1].split()[19],
+             'NBD task birth changed during identity observation')
+        return {'pid':pid,'tgid':int(fields['Tgid'][0]),'start_ticks':birth,
+                'argv':argv,'cgroup':group}
+    client=task(tid);leader=client if client['tgid']==tid else task(client['tgid'])
+    need(leader['pid']==leader['tgid'] and client['tgid']==leader['pid'] and
+         client['argv']==leader['argv'] and
+         client['cgroup']==leader['cgroup']==Path('/proc/self/cgroup').read_text(),
+         'NBD client task/process/source/current-unit join differs')
+    return {'pid':leader['pid'],'start_ticks':leader['start_ticks'],'argv':leader['argv'],
+            'sysfs_pid':tid,'sysfs_start_ticks':client['start_ticks'],
+            'cgroup':leader['cgroup']}
+
+def same_nbd_owner(owner):
+    need((SYS/'pid').read_text().strip()==str(owner['sysfs_pid']) and
+         nbd_process_identity(owner['sysfs_pid'])=={k:owner[k]for k in
+             ('pid','start_ticks','argv','sysfs_pid','sysfs_start_ticks','cgroup')},
+         'NBD client task/process birth/source changed before exact operation')
+
 def attach(cow,readonly,offset=None):
     args=['/usr/bin/sudo','-n','/usr/bin/qemu-nbd']
     if readonly:args.append('--read-only')
@@ -72,17 +107,14 @@ def attach(cow,readonly,offset=None):
         time.sleep(.1)
     pid_text=(SYS/'pid').read_text().strip()
     need(pid_text.isdecimal(),'NBD attached PID absent')
-    proc=Path('/proc')/pid_text
-    argv=[x.decode() for x in (proc/'cmdline').read_bytes().split(b'\0') if x]
-    raw=(proc/'stat').read_text()
-    tick=raw[raw.rfind(')')+2:].split()[19]
+    identity=nbd_process_identity(int(pid_text));argv=identity['argv']
     owned=(argv and Path(argv[0]).name=='qemu-nbd' and
            '--connect='+NODE in argv and str(cow) in argv and
            (('--read-only' in argv)==readonly) and
            (offset is None or '--offset='+str(offset) in argv))
     need(owned,'NBD attached process/source/offset is not ours; no detach attempted')
-    owner={'pid':int(pid_text),'start_ticks':tick,'argv':argv,
-           'read_only':readonly,'offset':offset}
+    owner=dict(identity,read_only=readonly,offset=offset)
+    same_nbd_owner(owner)
     if (SYS/'ro').read_text().strip()!=('1' if readonly else '0'):
         detach(owner)
         raise RuntimeError('owned NBD read-only mode differs; detached')
@@ -93,11 +125,7 @@ def detach(owner):
     import select
     pid=owner['pid'];proc=Path('/proc')/str(pid)
     def same_attached_birth():
-        need(proc.exists()and
-             (proc/'stat').read_text().rsplit(')',1)[1].split()[19]==owner['start_ticks']and
-             [os.fsdecode(x)for x in(proc/'cmdline').read_bytes().split(b'\0')if x]==owner['argv']and
-             (SYS/'pid').read_text().strip()==str(pid),
-             'NBD birth/argv changed before exact detach')
+        same_nbd_owner(owner)
     same_attached_birth();pidfd=os.pidfd_open(pid,0)
     try:
         same_attached_birth()
@@ -109,11 +137,17 @@ def detach(owner):
             need(time.monotonic()<deadline,'owned NBD closure observation deadline expired')
             try:associated=(SYS/'pid').read_text().strip()
             except FileNotFoundError:associated=''
-            need(associated in('',str(pid)),'NBD association replaced after owned disconnect')
+            need(associated in('',str(owner['sysfs_pid'])),
+                 'NBD association replaced after owned disconnect')
             try:birth=(proc/'stat').read_text().rsplit(')',1)[1].split()[19]
             except FileNotFoundError:birth=None
             need(birth is None or birth==owner['start_ticks'],'NBD PID reused during exact closure observation')
-            gone=birth is None and bool(exited.poll(0))
+            try:
+                thread_birth=(Path('/proc')/str(owner['sysfs_pid'])/'stat').read_text().rsplit(')',1)[1].split()[19]
+            except FileNotFoundError:thread_birth=None
+            need(thread_birth is None or thread_birth==owner['sysfs_start_ticks'],
+                 'NBD client task reused during exact closure observation')
+            gone=birth is None and thread_birth is None and bool(exited.poll(0))
             need(time.monotonic()<deadline,'late owned NBD closure refused')
             # sysfs may clear BEFORE the same daemon disappears from /proc.
             # Wait for BOTH in the original finite window; never detach again,
@@ -122,7 +156,8 @@ def detach(owner):
             remaining=deadline-time.monotonic()
             need(remaining>0,'owned NBD process/association not gone after disconnect')
             time.sleep(min(.1,remaining))
-        return {'disconnect_numeric':0,'pid_absent':True,'original_pidfd_exited':True,
+        return {'disconnect_numeric':0,'pid_absent':True,'client_task_absent':True,
+                'original_pidfd_exited':True,
                 'closure_wait_seconds':time.monotonic()-started,**idle()}
     finally:os.close(pidfd)
 
@@ -165,16 +200,12 @@ def readonly_partition_probe(cow,owner,offset,identity,frames):
     def same_view():
         need(job.sig(os.fstat(fd))==identity==job.sig(cow.lstat()),
              'readonly partition source epoch changed')
-        proc=Path('/proc')/str(owner['pid'])
         need(owner['read_only']is True and owner['offset']==offset and
              str(cow)in owner['argv'] and '--read-only'in owner['argv'] and
              '--offset='+str(offset)in owner['argv'] and
-             proc.exists()and
-             (proc/'stat').read_text().rsplit(')',1)[1].split()[19]==owner['start_ticks']and
-             [x.decode()for x in(proc/'cmdline').read_bytes().split(b'\0')if x]==owner['argv']and
-             (SYS/'pid').read_text().strip()==str(owner['pid'])and
              (SYS/'ro').read_text().strip()=='1'and not list((SYS/'holders').iterdir()),
              'readonly partition association changed; no further probe')
+        same_nbd_owner(owner)
     try:
         while True:
             same_view();remaining=deadline-time.monotonic()
