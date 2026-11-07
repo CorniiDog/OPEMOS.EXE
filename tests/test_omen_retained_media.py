@@ -216,6 +216,34 @@ class UbuntuCandidateDiscLayout(unittest.TestCase):
 @unittest.skipUnless(getattr(os, 'geteuid', lambda: -1)() == 0,
                      'actual protected Root filesystem/ISO regression')
 class UbuntuSourceProducerInputs(unittest.TestCase):
+    def test_real_guest_build_child_receives_explicit_toolchain_environment(self):
+        import time
+        import ubuntu_guest_build as builder
+        import owned_command as supervisor
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tools = root / 'tools'; tools.mkdir()
+            tool = tools / 'guest-pinned-tool'
+            expected = {'PATH': str(tools) + ':/usr/bin:/bin',
+                        'CARGO_HOME': str(root / 'cargo'),
+                        'npm_config_cache': str(root / 'npm'),
+                        'CARGO_NET_OFFLINE': 'true',
+                        'OPEMOS_CORE_CONTRACT_ROOT': str(root / 'core'),
+                        'OPEMOS_EXPERIMENTAL_LINUX': '1'}
+            tool.write_text('#!/usr/bin/python3\nimport os,json,time\n'
+                            'time.sleep(0.05)\nprint(json.dumps({k:os.environ.get(k) '
+                            'for k in ' + repr(list(expected)) + '}))\n')
+            tool.chmod(0o700)
+            original = dict(os.environ)
+            result = builder.run(['guest-pinned-tool'], root, expected,
+                                 root / 'build-env', time.monotonic() + 10, supervisor)
+            self.assertEqual(result['numeric'], 0, result['native'])
+            self.assertTrue(result['native']['lifecycleClosed'])
+            self.assertEqual(result['native']['errors'], [])
+            self.assertTrue(result['native']['fd']['restored'])
+            self.assertEqual(json.loads((root / 'build-env.stdout').read_text()), expected)
+            self.assertEqual(dict(os.environ), original)
+
     def load(self, name):
         spec=importlib.util.spec_from_file_location('source_producer_'+name,SOURCE/(name+'.py'))
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
