@@ -1326,6 +1326,13 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
         after=sources(composed)
         self.assertEqual([name for name,body in before.items()if after[name]!=body],
                          ['verify_terminal_pool_transition','exact_proc_revalidation_evidence'])
+        def terminal_method(text):
+            cls=next(n for n in ast.parse(text).body
+                     if isinstance(n,ast.ClassDef)and n.name=='ExpectedInvocation')
+            return ast.get_source_segment(text,next(n for n in cls.body
+                if isinstance(n,ast.FunctionDef)and n.name=='recheck_terminal'))
+        composed=composed.replace(terminal_method(original),
+                                  terminal_method((SOURCE/'test_queue.py').read_text()))
         def loaded(text,name):
             module=types.ModuleType(name);module.__file__=str(SOURCE/'test_queue.py')
             exec(compile(text,module.__file__,'exec'),module.__dict__);return module
@@ -1370,14 +1377,14 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                     timeout_seconds=300,resources=['prior-closed'],approval={'path':str(marker),
                     'sha256':hashlib.sha256(marker.read_bytes()).hexdigest()}),base)
                 db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',('prior-closed',q.canonical(closed_spec),
-                    'failed','[]',None,1.,2.,q.canonical({'FIRST':'retained original',
+                    'failed','[]',None,1.,2.,q.canonical({'FIRST':'retained original '+('x'*1048576),
                     'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False}})))
                 db.commit();(root/'logs/failed-ubuntu').mkdir(parents=True)
                 (root/'logs/failed-ubuntu/stderr.log').write_text('actual preparation FIRST retained\n')
                 leader=dict(tid=os.getpid(),tgid=os.getpid(),start=123,ppid=1,uids=[os.getuid()]*4,cgroup=pool+'/'+peer)
                 def proof(rows):
                     return dict(admitted=True,includesUID0=True,completeBoundedTraversal=True,allOwnedDescriptorsClosed=True,
-                        canonicalPool=pool,currentWholePoolEmpty=False,completedMonotonic=time.monotonic(),
+                        canonicalPool=pool,currentWholePoolEmpty=False,completedMonotonic=q.time.monotonic(),
                         systemdPoolProperties={'ControlGroup':pool},unknownReservationsRetained=[],
                         unitProperties={u:{'known':True,'properties':props(u)}for u in(own,peer)},knownInvocations=invocations.copy(),
                         positiveMainPIDProofs={peer:{'process':leader.copy(),'invocation':invocations[peer]}},
@@ -1471,8 +1478,43 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                             q.verify_terminal_pool_transition(epoch,bad,retained,False)
                     repaired=q.SystemdBackend(root,cfg);repaired._validate_pool_cut=complete_cut
                     repaired.inspect=backend.inspect;repaired.whole_owned_cgroup=backend.whole_owned_cgroup
-                    with patch.object(q,'_RAW_SYSTEMCTL',side_effect=manager):
+                    # Real CLOSED-row JSON/hash work is charged to a modeled
+                    # slow immutable-history preparation clock. The kernel
+                    # observation and exact manager still get the original 1s
+                    # freshness guard; no proof timestamps are rewritten.
+                    clock=[100.];compactions=[];compact_row=q.terminal_closed_row
+                    def costly_closed_row(value,raw=None):
+                        result=compact_row(value,raw)
+                        if value.get('id')=='prior-closed'and value.get('kind')!=q.HISTORY_CLOSED_ROW_KIND:
+                            clock[0]+=1.1;compactions.append(clock[0])
+                        return result
+                    real_time=q.time
+                    modeled_time=types.SimpleNamespace(time=real_time.time,sleep=real_time.sleep,
+                                                       monotonic=lambda:clock[0])
+                    with patch.object(q,'time',modeled_time),patch.object(q,'terminal_closed_row',
+                            side_effect=costly_closed_row),patch.object(q,'_RAW_SYSTEMCTL',side_effect=manager):
+                        def stale_cut(rows,deadline):
+                            value=complete_cut(rows,deadline)
+                            return dict(value,completedMonotonic=value['completedMonotonic']-2)
+                        repaired._validate_pool_cut=stale_cut
+                        with self.assertRaisesRegex(ValueError,'Fresh pool epoch clock unavailable/stale'):
+                            q.finish_committed_terminal(db,repaired,retained)
+                        self.assertEqual(dict(db.execute("SELECT * FROM jobs WHERE id='failed-ubuntu'").fetchone()),
+                                         {k:v for k,v in retained.items()if k!='_poolBinding'})
+                        cut_count=[0]
+                        def changed_cut(rows,deadline):
+                            value=complete_cut(rows,deadline);cut_count[0]+=1
+                            if cut_count[0]==2:
+                                next(r for r in rows if r['id']=='prior-closed')['spec']+=' '
+                            return value
+                        repaired._validate_pool_cut=changed_cut
+                        with self.assertRaisesRegex(ValueError,'Complete terminal ledger changed across current kernel observation'):
+                            q.finish_committed_terminal(db,repaired,retained)
+                        self.assertEqual(dict(db.execute("SELECT * FROM jobs WHERE id='failed-ubuntu'").fetchone()),
+                                         {k:v for k,v in retained.items()if k!='_poolBinding'})
+                        repaired._validate_pool_cut=complete_cut
                         q.finish_committed_terminal(db,repaired,retained)
+                    self.assertTrue(compactions,'actual full immutable history still authenticated')
                     final=dict(db.execute("SELECT * FROM jobs WHERE id='failed-ubuntu'").fetchone())
                     result=json.loads(final['result']);self.assertEqual(final['state'],'failed')
                     self.assertIsNotNone(final['finished']);self.assertEqual(result['terminalLifecycle']['phase'],'CLOSED')

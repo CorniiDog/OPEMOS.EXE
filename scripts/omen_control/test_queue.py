@@ -1290,8 +1290,16 @@ class ExpectedInvocation:
     def recheck_terminal(self, prepared, expected_manager, require_empty):
         require(self.db.in_transaction, "Terminal live fence requires retained writer lock")
         self.ledger_current()
+        # Hash complete immutable CLOSED history before the live kernel cut.
+        # The retained writer lock excludes another writer; compare every raw
+        # row again after observation so this prepared digest is never authority
+        # for changed history, a new invocation, or a process/resource effect.
+        before = pool_rows(self.db, self.db.execute("SELECT * FROM jobs ORDER BY rowid").fetchall())
+        compact = [terminal_closed_row(row) for row in before]
+        prepared = dict(prepared, rows=[terminal_closed_row(row) for row in prepared['rows']])
         rows, pool = boundary_pool_epoch(self.db, self.backend)
-        current = terminal_pool_epoch(self.db, rows, pool)
+        require(rows == before, "Complete terminal ledger changed across current kernel observation")
+        current = terminal_pool_epoch(self.db, compact, pool)
         # Same complete comparison, but receipt SHA/JSON work was already done.
         verify_terminal_pool_transition(prepared, current, self.row, False, receipt_hashes=False)
         require(pool['canonicalPool'] == '/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice',
