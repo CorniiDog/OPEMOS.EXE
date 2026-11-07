@@ -348,6 +348,41 @@ def receive_source_package(channel,config,result):
     result['guest_build']=proof
 
 
+def qemu_arguments(C,code,vars_out,overlay,package,observer):
+    """Common readonly carrier binding for actual source and GUI operations."""
+    nonce=C['nonce']
+    need(re.fullmatch('[0-9a-f]{32}',nonce)and
+         C['observer_iso']['nonce']==nonce and
+         C['observer_iso']['source_commit']==operation_input(C)['descriptor']['source_commit'],
+         'same actual source/nonce readonly medium before QEMU')
+    serial=nonce[:20]
+    if not source_build(C):
+        need(C['guest_operation']['nonce']==nonce and
+             C['guest_operation']['input_carrier_serial']==serial,
+             'same GUI input carrier identity')
+    name='opemos-robot-ubuntu-'+nonce
+    argv=['/usr/bin/qemu-system-x86_64','-name',name,'-machine','q35,accel=kvm',
+          '-cpu','host','-smbios','type=1,product=opemos-robot-ubuntu-'+nonce,'-smp',str(C['cores']),'-m',str(C['guest_memory_bytes']//1048576),
+          '-drive',f'if=pflash,format=raw,unit=0,readonly=on,file={code}',
+          '-drive',f'if=pflash,format=raw,unit=1,file={vars_out}',
+          '-drive',f'if=none,id=osdisk,format=qcow2,file={overlay}',
+          '-device','virtio-blk-pci,drive=osdisk,bootindex=0',
+          '-drive',f'if=none,id=package,media=cdrom,format=raw,readonly=on,file={package}',
+          '-device','ide-cd,id=package-cd,bus=ide.0,unit=0,drive=package,serial='+serial,
+          '-drive',f'if=none,id=observer,media=cdrom,format=raw,readonly=on,file={observer}',
+          '-device','ide-cd,id=observer-cd,bus=ide.1,unit=0,drive=observer',
+          '-device','virtio-vga','-device','qemu-xhci,id=xhci',
+          '-device','usb-tablet,bus=xhci.0','-device','usb-kbd,bus=xhci.0',
+          '-chardev','socket,path=observer.sock,server=on,wait=off,id=obs',
+          '-device','virtio-serial-pci',
+          '-device','virtserialport,chardev=obs,name=opemos.robot.observer',
+          '-nic','none','-display','none','-vnc','unix:vnc.sock',
+          '-qmp','unix:qmp.sock,server=on,wait=off',
+          '-monitor','none','-serial','none','-parallel','none',
+          '-sandbox','on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny','-S']
+    return argv
+
+
 def authenticated_config(config):
     need(os.getuid()==os.geteuid()==1000 and config.parent==HERE and config.name=='operation.json',
          'same materialized ordinary queue config')
@@ -582,25 +617,7 @@ def main():
              (runtime_identity.st_dev,runtime_identity.st_ino)==(root.lstat().st_dev,root.lstat().st_ino),
              'held original private VM runtime directory')
         qmp=root/'qmp.sock';vnc=root/'vnc.sock';obs=root/'observer.sock'
-        argv=['/usr/bin/qemu-system-x86_64','-name',name,'-machine','q35,accel=kvm',
-              '-cpu','host','-smbios','type=1,product=opemos-robot-ubuntu-'+nonce,'-smp',str(C['cores']),'-m',str(C['guest_memory_bytes']//1048576),
-              '-drive',f'if=pflash,format=raw,unit=0,readonly=on,file={code}',
-              '-drive',f'if=pflash,format=raw,unit=1,file={vars_out}',
-              '-drive',f'if=none,id=osdisk,format=qcow2,file={overlay}',
-              '-device','virtio-blk-pci,drive=osdisk,bootindex=0',
-              '-drive',f'if=none,id=package,media=cdrom,format=raw,readonly=on,file={package}',
-              '-device','ide-cd,id=package-cd,bus=ide.0,unit=0,drive=package,serial='+C['guest_operation']['input_carrier_serial'],
-              '-drive',f'if=none,id=observer,media=cdrom,format=raw,readonly=on,file={observer}',
-              '-device','ide-cd,id=observer-cd,bus=ide.1,unit=0,drive=observer',
-              '-device','virtio-vga','-device','qemu-xhci,id=xhci',
-              '-device','usb-tablet,bus=xhci.0','-device','usb-kbd,bus=xhci.0',
-              '-chardev','socket,path=observer.sock,server=on,wait=off,id=obs',
-              '-device','virtio-serial-pci',
-              '-device','virtserialport,chardev=obs,name=opemos.robot.observer',
-              '-nic','none','-display','none','-vnc','unix:vnc.sock',
-              '-qmp','unix:qmp.sock,server=on,wait=off',
-              '-monitor','none','-serial','none','-parallel','none',
-              '-sandbox','on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny','-S']
+        argv=qemu_arguments(C,code,vars_out,overlay,package,observer)
         if not source_build(C):argv+=USB.virtual_usb_qemu_arguments(backing,usb_fd,nonce)
         def limit():
             resource.setrlimit(resource.RLIMIT_FSIZE,(cow_limit,cow_limit))

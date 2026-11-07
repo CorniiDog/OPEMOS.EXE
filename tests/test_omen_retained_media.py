@@ -145,6 +145,90 @@ class UbuntuSourceProducerInputs(unittest.TestCase):
             self.assertIn('--admitted-source-build',script)
             self.assertNotIn('appimage-extract-and-run',script)
 
+    def test_source_recipe_materializer_reaches_actual_prelaunch_carrier_without_gui(self):
+        import run_approved as approved
+        with tempfile.TemporaryDirectory(prefix='source-carrier-')as temp:
+            root=Path(temp);root.chmod(0o711)
+            modules=root/'reviewed';modules.mkdir();modules.chmod(0o755)
+            names=('planner.py','run_approved.py','job.py','prepare_observer_iso.py',
+                   'ubuntu_guest_build.py','owned_command.py')
+            for name in names:
+                path=modules/name;path.write_bytes((SOURCE/name).read_bytes());path.chmod(0o444)
+            for name in approved.ENGINE:
+                path=modules/name;path.parent.mkdir(parents=True,exist_ok=True)
+                for parent in path.parents:
+                    if parent==root:break
+                    parent.chmod(0o755)
+                path.write_bytes((SOURCE.parent.parent/name).read_bytes())
+                os.chown(path,1000,1000);path.chmod(0o444)
+            recipe=modules/'source-recipe.json'
+            recipe.write_bytes((SOURCE/'ubuntu-source-operation.json').read_bytes());recipe.chmod(0o444)
+            ordinary=root/'ordinary';ordinary.mkdir();os.chown(ordinary,1000,1000);ordinary.chmod(0o700)
+            body=r'''
+import copy,hashlib,io,json,os,sys,tarfile,time,zipfile
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0,sys.argv[1])
+import planner,run_approved as approved,job
+assert os.getresuid()==(1000,1000,1000)
+modules=Path(sys.argv[1]);work=Path(sys.argv[2]);nonce='e'*32;candidate='a'*40
+archive=work/'inputs.zip'
+with io.BytesIO()as buf:
+ with tarfile.open(fileobj=buf,mode='w')as tar:
+  item=tarfile.TarInfo('source/package.json');data=b'{"private":true}';item.size=len(data);tar.addfile(item,io.BytesIO(data))
+ tarraw=buf.getvalue()
+definition={'kind':'UBUNTU_GUEST_SOURCE_INPUT_V1','compiled_or_packaged':False,
+ 'archive_bytes':len(tarraw),'archive_sha256':hashlib.sha256(tarraw).hexdigest(),'expanded_bytes':1024}
+with zipfile.ZipFile(archive,'x')as z:
+ z.writestr('ubuntu-source-inputs.tar',tarraw);z.writestr('source-input.json',json.dumps(definition))
+archive.chmod(0o400);raw=archive.read_bytes()
+ref={'path':str(archive),'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest()}
+descriptor={'kind':'UBUNTU_SOURCE_INPUT_ARTIFACT_V1','repository':'CorniiDog/OPEMOS.EXE',
+ 'source_commit':candidate,'producer_run_id':'12','producer_attempt':'2','input':definition,
+ 'artifact_archive_sha256':ref['sha256']}
+login=work/'login';approved.create(login,b'{"fixtureOnly":true}',0o600);_,login_pin=approved.read(login,4096,1000)
+programs={n:(modules/n).read_bytes()for n in('job.py','prepare_observer_iso.py','ubuntu_guest_build.py','owned_command.py')}
+pins={n:approved.read(modules/n,1048576,0)[1]for n in programs}
+policy={'fixedStorageBytes':33554432,'sourceBuildEnabled':True,'sourceBuildInputBytes':1048576,
+ 'programSHA256':{n:hashlib.sha256(raw).hexdigest()for n,raw in programs.items()},
+ 'engineSHA256':{n:hashlib.sha256((modules/n).read_bytes()).hexdigest()for n in approved.ENGINE},
+ 'operationOperands':{k:{}for k in('base','code','vars_template','image_carrier','original_source','queue_entry')}}
+policy['operationOperands'].update(loginPin=login_pin,ext4_dev=work.stat().st_dev,
+ retained_union_bytes=0,pool_sha256='b'*64)
+recipe={'path':str(modules/'source-recipe.json'),'sha256':hashlib.sha256((modules/'source-recipe.json').read_bytes()).hexdigest()}
+request={'version':1,'action':'prepare','kind':'source','subject':{'platform':'ubuntu'},
+ 'repository':'CorniiDog/OPEMOS.EXE','source_commit':'c'*40,'run_id':'12','attempt':'2',
+ 'nonce':nonce,'consumer_started_epoch':int(time.time()),'source_input':{'descriptor':descriptor,'archive':ref}}
+with patch.object(planner,'operation_policy',return_value=(policy,{'path':str(modules/'fixed-policy.json'),'sha256':'d'*64})):
+ planned=planner.automatic_operation(recipe,request,work,{'path':'modeled Root policy','sha256':'d'*64})
+cfg=json.loads(Path(planned['normal_job_config']['path']).read_bytes());operation=Path(planned['normal_job_config']['path']).parent
+assert 'guest_operation'not in cfg and 'candidate'not in cfg and cfg['kind']==approved.SOURCE_KIND
+mount=operation/'scratch';mount.mkdir();mount.chmod(0o700);started=time.monotonic()
+cfg.update(runtime_storage={'kind':'CURRENT_ROOT_PRIVATE_FILE_BACKED_EXT4_V1','mount':str(mount),
+ 'mountNamespace':os.readlink('/proc/self/ns/mnt'),'device':mount.stat().st_dev,
+ 'cowPath':str(mount/'desktop-overlay.qcow2'),'preparedDirectory':str(mount/'prepared'),
+ 'fixedStorageBytes':policy['fixedStorageBytes']},operation_started_monotonic=started,
+ operation_end_monotonic=started+120,whole_seconds=120)
+with patch.object(approved,'definition',return_value=(cfg,policy,programs,pins,{},operation)):
+ entry,config=approved.materialize({'fixtureOnly':'Root deployment/mount admission modeled'})
+actual=json.loads(config.read_bytes());assert 'guest_operation'not in actual and 'candidate'not in actual
+argv=job.qemu_arguments(actual,'readonly-code','new-vars','new-overlay','original-carrier',actual['observer_iso']['path'])
+assert 'ide-cd,id=package-cd,bus=ide.0,unit=0,drive=package,serial='+nonce[:20]in argv
+assert 'if=none,id=package,media=cdrom,format=raw,readonly=on,file=original-carrier'in argv
+for field,value in(('nonce','f'*32),('source_commit','f'*40)):
+ wrong=copy.deepcopy(actual);wrong['observer_iso'][field]=value
+ try:job.qemu_arguments(wrong,'code','vars','overlay','carrier','observer')
+ except RuntimeError as error:assert str(error)=='same actual source/nonce readonly medium before QEMU'
+ else:raise AssertionError('unbound source/nonce medium accepted')
+native=json.loads((operation/'prepare-native.json').read_bytes())
+assert native['numericExit']==0 and native['lifecycleClosed']and native['errors']==[]
+print(json.dumps({'realUID1000':True,'sourceRecipeMaterialized':True,'actualReadonlyCarrierArgv':True,'QEMUStarted':False}))
+'''
+            result=subprocess.run([sys.executable,'-I','-B','-',str(modules),str(ordinary)],
+                input=body,text=True,capture_output=True,timeout=150,user=1000,group=1000,extra_groups=[])
+            self.assertEqual(result.returncode,0,result.stderr+'\n'+result.stdout)
+            self.assertTrue(json.loads(result.stdout)['actualReadonlyCarrierArgv'])
+
     def test_real_ext4_guest_prerequisite_helper_custody_and_no_overwrite(self):
         module=self.load('provision_observer_rule')
         with tempfile.TemporaryDirectory()as temp:
