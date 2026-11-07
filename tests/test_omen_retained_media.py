@@ -979,8 +979,12 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
         self.assertFalse(proc.exists())
         with tempfile.TemporaryDirectory(prefix='opemos-terminal-proc-peer-')as tmp:
             base=Path(tmp);state=base/'state'
-            with contextlib.redirect_stdout(io.StringIO()):q.main(['--queue',str(state),'init'])
-            root,db=q.connect(state);cfg=q.config(db);backend=q.SystemdBackend(root,cfg)
+            # Keep the real fixture SQLite connection explicitly owned. The
+            # frozen main(init) returns without closing its separate connection.
+            root,db=q.connect(state)
+            with db:db.execute('INSERT INTO config VALUES(1,?)',(q.canonical(dict(
+                cpu_ids=q.DEFAULT_CPUS,memory_bytes=q.DEFAULT_RAM,slice='opemos-vm-pool.slice',manager='system')),))
+            cfg=q.config(db);backend=q.SystemdBackend(root,cfg)
             pool='/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice'
             own,peer=backend.prefix+'a'*32+'.service',backend.prefix+'b'*32+'.service'
             invocations={own:'c'*32,peer:'d'*32}
@@ -1044,7 +1048,8 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                     originalFailure={'type':'FileNotFoundError','reason':'real reaped child'})
                 rows=q.pool_rows(db,db.execute('SELECT * FROM jobs ORDER BY rowid').fetchall())
                 reservations=[dict(unit=r['unit'],cpus=json.loads(r['cpus']),memory=json.loads(r['spec'])['memory'],
-                    resources=json.loads(r['spec'])['resources'],invocation=r['_poolBinding']['invocation'])for r in rows]
+                    resources=json.loads(r['spec'])['resources'],invocation=r['_poolBinding']['invocation'])
+                    for r in rows if r['state']=='running']
                 error=q.PoolAdmissionFailure('actual terminal peer proc observation',dict(admitted=False,
                     reservationRetained=True,operationOrReleaseAuthorized=False,recordedReservations=reservations,
                     firstFailure={'firstFailure':typed,'closeOutcomes':[{'label':'proc-'+str(child.pid),'closed':True,'UNKNOWN':False}]}))
