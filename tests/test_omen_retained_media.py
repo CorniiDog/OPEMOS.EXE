@@ -99,6 +99,72 @@ class UbuntuSourceProducerInputs(unittest.TestCase):
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
         return module
 
+    def test_normal_create_materializer_reaches_actual_preflight_with_optional_workflow(self):
+        from unittest import mock
+        cycle=self.load('normal_cycle')
+        with tempfile.TemporaryDirectory(prefix='opemos-create-preflight-',dir='/var/lib')as temp:
+            root=Path(temp);root.chmod(0o755)
+            runner=root/'runner';runner.mkdir();os.chown(runner,1000,1000);runner.chmod(0o700)
+            private=root/'private';private.mkdir();os.chown(private,1000,1000);private.chmod(0o700)
+            queue=root/'queue';queue.mkdir();config=root/'config';config.mkdir()
+            def file(path,raw,uid=0,mode=0o444):
+                path.parent.mkdir(parents=True,exist_ok=True)
+                path.write_bytes(raw);os.chown(path,uid,uid);path.chmod(mode)
+                return {'path':str(path),'sha256':hashlib.sha256(raw).hexdigest()}
+            file(runner/'.runner',b'{"agentId":21,"agentName":"opemos-omen-robot"}',1000,0o600)
+            for name in ('.credentials','.credentials_rsaparams','.env'):
+                file(runner/name,b'fixture data only',1000,0o600)
+            manifest=file(root/'runner-manifest.json',b'{}')
+            login=file(private/'login',b'{"fixture":true}',1000,0o600)
+            queue_pin=file(queue/'test_queue.py',b'fixture queue DATA',1000)
+            logger=file(queue/'queue_job.py',b'fixture logger DATA',1000)
+            # Only installation-location configuration is modeled. Both
+            # maintained materialize() and preflight() bodies run unchanged,
+            # against real Root/UID1000 files and their actual full identities.
+            source=(SOURCE/'install_remote.py').read_bytes()+('\nROOT=Path('+repr(str(root))+')\n'+
+                'RUNNER=Path('+repr(str(runner))+')\nCONFIG=Path('+repr(str(config))+')\n'+
+                'QUEUE=Path('+repr(str(queue))+')\nPRIVATE=Path('+repr(str(private))+')\n').encode()
+            temporary=types.ModuleType('fixture_installer_targets')
+            exec(compile(source,'configured_actual_installer.py','exec'),temporary.__dict__)
+            for path in temporary.targets({'policy':{'sourceBuildEnabled':True}}).values():
+                if not path.exists():file(path,b'original installed target data')
+            sha=lambda raw:hashlib.sha256(raw).hexdigest()
+            control=b'opaque Root control fixture';hook=b'opaque Root hook fixture'
+            closed={'currentManager':{'MainPID':'0','ControlGroup':''},'fullUID0Group':{'absent':True},
+                    'oldDispatcherAbsent':True,'oldListenerAbsent':True}
+            manager_result=subprocess.CompletedProcess(['modeled systemd'],0,
+                b'LoadState=not-found\nActiveState=inactive\nMainPID=0\nControlGroup=\n',b'')
+            for enabled in (False,True):
+                template={'kind':'ROOT_REVIEWED_ROBOT_CONTROL_MATERIALIZATION_V1','mainCommit':'a'*40,
+                    'runnerId':21,'queueSourceSHA256':queue_pin['sha256'],'queueLoggerSHA256':logger['sha256'],
+                    'runnerManifest':manifest,'login':login,
+                    'sources':{'control.py':{'hex':control.hex(),'sha256':sha(control)},
+                               'job-started.sh':{'hex':hook.hex(),'sha256':sha(hook)}},
+                    'policy':{'kind':'ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1','sourceCommit':'a'*40,
+                        'queueSourceSHA256':queue_pin['sha256'],'queueLoggerSHA256':logger['sha256'],
+                        'sourceBuildEnabled':enabled},
+                    'registry':{'artifacts':{'ubuntu':{}}},'profile':{'fixed_registry':{}}}
+                raw=cycle.enc(template)
+                policy={'normalTemplateSHA256':sha(raw),'currentReleaseTx':'d'*32,
+                    'normalInstallerSHA256':sha(source),'mainCommit':'a'*40,
+                    'queueSourceSHA256':queue_pin['sha256'],'queueLoggerSHA256':logger['sha256'],
+                    'controlBrokerSHA256':sha(control),'jobStartedSHA256':sha(hook)}
+                probe=types.SimpleNamespace(pin_source=lambda *args:(source,{}))
+                with mock.patch.object(cycle,'REMOTE_TEMPLATE_HEX',raw.hex(),create=True), \
+                     mock.patch.object(cycle,'CONTROL',root), \
+                     mock.patch.object(cycle,'closed_receipt',return_value=closed):
+                    payload,installer=cycle.materialize(policy,probe,'e'*32,
+                        {'unit':'opemos-testq-aa-bb.service'}, {})
+                data=json.loads(payload)
+                self.assertEqual(set(data['prior']),set(installer.targets(data)))
+                self.assertEqual('producerWorkflow'in data['prior'],enabled)
+                with mock.patch.object(installer.subprocess,'run',return_value=manager_result):
+                    self.assertTrue(installer.preflight(data))
+                    if enabled:
+                        target=installer.targets(data)['producerWorkflow'];target.write_bytes(b'changed source grant')
+                        with self.assertRaisesRegex(RuntimeError,'prior installed file/absence differs'):
+                            installer.preflight(data)
+
     def test_source_medium_roundtrip_without_a_fake_package_descriptor(self):
         import tarfile,zipfile
         module=self.load('prepare_observer_iso')
