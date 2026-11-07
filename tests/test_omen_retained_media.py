@@ -258,7 +258,7 @@ class UbuntuSourceProducerInputs(unittest.TestCase):
             root=Path(temp);root.chmod(0o711)
             modules=root/'reviewed';modules.mkdir();modules.chmod(0o755)
             names=('planner.py','run_approved.py','job.py','prepare_observer_iso.py',
-                   'ubuntu_guest_build.py','owned_command.py')
+                   'provision_observer_rule.py','ubuntu_guest_build.py','owned_command.py')
             for name in names:
                 path=modules/name;path.write_bytes((SOURCE/name).read_bytes());path.chmod(0o444)
             for name in approved.ENGINE:
@@ -276,7 +276,7 @@ import copy,hashlib,io,json,os,sys,tarfile,time,zipfile
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0,sys.argv[1])
-import planner,run_approved as approved,job
+import planner,run_approved as approved,job,provision_observer_rule as provision
 assert os.getresuid()==(1000,1000,1000)
 modules=Path(sys.argv[1]);work=Path(sys.argv[2]);nonce='e'*32;candidate='a'*40
 archive=work/'inputs.zip'
@@ -329,7 +329,31 @@ for field,value in(('nonce','f'*32),('source_commit','f'*40)):
  else:raise AssertionError('unbound source/nonce medium accepted')
 native=json.loads((operation/'prepare-native.json').read_bytes())
 assert native['numericExit']==0 and native['lifecycleClosed']and native['errors']==[]
-print(json.dumps({'realUID1000':True,'sourceRecipeMaterialized':True,'actualReadonlyCarrierArgv':True,'QEMUStarted':False}))
+# Reach the real preboot helper's admission from this actual UID1000 source
+# materialization. Root deployment/authentication and the subsequent native
+# queue observation are MODELED here; no NBD attach or disk write is executed.
+class ReachedNativeQueue(Exception):pass
+for kind,nonce_value,accepted in((actual['kind'],nonce,True),
+ ('ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1',nonce,True),
+ ('ROOT_ADMITTED_UBUNTU_SOURCE_BUILD_V2',nonce,False),
+ (actual['kind'],'not-a-normal-nonce',False)):
+ selected=dict(actual,kind=kind,nonce=nonce_value)
+ with patch.object(provision.job,'HERE',config.parent),\
+      patch.object(provision.job,'authenticated_config',return_value=selected)as authenticated,\
+      patch.object(provision.job,'authenticated_programs')as programs_checked,\
+      patch.object(provision.job,'current_queue_identity',side_effect=ReachedNativeQueue)as native_queue,\
+      patch.object(provision.resource,'setrlimit'),patch.object(provision.signal,'signal'),\
+      patch.object(provision.signal,'setitimer'),\
+      patch.object(sys,'argv',[provision.__file__,str(config)]):
+  try:provision.main()
+  except ReachedNativeQueue:assert accepted
+  except RuntimeError as error:
+   assert not accepted and str(error)=='same actual ordinary queue operation'
+  else:raise AssertionError('preboot helper skipped current native queue guard')
+  authenticated.assert_called_once_with(config);programs_checked.assert_called_once_with(selected)
+  assert native_queue.call_count==int(accepted)
+print(json.dumps({'realUID1000':True,'sourceRecipeMaterialized':True,'actualReadonlyCarrierArgv':True,
+ 'sourceProvisionReachedNativeQueue':True,'QEMUStarted':False}))
 '''
             result=subprocess.run([sys.executable,'-I','-B','-',str(modules),str(ordinary)],
                 input=body,text=True,capture_output=True,timeout=150,user=1000,group=1000,extra_groups=[])

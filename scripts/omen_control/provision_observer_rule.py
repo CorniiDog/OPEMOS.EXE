@@ -264,7 +264,9 @@ def main():
                              'exact admitted fixed-source config required')
     c=job.authenticated_config(config)
     job.authenticated_programs(c);nonce=c.get('nonce','')
-    need(re.fullmatch(r'[0-9a-f]{32}',nonce or '')and c['kind']=='ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1','same actual ordinary queue operation')
+    need(re.fullmatch(r'[0-9a-f]{32}',nonce or '')and
+         c['kind']in('ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1',job.SOURCE_KIND),
+         'same actual ordinary queue operation')
     unit,invocation,group=job.current_queue_identity(c)
     root=Path(c['programRoot']).parent/'runtime'
     need(root.is_dir() and root.stat().st_uid==os.getuid() and
