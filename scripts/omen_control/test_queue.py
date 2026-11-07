@@ -1621,20 +1621,36 @@ def history_archive_migrate(root,uid,stage,gate):
         try:
             with history_directory(root,uid) as source:
                 allocated,count=history_inventory(source,uid)
-                require(HISTORY_ARCHIVE_INDEX not in os.listdir(source) and HISTORY_ARCHIVE_DATA not in os.listdir(source),'Only one migration of original format')
-                names=sorted(os.listdir(source));require(count==len(names)+1 and len(names)==gate['sourceLeafCount'] and allocated==gate['sourceAllocatedBytes'] and history_identity(os.fstat(source))==gate['sourceDirectoryIdentity'],'Exact frozen original directory inventory')
-                leaves=[];blob=bytearray()
-                for name in names:
+                names=sorted(os.listdir(source));archive=history_archive_index(source,uid)
+                live=set(names)-{HISTORY_ARCHIVE_INDEX,HISTORY_ARCHIVE_DATA}
+                originals={}if archive is None else {name:item['pin'] for name,item in archive[0].items()}
+                require(not(live&originals.keys()),'No live/archive alias during lossless repack')
+                for name in live:
                     fd=os.open(name,os.O_RDONLY|os.O_NOFOLLOW,dir_fd=source)
                     try:ident=history_equal(fd,source,name)
                     finally:history_close_owned(fd)
-                    pin={'name':name,'bytes':ident['st_size'],'sha256':name[:64],'identity':ident}
-                    raw=history_read_leaf(source,pin,uid,HISTORY_METADATA_MAX if name.endswith('.epoch.json') else HISTORY_FILE_MAX)
+                    originals[name]={'name':name,'bytes':ident['st_size'],'sha256':name[:64],'identity':ident}
+                pins=[originals[name] for name in sorted(originals)]
+                require(count==len(pins)+1 and len(pins)==gate['sourceLeafCount'] and allocated==gate['sourceAllocatedBytes'] and history_identity(os.fstat(source))==gate['sourceDirectoryIdentity'],'Exact frozen original directory inventory')
+                def original_bytes(parent,pin):
+                    cap=HISTORY_METADATA_MAX if pin['name'].endswith('.epoch.json')else HISTORY_FILE_MAX
+                    if pin['name']in live:return history_read_leaf(parent,pin,uid,cap)
+                    # The authenticated old pair is immutable DATA, not an
+                    # executable or a new pin. Recheck the complete pair before
+                    # exchange and after rollback reads, preserving every full9.
+                    item=archive[0][pin['name']];require(item['pin']==pin,'Exact archived original pin')
+                    start=item['offset'];compressed=archive[1][start:start+item['compressedBytes']]
+                    require(hashlib.sha256(compressed).hexdigest()==item['compressedSHA256'],'Archived original compressed span SHA')
+                    stream=zlib.decompressobj();raw=stream.decompress(compressed,cap+1)
+                    require(stream.eof and not stream.unused_data and not stream.unconsumed_tail and len(raw)==pin['bytes']and hashlib.sha256(raw).hexdigest()==pin['sha256'],'Archived original exact bytes/hash/bound')
+                    return raw
+                leaves=[];blob=bytearray()
+                for pin in pins:
+                    raw=original_bytes(source,pin)
                     compressed=zlib.compress(raw,9)
                     require(0<len(compressed)<=HISTORY_FILE_MAX,'Bounded compressed original')
                     leaves.append({'pin':pin,'offset':len(blob),'compressedBytes':len(compressed),'compressedSHA256':hashlib.sha256(compressed).hexdigest()})
                     blob.extend(compressed);require(len(blob)<=HISTORY_FILE_MAX,'Archive active product finite64MiB')
-                pins=[item['pin'] for item in leaves]
                 require(hashlib.sha256(canonical(pins).encode()).hexdigest()==gate['sourcePinsSHA256'],'All original pins and unknown bytes fixed before migration')
                 data=bytes(blob);dataid=history_archive_write(staged,HISTORY_ARCHIVE_DATA,data)
                 index={'kind':HISTORY_ARCHIVE_KIND,'dataBytes':len(data),'dataSHA256':hashlib.sha256(data).hexdigest(),'dataIdentity':dataid,'leaves':leaves}
@@ -1643,14 +1659,16 @@ def history_archive_migrate(root,uid,stage,gate):
                 stage_allocated,stage_count=history_inventory(staged,uid)
                 require(stage_allocated+HISTORY_METADATA_MAX<=HISTORY_NAMESPACE_MAX*4//5 and stage_count<=HISTORY_ENTRY_MAX,'Unchanged active cap/headroom/entries after migration')
                 require(allocated+stage_allocated<=HISTORY_ARCHIVE_STAGE_MAX,'Bounded active plus rollback staging allocation')
-                archive=history_archive_index(staged,uid);require(archive is not None and len(archive[0])==len(pins),'Complete staged archive')
+                staged_archive=history_archive_index(staged,uid);require(staged_archive is not None and len(staged_archive[0])==len(pins),'Complete staged archive')
                 for pin in pins:
-                    require(history_archive_read(staged,pin,uid,HISTORY_METADATA_MAX if pin['name'].endswith('.epoch.json') else HISTORY_FILE_MAX)==history_read_leaf(source,pin,uid,HISTORY_METADATA_MAX if pin['name'].endswith('.epoch.json') else HISTORY_FILE_MAX),'Every original exact byte readback before exchange')
+                    require(history_archive_read(staged,pin,uid,HISTORY_METADATA_MAX if pin['name'].endswith('.epoch.json') else HISTORY_FILE_MAX)==original_bytes(source,pin),'Every original exact byte readback before exchange')
+                require(history_archive_index(source,uid)==archive,'Original archive pair unchanged after all cached reads')
             # The external exclusive offline gate must remain held here. Fresh
             # source check closes any accidental pre-exchange mutation window.
             with history_directory(root,uid) as source:
                 require(history_identity(os.fstat(source))==gate['sourceDirectoryIdentity'] and history_inventory(source,uid)[0]==allocated and sorted(os.listdir(source))==names,'Original unchanged immediately before exchange')
-                for pin in pins:history_read_leaf(source,pin,uid,HISTORY_METADATA_MAX if pin['name'].endswith('.epoch.json') else HISTORY_FILE_MAX)
+                for pin in pins:original_bytes(source,pin)
+                require(history_archive_index(source,uid)==archive,'Original archive pair unchanged immediately before exchange')
             history_archive_exchange(rootfd,stage)
             try:
                 with history_directory(root,uid) as current:
@@ -1660,7 +1678,9 @@ def history_archive_migrate(root,uid,stage,gate):
                 try:
                     rollback_id=history_identity(os.fstat(rollback))
                     require(all(rollback_id[k]==gate['sourceDirectoryIdentity'][k] for k in HISTORY_FIELDS[:6]),'Original rollback directory custody after exchange')
-                    for pin in pins:history_read_leaf(rollback,pin,uid,HISTORY_METADATA_MAX if pin['name'].endswith('.epoch.json') else HISTORY_FILE_MAX)
+                    require(history_archive_index(rollback,uid)==archive,'Original archived pair preserved in rollback')
+                    for pin in pins:original_bytes(rollback,pin)
+                    require(history_archive_index(rollback,uid)==archive,'Rollback archived pair unchanged after all reads')
                     require(history_inventory(rollback,uid)[0]+stage_allocated<=HISTORY_ARCHIVE_STAGE_MAX,'Post-exchange total bounded')
                 finally:history_close_owned(rollback)
             except BaseException:

@@ -20,6 +20,65 @@ stage=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(stage)
 
 
+class LosslessHistoryRepack(unittest.TestCase):
+    """Real owned files/exchange/readback; no canonical-job acceptance claim."""
+    def setUp(self):
+        source=Path(__file__).resolve().parents[1]/'scripts/omen_control/test_queue.py'
+        spec=importlib.util.spec_from_file_location('history_repack_queue',source)
+        self.q=importlib.util.module_from_spec(spec);spec.loader.exec_module(self.q)
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name);self.root.chmod(0o700);self.uid=os.getuid()
+
+    def publish(self,label):
+        raw=(self.q.canonical({'id':label,'originalUnknown':'preserved','payload':label*131072})+'\n').encode()
+        with self.q.history_directory(self.root,self.uid,True)as fd:
+            pin=self.q.history_publish(fd,raw,'row',self.uid)
+        return pin,raw
+
+    def gate(self,pins):
+        with self.q.history_directory(self.root,self.uid)as fd:
+            allocated,count=self.q.history_inventory(fd,self.uid)
+            self.assertEqual(count,len(pins)+1)
+            return {'offlineQueueAndWorkerClosed':True,
+                    'sourceDirectoryIdentity':self.q.history_identity(os.fstat(fd)),
+                    'sourcePinsSHA256':hashlib.sha256(self.q.canonical(sorted(pins,key=lambda p:p['name'])).encode()).hexdigest(),
+                    'sourceAllocatedBytes':allocated,'sourceLeafCount':len(pins)}
+
+    def test_existing_archive_and_new_live_leaves_repack_without_losing_original_pins(self):
+        original,first=self.publish('old')
+        q=self.q;limits=(q.HISTORY_FILE_MAX,q.HISTORY_METADATA_MAX,q.HISTORY_NAMESPACE_MAX,q.HISTORY_ENTRY_MAX,q.HISTORY_ARCHIVE_STAGE_MAX)
+        q.history_archive_migrate(self.root,self.uid,'terminal-history-rollback-first',self.gate([original]))
+        new,second=self.publish('new');pins=[original,new];gate=self.gate(pins)
+        result=q.history_archive_migrate(self.root,self.uid,'terminal-history-rollback-second',gate)
+        self.assertTrue(result['rollbackPreserved']);self.assertEqual(result['originalLeafCount'],2)
+        self.assertLess(result['activeAllocatedBytes'],gate['sourceAllocatedBytes'])
+        self.assertEqual(limits,(q.HISTORY_FILE_MAX,q.HISTORY_METADATA_MAX,q.HISTORY_NAMESPACE_MAX,q.HISTORY_ENTRY_MAX,q.HISTORY_ARCHIVE_STAGE_MAX))
+        with q.history_directory(self.root,self.uid)as fd:
+            self.assertEqual(set(os.listdir(fd)),{q.HISTORY_ARCHIVE_INDEX,q.HISTORY_ARCHIVE_DATA})
+            archive=q.history_archive_index(fd,self.uid)
+            self.assertEqual({n:v['pin']for n,v in archive[0].items()},{p['name']:p for p in pins})
+            for pin,raw in ((original,first),(new,second)):
+                # Legacy four-argument consumer contract stays valid.
+                self.assertEqual(q.history_read_leaf(fd,pin,self.uid,q.HISTORY_FILE_MAX),raw)
+        rollback=os.open(self.root/'terminal-history-rollback-second',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+        try:
+            for pin,raw in ((original,first),(new,second)):
+                self.assertEqual(q.history_read_leaf(rollback,pin,self.uid,q.HISTORY_FILE_MAX),raw)
+        finally:os.close(rollback)
+
+    def test_wrong_complete_pin_set_refuses_before_exchange_and_preserves_old_pair(self):
+        original,raw=self.publish('old');q=self.q
+        q.history_archive_migrate(self.root,self.uid,'terminal-history-rollback-first',self.gate([original]))
+        new,other=self.publish('new');gate=self.gate([original,new]);gate['sourcePinsSHA256']='0'*64
+        before={p.name:p.read_bytes()for p in (self.root/q.HISTORY_DIRECTORY).iterdir()}
+        with self.assertRaisesRegex(ValueError,'All original pins'):
+            q.history_archive_migrate(self.root,self.uid,'terminal-history-rollback-refused',gate)
+        self.assertEqual(before,{p.name:p.read_bytes()for p in (self.root/q.HISTORY_DIRECTORY).iterdir()})
+        with q.history_directory(self.root,self.uid)as fd:
+            self.assertEqual(q.history_read_leaf(fd,original,self.uid,q.HISTORY_FILE_MAX),raw)
+            self.assertEqual(q.history_read_leaf(fd,new,self.uid,q.HISTORY_FILE_MAX),other)
+
+
 class MetadataOwnedClosure(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
