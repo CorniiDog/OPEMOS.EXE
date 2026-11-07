@@ -574,10 +574,10 @@ class LosslessHistoryRepack(unittest.TestCase):
         for key,value in [('state','running'),('unit','new.service'),('started',1),('finished',2),
                           ('result','changed'),('cpus','[2]'),('_poolBinding',{})]:
             wrong=copy.deepcopy(appended);wrong['rows'][-1][key]=value
-                expected=('New appended job must never have allocated a unit or resource'
-                    if key in('unit','started','cpus','_poolBinding')else
-                    'Only new unallocated pending or normally CLOSED never-started metadata')
-                with self.subTest(newPending=key),self.assertRaisesRegex(ValueError,expected):
+            expected=('New appended job must never have allocated a unit or resource'
+                if key in('unit','started','cpus','_poolBinding')else
+                'Only new unallocated pending or normally CLOSED never-started metadata')
+            with self.subTest(newPending=key),self.assertRaisesRegex(ValueError,expected):
                 q.verify_terminal_pool_transition(before,wrong,pending,False)
         duplicate=copy.deepcopy(appended);duplicate['rows'][-1]['id']=closed['id']
         with self.assertRaisesRegex(ValueError,'Full ordered original history'):
