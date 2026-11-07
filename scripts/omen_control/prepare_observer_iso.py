@@ -282,7 +282,10 @@ def source_medium(config):
     # immutable ISO remain retained and charged; no source/backing is a victim.
     intermediate=root/'ubuntu-source-inputs.tar';epoch=intermediate.lstat()
     with (root/'source-ISO-readback.stderr').open('xb')as error:
-        child=subprocess.Popen(['/usr/bin/isoinfo','-R','-i',str(iso),'-x','/ubuntu-source-inputs.tar'],
+        # cdrkit isoinfo extracts through a signed-int length and can return
+        # success with no bytes for a source payload larger than 2 GiB. Read
+        # the same Rock Ridge member with the system large-file archive reader.
+        child=subprocess.Popen(['/usr/bin/bsdtar','-xOf',str(iso),'ubuntu-source-inputs.tar'],
             stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=error)
         check=hashlib.sha256();count=0
         try:
@@ -294,8 +297,11 @@ def source_medium(config):
         finally:
             if child.poll()is None:child.kill();child.wait(timeout=10)
             child.stdout.close()
+    readback={'numeric':numeric,'bytes':count,'sha256':check.hexdigest(),
+              'expectedBytes':definition['archive_bytes'],'expectedSHA256':definition['archive_sha256']}
+    create_file(root/'source-ISO-readback.json',(json.dumps(readback,sort_keys=True)+'\n').encode(),0o444)
     if numeric or count!=definition['archive_bytes']or check.hexdigest()!=definition['archive_sha256']:
-        raise ValueError('actual source ISO whole-payload readback failed')
+        raise ValueError('actual source ISO whole-payload readback failed: '+json.dumps(readback,sort_keys=True))
     fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
     if any(getattr(epoch,k)!=getattr(intermediate.lstat(),k)for k in fields):
         raise ValueError('generated source intermediate changed; preserve it')

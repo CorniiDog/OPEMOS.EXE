@@ -211,6 +211,47 @@ class UbuntuSourceProducerInputs(unittest.TestCase):
             self.assertIn('--admitted-source-build',script)
             self.assertNotIn('appimage-extract-and-run',script)
 
+    def test_actual_source_ISO_readback_above_signed_2GiB_file_length(self):
+        """Real ISO/reader/hash; sparse opaque input is not guest build acceptance."""
+        import zipfile
+        module=self.load('prepare_observer_iso')
+        self.assertIsNotNone(shutil.which('bsdtar'))
+        with tempfile.TemporaryDirectory()as temp:
+            root=Path(temp);payload=root/'inputs.tar';size=2**31+65536
+            with payload.open('xb')as output:
+                output.truncate(size);output.seek(size-8);output.write(b'ENDINPUT')
+            digest=hashlib.sha256()
+            with payload.open('rb')as data:
+                while block:=data.read(1048576):digest.update(block)
+            definition={'kind':'UBUNTU_GUEST_SOURCE_INPUT_V1','compiled_or_packaged':False,
+                'archive_bytes':size,'archive_sha256':digest.hexdigest(),'expanded_bytes':1024}
+            candidate=root/'source-input.zip'
+            with zipfile.ZipFile(candidate,'x',compression=zipfile.ZIP_DEFLATED,compresslevel=1)as archive:
+                archive.write(payload,'ubuntu-source-inputs.tar')
+                archive.writestr('source-input.json',json.dumps(definition))
+            candidate.chmod(0o400)
+            full9=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+            def ref(path):
+                raw=path.read_bytes()
+                return {'path':str(path),'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),
+                        'identity':{k:getattr(path.stat(),k)for k in full9}}
+            programs={}
+            for name in('ubuntu_guest_build.py','owned_command.py'):
+                path=root/name;path.write_bytes((SOURCE/name).read_bytes());path.chmod(0o444);programs[name]=ref(path)
+            descriptor={'kind':'UBUNTU_SOURCE_INPUT_ARTIFACT_V1','source_commit':'c'*40,
+                        'producer_run_id':'12','producer_attempt':'2','input':definition}
+            config={'kind':'ROOT_ADMITTED_UBUNTU_SOURCE_BUILD_V1','nonce':'a'*32,
+                'candidate_source_commit':'c'*40,'source_input':{'descriptor':descriptor,'archive':ref(candidate)},
+                'source_input_cap_bytes':67108864,'prepared_directory':str(root/'prepared'),
+                'guest_builder_source':programs['ubuntu_guest_build.py'],
+                'owned_command_source':programs['owned_command.py'],'remaining_seconds':120}
+            result=module.source_medium(config)
+            proof=json.loads((root/'prepared/source-ISO-readback.json').read_bytes())
+            self.assertEqual((proof['numeric'],proof['bytes'],proof['sha256']),(0,size,digest.hexdigest()))
+            self.assertTrue(result['source_payload_readback'])
+            self.assertFalse((root/'prepared/ubuntu-source-inputs.tar').exists())
+            self.assertTrue(candidate.exists());self.assertFalse(result['VMOrGUIAcceptance'])
+
     def test_source_recipe_materializer_reaches_actual_prelaunch_carrier_without_gui(self):
         import run_approved as approved
         with tempfile.TemporaryDirectory(prefix='source-carrier-')as temp:
