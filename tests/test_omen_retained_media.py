@@ -293,14 +293,16 @@ programs={name:(modules/name).read_bytes()for name in('owned_command.py','prepar
 _,observer_pin=approved.read(modules/'observer_guest.py',65536,0)
 started=time.monotonic();policy={'fixedStorageBytes':33554432,
  'programSHA256':{name:hashlib.sha256(raw).hexdigest()for name,raw in programs.items()}}
-cfg={'nonce':nonce,'candidate':{'descriptor':descriptor,'archive':archive_ref},'loginPin':login_pin,
+cfg={'kind':'ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1','nonce':nonce,
+ 'candidate':{'descriptor':descriptor,'archive':archive_ref},'loginPin':login_pin,
  'runtime_storage':{'kind':'CURRENT_ROOT_PRIVATE_FILE_BACKED_EXT4_V1','mount':str(mount),
   'mountNamespace':os.readlink('/proc/self/ns/mnt'),'device':mount.stat().st_dev,
   'cowPath':str(mount/'desktop-overlay.qcow2'),'preparedDirectory':str(mount/'prepared'),
   'fixedStorageBytes':policy['fixedStorageBytes']},
  'operation_started_monotonic':started,'operation_end_monotonic':started+120,'whole_seconds':120,
  'retained_union_bytes':0,'guest_operation':{'nonce':nonce,'source_commit':source,
-  'package_sha256':descriptor['package_sha256'],'native_executable_sha256':descriptor['executable_sha256']}}
+  'package_sha256':descriptor['package_sha256'],'native_executable_sha256':descriptor['executable_sha256'],
+  'display':[1600,900]}}
 with patch.object(approved,'definition',return_value=(cfg,policy,programs,{'observer_guest.py':observer_pin},{},operation)):
  job,config=approved.materialize({'fixtureOnly':'modeled deployment/mount admission'})
 receipt=json.loads((operation/'prepare-native.json').read_bytes())
