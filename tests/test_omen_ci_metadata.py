@@ -20,6 +20,73 @@ stage=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(stage)
 
 
+class OwnedNBDDisconnect(unittest.TestCase):
+    """Real owned PID/pidfd exit, with device/sysfs operations modeled."""
+    def setUp(self):
+        import sys
+        source=Path(__file__).resolve().parents[1]/'scripts/omen_control/provision_observer_rule.py'
+        sys.path.insert(0,str(source.parent));previous=os.umask(0o077)
+        try:
+            spec=importlib.util.spec_from_file_location('owned_nbd_disconnect_fixture',source)
+            self.helper=importlib.util.module_from_spec(spec);spec.loader.exec_module(self.helper)
+        finally:os.umask(previous);sys.path.pop(0)
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.sysfs=Path(self.temp.name);self.before_fd=set(os.listdir('/proc/self/fd'))
+
+    def child(self):
+        import subprocess,sys
+        p=subprocess.Popen([sys.executable,'-I','-B','-c','import os; os.read(0,1)'],
+                           stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        path=Path('/proc')/str(p.pid)
+        owner={'pid':p.pid,'start_ticks':(path/'stat').read_text().rsplit(')',1)[1].split()[19],
+               'argv':[os.fsdecode(x)for x in(path/'cmdline').read_bytes().split(b'\0')if x]}
+        (self.sysfs/'pid').write_text(str(p.pid))
+        def close():
+            if p.poll()is None:p.communicate(b'x',timeout=5)
+            elif p.stdin and not p.stdin.closed:p.stdin.close()
+        self.addCleanup(close)
+        return p,owner
+
+    def test_sysfs_clears_before_original_daemon_exits_and_is_reaped(self):
+        import threading,time
+        p,owner=self.child();h=self.helper;exits=[];threads=[];calls=[]
+        def disconnect(argv,**kwargs):
+            calls.append(argv);(self.sysfs/'pid').unlink()
+            # The kernel association has gone; the SAME real child is still
+            # alive. This reproduced the old immediate /proc failure.
+            self.assertIsNone(p.poll())
+            def finish():time.sleep(.3);p.communicate(b'x',timeout=5);exits.append(p.returncode)
+            thread=threading.Thread(target=finish);thread.start();threads.append(thread)
+            return {'numeric':0}
+        with mock.patch.object(h,'SYS',self.sysfs),mock.patch.object(h,'cmd',side_effect=disconnect), \
+             mock.patch.object(h,'idle',return_value={'holders_empty':True,'mounts_empty':True,'sysfs_pid_absent':True})as idle:
+            started=time.monotonic();result=h.detach(owner);elapsed=time.monotonic()-started
+        for thread in threads:thread.join(timeout=5);self.assertFalse(thread.is_alive())
+        self.assertEqual(exits,[0]);self.assertGreaterEqual(elapsed,.25)
+        self.assertTrue(result['pid_absent']);self.assertTrue(result['original_pidfd_exited'])
+        self.assertEqual(calls,[['/usr/bin/sudo','-n','/usr/bin/qemu-nbd','--disconnect',h.NODE]])
+        idle.assert_called_once();self.assertFalse((Path('/proc')/str(p.pid)).exists())
+        self.assertEqual(set(os.listdir('/proc/self/fd')),self.before_fd)
+
+    def test_changed_birth_refuses_before_disconnect_and_original_deadline_never_extends(self):
+        import types
+        p,owner=self.child();h=self.helper
+        with mock.patch.object(h,'SYS',self.sysfs),mock.patch.object(h,'cmd')as command:
+            with self.assertRaisesRegex(RuntimeError,'birth/argv changed'):
+                h.detach(dict(owner,start_ticks=str(int(owner['start_ticks'])+1)))
+            command.assert_not_called()
+        ticks=iter([0.,10.01])
+        clock=types.SimpleNamespace(monotonic=lambda:next(ticks),sleep=lambda seconds:self.fail('expired operation must not sleep'))
+        def disconnected(*args,**kwargs):(self.sysfs/'pid').unlink();return {'numeric':0}
+        with mock.patch.object(h,'SYS',self.sysfs),mock.patch.object(h,'time',clock), \
+             mock.patch.object(h,'cmd',side_effect=disconnected)as command,mock.patch.object(h,'idle')as idle:
+            with self.assertRaisesRegex(RuntimeError,'closure observation deadline expired'):h.detach(owner)
+            command.assert_called_once();idle.assert_not_called()
+        self.assertIsNone(p.poll()) # refusal did not signal/kill the owned child
+        p.communicate(b'x',timeout=5);self.assertEqual(p.returncode,0)
+        self.assertEqual(set(os.listdir('/proc/self/fd')),self.before_fd)
+
+
 class UbuntuOwnedUnixSockets(unittest.TestCase):
     """Actual Linux sockets at a future normal operation path over108 bytes."""
     def setUp(self):
