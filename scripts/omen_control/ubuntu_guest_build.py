@@ -83,13 +83,15 @@ def run(argv, cwd, env, log, end, owned):
     # Reuse the maintained pidfd/EOF/reap/FD lifecycle implementation. Do not
     # invent a compiler-specific process supervisor or infer closure from exit.
     previous=os.open('.',os.O_RDONLY|os.O_DIRECTORY|os.O_CLOEXEC)
-    old_environment=dict(os.environ)
     try:
-        os.chdir(cwd);os.environ.clear();os.environ.update(env)
-        native = owned.run_owned_command(argv,None,remaining,
+        os.chdir(cwd)
+        # The maintained child supervisor deliberately supplies a clean env.
+        # Carry this guest's explicit toolchain/build inputs in argv instead of
+        # relying on process-global environment that the supervisor discards.
+        command = ['/usr/bin/env', *[key+'='+value for key,value in sorted(env.items())], *argv]
+        native = owned.run_owned_command(command,None,remaining,
             [Path(str(log)+'.stdout'),Path(str(log)+'.stderr')],stream_limit=32*1024*1024)
     finally:
-        os.environ.clear();os.environ.update(old_environment)
         os.fchdir(previous);os.close(previous)
     return {'argv':argv,'numeric':native['numericExit'],'native':native,
             'logs':[{'name':Path(str(log)+suffix).name,
