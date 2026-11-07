@@ -265,7 +265,7 @@ def validate_probe(v, policy, now,*,route_only=False):
         for name,actor in roles.items():
             need(type(actor['pid'])is int and actor['pid']>1 and type(actor['start'])is int and actor['start']>0 and
                  actor['pid']in group['processes']and actor['cgroup']==group['derivedPath']and
-                 actor['uids']==([0]*4 if name=='controller'else[1000]*4),
+                 actor['uids']==[1000]*4,
                  'complete native role PID/start/UID/cgroup')
         release='/var/lib/opemos-robot-control-r1/releases/'+proof['ownJobId'].removeprefix('root-github-robot-control-')
         need(roles['listener']['argv']==['/home/connor/.local/share/opemos-ci/github-runner/bin/Runner.Listener','run','--startuptype','service']and

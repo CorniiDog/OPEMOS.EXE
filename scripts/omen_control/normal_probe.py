@@ -521,10 +521,12 @@ def connectivity_native_cut(source_raw,rows,bindings,config,p,relevant):
         current={pid:native.process_snapshot(pid)for pid in group['processes']}
         main=int(props['MainPID']);need(main in current,'actual manager PID in held native unit')
         release=CONTROL/'releases'/row['id'].removeprefix('root-github-robot-control-')
+        # Root-pinned control.py inherits the ordinary launcher's UID. Root
+        # source custody and complete native-unit authority are checked above.
         roles={
           'listener':[v for v in current.values()if v['uids']==[1000]*4 and v['argv']==[str(RUNNER/'bin/Runner.Listener'),'run','--startuptype','service']],
           'worker':[v for v in current.values()if v['uids']==[1000]*4 and str(QUEUE/'queue_job.py')in v['argv']],
-          'controller':[v for v in current.values()if v['uids']==[0]*4 and str(release/'control.py')in v['argv']]}
+          'controller':[v for v in current.values()if v['uids']==[1000]*4 and str(release/'control.py')in v['argv']]}
         need(all(len(v)==1 for v in roles.values())and roles['worker'][0]['pid']==main,
              'unique exact current listener/controller/canonical worker roles')
         for role,values in roles.items():

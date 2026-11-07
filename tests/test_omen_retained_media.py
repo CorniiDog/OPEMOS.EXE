@@ -3166,7 +3166,7 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
         def actor(pid,uid,argv):return {'pid':pid,'start':100+pid,'ppid':101,'uids':[uid]*4,'tgid':pid,'cgroup':cg,'argv':argv}
         worker=actor(101,1000,['/usr/bin/python3',str(n.QUEUE/'queue_job.py')])
         listener=actor(102,1000,[str(n.RUNNER/'bin/Runner.Listener'),'run','--startuptype','service'])
-        controller=actor(103,0,['python3',str(n.CONTROL/'releases'/('f'*32)/'control.py')])
+        controller=actor(103,1000,['python3',str(n.CONTROL/'releases'/('f'*32)/'control.py')])
         # Native manager/PID facts are MODELED here. The test executes the
         # actual observation/transport schema/heartbeat consumer, with the VM
         # reader deliberately refusing; it is not a liveness/VM acceptance cut.
@@ -3221,6 +3221,89 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                 for key in ('ownInvocation','ownJobId'):
                     bad=copy.deepcopy(frame);bad['connectivityProof'][key]='0'*32
                     with self.subTest(key=key),self.assertRaises(RuntimeError):r.validate_probe(bad,policy,int(time.time()),route_only=True)
+                for wrong in ([0]*4,[1000,0,0,0]):
+                    bad=copy.deepcopy(frame);bad['connectivityProof']['roles']['controller']['uids']=wrong
+                    with self.subTest(controllerUIDs=wrong),self.assertRaises(RuntimeError):
+                        r.validate_probe(bad,policy,int(time.time()),route_only=True)
+
+    @unittest.skipUnless(os.geteuid()==0,'real ordinary-user process ancestry')
+    def test_connectivity_native_roles_use_real_uid1000_launcher_controller(self):
+        """Real UID/argv/PID/start/parent/cgroup; manager/resource facts MODELED."""
+        from unittest import mock
+        import libvirt_peer as peer
+        import time
+        spec=importlib.util.spec_from_file_location('ordinary_control_native',SOURCE/'normal_probe.py')
+        n=importlib.util.module_from_spec(spec);spec.loader.exec_module(n)
+        with tempfile.TemporaryDirectory()as tmp:
+            base=Path(tmp);base.chmod(0o755)
+            queue=base/'queue';control=base/'managed';runner=base/'runner'
+            job='root-github-robot-control-'+'f'*32;unit='opemos-testq-'+'a'*12+'-'+'b'*32+'.service'
+            release=control/'releases'/('f'*32)
+            for p in (queue,control,control/'releases',release,runner,runner/'bin'):
+                p.mkdir(mode=0o755);p.chmod(0o755)
+            listener=runner/'bin/Runner.Listener';listener.symlink_to(sys.executable)
+            # Harmless Python image with the genuine listener argv shape. This
+            # does not execute a runner or model installed-image trust as proof.
+            (base/'run').write_text('import sys;sys.stdin.buffer.read()\n')
+            (base/'run').chmod(0o444)
+            controller=release/'control.py'
+            controller.write_text('import subprocess,sys,os,json\n'
+                'p=subprocess.Popen('+repr([str(listener),'run','--startuptype','service'])+',stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)\n'
+                'print(json.dumps({"controller":os.getpid(),"listener":p.pid}),flush=True)\n'
+                'sys.stdin.buffer.read();p.stdin.close();assert p.wait(timeout=5)==0\n'
+                'p.stdout.close();assert p.stderr.read()==b"";p.stderr.close()\n')
+            controller.chmod(0o444)
+            worker=queue/'queue_job.py'
+            worker.write_text('import subprocess,sys,os,json\n'
+                'p=subprocess.Popen('+repr([sys.executable,str(controller)])+',stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)\n'
+                'v=json.loads(p.stdout.readline());v["worker"]=os.getpid();print(json.dumps(v),flush=True)\n'
+                'sys.stdin.buffer.read();p.stdin.close();assert p.wait(timeout=5)==0\n'
+                'p.stdout.close();assert p.stderr.read()==b"";p.stderr.close()\n')
+            worker.chmod(0o444)
+            child=subprocess.Popen([sys.executable,str(worker)],cwd=base,user=1000,group=1000,extra_groups=(),
+                                   stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            try:
+                pids=json.loads(child.stdout.readline());self.assertEqual(pids['worker'],child.pid)
+                snapshots={name:peer.process_snapshot(pid)for name,pid in pids.items()}
+                self.assertTrue(all(v['uids']==[1000]*4 for v in snapshots.values()))
+                cg=snapshots['worker']['cgroup'];inv='c'*32
+                props={'LoadState':'loaded','ActiveState':'active','MainPID':str(child.pid),'InvocationID':inv,'ControlGroup':cg}
+                group={'empty':False,'includesUID0':True,'completeTraversal':True,
+                       'processes':[os.getpid(),*pids.values()],'derivedPath':cg}
+                class Backend:
+                    def __init__(self,root,cfg):self.cfg=cfg;self.prefix='opemos-testq-fixture'
+                    def pool_unit_properties(self,unit):return dict(props)
+                    def whole_owned_cgroup(self,unit,properties):return copy.deepcopy(group)
+                q=types.SimpleNamespace(SystemdBackend=Backend,hashlib=hashlib,
+                    canonical=lambda value:json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False))
+                spec_data={'id':job,'memory':1073741824}
+                row={'id':job,'state':'running','unit':unit,'spec':json.dumps(spec_data),'cpus':'[0]','started':time.time()}
+                bound={'version':1,'job_id':job,'unit':unit,'stateRoot':str(queue/'state'),
+                       'prefix':'opemos-testq-fixture','specSHA256':hashlib.sha256(q.canonical(spec_data).encode()).hexdigest(),
+                       'cpus':[0],'memory':spec_data['memory'],'invocation':inv}
+                @contextlib.contextmanager
+                def health(*args):yield q
+                with mock.patch.object(n,'QUEUE',queue),mock.patch.object(n,'CONTROL',control), \
+                     mock.patch.object(n,'RUNNER',runner),mock.patch.object(n,'health_queue',side_effect=health):
+                    proof=n.connectivity_native_cut(b'authenticated fixture source',[row],
+                        [{'job_id':job,'value':json.dumps(bound)}],[{'value':'{"manager":"system"}'}],{},[])
+                    self.assertEqual(proof['roles'],snapshots)
+                    self.assertFalse(proof['operationOrReleaseAuthorized'])
+                    self.assertEqual(proof['VMReadiness'],'NOT_OBSERVED')
+                    original=peer.process_snapshot
+                    for wrong in ([0]*4,[1000,0,0,0]):
+                        def observed(pid):
+                            value=original(pid)
+                            if pid==pids['controller']:value['uids']=wrong
+                            return value
+                        with mock.patch.object(peer,'process_snapshot',side_effect=observed):
+                            with self.subTest(wrongUID=wrong),self.assertRaisesRegex(RuntimeError,'unique exact current listener/controller/canonical worker roles'):
+                                n.connectivity_native_cut(b'authenticated fixture source',[row],
+                                    [{'job_id':job,'value':json.dumps(bound)}],[{'value':'{"manager":"system"}'}],{},[])
+            finally:
+                child.stdin.close();self.assertEqual(child.wait(timeout=10),0)
+                self.assertEqual(child.stdout.read(),b'');self.assertEqual(child.stderr.read(),b'')
+                child.stdout.close();child.stderr.close()
 
     def test_existing_recovery_keeps_connectivity_on_known_VM_probe_refusal_but_not_native_UNKNOWN(self):
         from unittest import mock
