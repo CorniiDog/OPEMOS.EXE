@@ -26,7 +26,12 @@ class UbuntuOwnedUnixSockets(unittest.TestCase):
         for role in ('connection_control','job'):
             source=Path(__file__).resolve().parents[1]/'scripts/omen_control'/(role+'.py')
             spec=importlib.util.spec_from_file_location('long_socket_'+role,source)
-            module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+            module=importlib.util.module_from_spec(spec)
+            # job.py deliberately sets the production process umask. Loading
+            # it as a fixture must not change later tests' ambient file modes.
+            previous=os.umask(0o077)
+            try:spec.loader.exec_module(module)
+            finally:os.umask(previous)
             setattr(self,role,module)
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name)/('future-owned-operation-'+'a'*64)/('runtime-'+'b'*64)
