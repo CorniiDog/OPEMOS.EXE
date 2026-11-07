@@ -279,6 +279,24 @@ class LosslessHistoryRepack(unittest.TestCase):
                     'sourcePinsSHA256':hashlib.sha256(self.q.canonical(sorted(pins,key=lambda p:p['name'])).encode()).hexdigest(),
                     'sourceAllocatedBytes':allocated,'sourceLeafCount':len(pins)}
 
+    def test_actual_ancestor_sibling_linkcount_changes_do_not_change_held_identity(self):
+        q=self.q;parent=self.root/'owned-parent';parent.mkdir(mode=0o700)
+        state=parent/'state';state.mkdir(mode=0o700)
+        before=parent.stat();pin=None
+        with q.history_directory(state,self.uid,True)as fd:
+            pin=q.history_publish(fd,b'{"original":"retained"}\n','row',self.uid)
+            (parent/'genuine-new-sibling').mkdir(mode=0o700)
+            self.assertEqual(parent.stat().st_ino,before.st_ino)
+            self.assertEqual(parent.stat().st_nlink,before.st_nlink+1)
+        with q.history_directory(state,self.uid)as fd:
+            self.assertEqual(q.history_read_leaf(fd,pin,self.uid,q.HISTORY_FILE_MAX),b'{"original":"retained"}\n')
+        # Nofollow held/named inode identity is still strict: renaming the
+        # parent and substituting another directory cannot pass on linkcount.
+        with self.assertRaises(ValueError):
+            with q.history_directory(state,self.uid):
+                parent.rename(self.root/'original-parent-retained')
+                parent.mkdir(mode=0o700)
+
     def test_existing_archive_and_new_live_leaves_repack_without_losing_original_pins(self):
         original,first=self.publish('old')
         q=self.q;limits=(q.HISTORY_FILE_MAX,q.HISTORY_METADATA_MAX,q.HISTORY_NAMESPACE_MAX,q.HISTORY_ENTRY_MAX,q.HISTORY_ARCHIVE_STAGE_MAX)

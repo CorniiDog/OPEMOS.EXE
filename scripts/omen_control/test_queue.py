@@ -1777,11 +1777,14 @@ def history_directory(root,uid,create=False):
         ident=history_equal(child,fd,HISTORY_DIRECTORY)
         require(stat.S_ISDIR(ident['st_mode']) and stat.S_IMODE(ident['st_mode'])==0o700 and ident['st_uid']==uid and ident['st_gid']==st.st_gid,'History directory custody')
         yield child
-        # Legitimate sibling additions can change ancestor times; identity/type/
+        # Legitimate sibling directories change ancestor times AND directory link
+        # counts. Nofollow held/named dev/inode/type/mode/UID/GID stay exact;
+        # immutable files and the history child keep their full custody checks.
+        # identity/type/
         # ownership/mode and held pathname binding cannot change. Leaf full9 stays exact.
         for parent,name,held,prior in links:
             now=history_equal(held,parent,name)
-            require(all(now[k]==prior[k] for k in HISTORY_FIELDS[:6]),'History ancestor replaced or custody changed')
+            require(all(now[k]==prior[k] for k in HISTORY_FIELDS[:5]),'History ancestor replaced or custody changed')
         now=history_equal(child,fd,HISTORY_DIRECTORY)
         require(all(now[k]==ident[k] for k in HISTORY_FIELDS[:6]),'History root replaced or custody changed')
     finally:
@@ -3413,7 +3416,7 @@ def libvirt_export_directory(root,uid,create=False):
         require(stat.S_ISDIR(initial['st_mode'])and initial['st_uid']==uid and initial['st_gid']==st.st_gid and stat.S_IMODE(initial['st_mode'])==0o700,'Owned0700 export namespace')
         yield child
         for parent,name,held,prior in links:
-            now=history_equal(held,parent,name);require(all(now[k]==prior[k]for k in HISTORY_FIELDS[:6]),'Export ancestor binding/custody changed')
+            now=history_equal(held,parent,name);require(all(now[k]==prior[k]for k in HISTORY_FIELDS[:5]),'Export ancestor binding/custody changed')
         now=history_equal(child,fd,LIBVIRT_EXPORT_DIRECTORY);require(all(now[k]==initial[k]for k in HISTORY_FIELDS[:6]),'Export namespace replaced')
     finally:
         first=sys.exc_info()[1];errors=[]

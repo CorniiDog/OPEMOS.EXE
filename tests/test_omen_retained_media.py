@@ -206,18 +206,17 @@ print(json.dumps({'realUID1000Child':True,'realISO':True,'configPinComplete':Tru
         original=enrolled_subject_body('physical_test_queue.py').decode()
         functions=lambda text:{n.name:ast.get_source_segment(text,n)
             for n in ast.parse(text).body if isinstance(n,ast.FunctionDef)}
-        before=functions(original);now=functions(Path(current.__file__).read_text())
+        before=functions(original)
+        frozen=(Path(__file__).parent/'fixtures/omen-ci-legacy-capacity-functions.json').read_bytes()
+        self.assertEqual(hashlib.sha256(frozen).hexdigest(),'7483fed3ac3960e7f642e53565e288bfe9f56c29f5cc8f9ce899f605f4cc5b50')
+        now=json.loads(frozen)['functions']
         for name in('enqueue','terminal_history_store','terminal_history_resolve'):
             original=original.replace(before[name],now[name])
         legacy=types.ModuleType('legacy_terminal_writer');legacy.__file__=str(SOURCE/'test_queue.py')
         exec(compile(original,legacy.__file__,'exec'),legacy.__dict__)
-        # This producer now has an explicit versioned closed-row representation.
-        # Retain the real old helper APIs, and provide its exact new codec and
-        # comparison functions rather than silently using historical R1 code.
-        legacy.HISTORY_COMPACT_KIND=current.HISTORY_COMPACT_KIND
-        legacy.HISTORY_CLOSED_ROW_KIND=current.HISTORY_CLOSED_ROW_KIND
-        for name in ('terminal_closed_row',):
-            exec(compile(now[name],legacy.__file__,'exec'),legacy.__dict__)
+        # The original d2d producer and helpers really used R1. Preserve that
+        # actual immutable producer; current consumer must read its genuine
+        # old codec and refuse changed live-peer tasks without a fake hybrid.
         with tempfile.TemporaryDirectory(prefix='opemos-live-peer-terminal-')as tmp:
             base=Path(tmp);state=base/'state'
             with contextlib.redirect_stdout(io.StringIO()):legacy.main(['--queue',str(state),'init'])
@@ -3084,7 +3083,7 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
         policy={k:'c'*64 for k in ('runnerManifestSHA256','queueSourceSHA256','queueLoggerSHA256',
             'jobStartedSHA256','jobGuardSHA256','privatePeerSHA256','normalInstallerSHA256',
             'normalQueueEntrySHA256','heartbeatProducerSHA256')}
-        policy.update(mainCommit='e'*40,controlBrokerSHA256='a'*64,priorControlBrokerSHA256='b'*64)
+        policy.update(mainCommit='e'*40,controlBrokerSHA256='a'*64,priorControlBrokerSHA256='b'*64,currentReleaseTx='0'*32)
         ctl={'jobId':job,'state':'running','terminalLifecycle':None,'reservationRetained':True,
              'sourceCommit':policy['mainCommit'],'queueSourceSHA256':policy['queueSourceSHA256'],
              'leaseExpiresUnix':now+500,'listenerAlive':True,'controllerAlive':True,'workerAlive':True,
@@ -3227,6 +3226,69 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                 'engine_source_commit':policy['mainCommit'],'connection_queue_sha256':policy['queueSourceSHA256']}},
             fixed={'value':{'expiresAt':control['leaseExpiresUnix']}})
         return policy,state,probe,proof,expected
+
+    @unittest.skipUnless(os.geteuid()==0,'existing Root retained-recovery intent custody')
+    def test_planned_retirement_timeout_reenters_original_then_CLOSED_enables_ordinary_CREATE(self):
+        """Real Root intent/R production flow; remote/native effects MODELED."""
+        from unittest import mock
+        import time
+        _,r=self.modules();policy,state,probe,_,_=self.pending(r);now=int(time.time())
+        policy.update(controllerCycleSHA256='2'*64,maxCycles=1000,maxTotalCycles=1000,
+                      renewalAuthorizedUntilUnix=state['epochExpiresUnix'])
+        original='root-github-robot-control-'+'a'*32;renewal=state['inflight']
+        state['lastOutcome']={'action':'GRACEFUL_RENEW','nonce':renewal,'controlJobId':original,
+                            'numeric':1,'reaped':True,'first':'wait_terminal timeout after retire; original retained'}
+        probe['control'].update(jobId=original,state='running',terminalLifecycle=None,reservationRetained=True,ownUnitBound=True)
+        probe['hostGraphics']='INTEL_HOST_NVIDIA_GUEST_ONLY'
+        def native(value):return {'reaped':True,'numeric':0,'eof':{'stdout':True,'stderr':True},
+                                 'first':None,'stdout':r.canonical(value),'stderr':b''}
+        with tempfile.TemporaryDirectory()as tmp,mock.patch.object(r,'ROOT',Path(tmp)), \
+             mock.patch.object(r,'load_code',return_value=b'authenticated controller source'), \
+             mock.patch.object(r,'validate_probe'),mock.patch.object(r,'renew_epoch',return_value='UNCHANGED'), \
+             mock.patch.object(r,'write_state')as saved:
+            before=copy.deepcopy(state)
+            dispatch={'kind':'ROOT_RUNNER21_ORPHAN_DISPATCH_CONTROLLER_V1','nonce':'c'*32,
+                      'oldJobId':original,'vmAdmission':False,
+                      'dispatcherUnit':'opemos-root-robot-dispatcher-'+'c'*32+'.service'}
+            with mock.patch.object(r.os,'urandom',return_value=bytes.fromhex('c'*32)), \
+                 mock.patch.object(r,'start_held_python',return_value=object())as spawned, \
+                 mock.patch.object(r,'capture',side_effect=[native(probe),native(dispatch)]):
+                result=r.run_cycle(policy,state,now)
+            self.assertEqual(result['decision'],'DISPATCHED_ORPHAN_FINALIZER')
+            self.assertEqual((result['oldJobId'],result['nonce']),(original,renewal))
+            self.assertFalse(result['canonicalTerminalClaimed']);self.assertEqual(state,before)
+            argv=spawned.call_args_list[-1].args[1]
+            self.assertEqual(argv[:2],['--orphan-finalize','c'*32]);self.assertEqual(spawned.call_count,2)
+            path=r.orphan_intent_path(original);raw=path.read_bytes();intent=json.loads(raw)
+            self.assertEqual((intent['oldJobId'],intent['priorInflight'],intent['control']),
+                             (original,renewal,probe['control']))
+            self.assertNotEqual(intent['nonce'],renewal);self.assertEqual(path.stat().st_mode&0o777,0o600)
+            # Lost response / a normal still-closing worker never dispatches a
+            # second finalizer or reuses the consumed control operation nonce.
+            waiting=copy.deepcopy(probe);waiting['workerLockFree']=False
+            with mock.patch.object(r,'start_held_python',return_value=object())as spawned, \
+                 mock.patch.object(r,'capture',return_value=native(waiting)):
+                result=r.run_cycle(policy,state,now)
+            self.assertEqual(result['decision'],'WAIT_ORPHAN_FINALIZER');self.assertEqual(spawned.call_count,1)
+            self.assertEqual(path.read_bytes(),raw);self.assertEqual(state,before)
+            for key,value in [('jobId','root-github-robot-control-'+'d'*32),('sourceCommit','0'*40),
+                              ('queueSourceSHA256','0'*64),('listenerAlive',True),('workerAlive',True),('ownUnitBound',False)]:
+                bad=copy.deepcopy(probe);bad['control'][key]=value
+                self.assertFalse(r.orphan_scope(bad,policy,state))
+            bad=copy.deepcopy(probe);bad['unknownReservations']=['native closure UNKNOWN']
+            self.assertFalse(r.orphan_scope(bad,policy,state))
+            # Only a later full proof of REAL original CLOSED/released permits
+            # bookkeeping reconciliation, then the already-existing CREATE
+            # decision. No original listener/writer/lease is replayed.
+            closed=copy.deepcopy(probe);closed['control'].update(state='failed',terminalLifecycle='CLOSED',reservationRetained=False)
+            with mock.patch.object(r,'start_held_python',return_value=object())as spawned, \
+                 mock.patch.object(r,'capture',return_value=native(closed)):
+                result=r.run_cycle(policy,state,now)
+            self.assertEqual(result['decision'],'RECONCILED_ABSENT_GRACEFUL_RENEW')
+            self.assertIsNone(state['inflight']);self.assertEqual(state['lastOutcome']['originalOutcome'],before['lastOutcome'])
+            self.assertEqual((spawned.call_count,saved.call_count),(1,1))
+            self.assertEqual(r.decision(closed,policy,state['nextAttemptUnix'],state),'CREATE')
+            self.assertEqual(path.read_bytes(),raw)
 
     def test_normal_reconcile_uses_distinct_finalizer_and_control_dispatches(self):
         from unittest import mock
@@ -3470,7 +3532,9 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             cuts=[initial,live]
             if fault=='transition':cuts=[initial,pm.IdleRunnerStatusTransition(initial,live),live]
             probe=types.SimpleNamespace(observe=mock.Mock(side_effect=cuts),IdleRunnerStatusTransition=pm.IdleRunnerStatusTransition)
+            if remaining>19000 and fault is None:cuts.append(copy.deepcopy(live))
             heartbeat=types.SimpleNamespace(state_from_current=mock.Mock(return_value={}),
+                join_current_presence=mock.Mock(return_value=live),
                 publish_once=mock.Mock(return_value={'readbackCurrent':True}))
             trigger=types.SimpleNamespace(validate_policy=lambda p,n:p,strict=json.loads,
                 validate_state=lambda s:s,validate_probe=mock.Mock(),decision=lambda *args:'RESUME_PENDING')
