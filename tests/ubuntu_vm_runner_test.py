@@ -171,7 +171,7 @@ class RunnerTest(unittest.TestCase):
         control=importlib.util.module_from_spec(spec);spec.loader.exec_module(control)
         nonce='a'*32;birth={'pid':731,'start_ticks':'241','inherited_nonce':nonce,'exe_sha256':'e'*64}
         binding={'nonce':nonce,'artifact_source':'c'*40,'package_sha256':'d'*64}
-        cfg={'nonce':nonce,'source_commit':'c'*40,'package_sha256':'d'*64,'whole_seconds':60,'native_executable_sha256':'e'*64}
+        cfg={'nonce':nonce,'source_commit':'c'*40,'package_sha256':'d'*64,'whole_seconds':60,'native_executable_sha256':'e'*64,'display':[1600,900]}
         ready={'nonce':nonce,'process':birth,'app':{'pid':731,'window_id':412}}
         native={'pid':731,'window_id':412,'enabled':True,'visible':True,'readOnlyObservation':True,
                 'rect':[30,40,100,24],'point':{'x':80,'y':52}}
@@ -186,7 +186,7 @@ class RunnerTest(unittest.TestCase):
         # Model external native/socket/frame facts explicitly. The production
         # pointer sender records and checks its actual ordered event calls.
         with patch.object(control,'process',return_value=None),patch.object(control,'frame',
-                return_value={'width':1280,'height':800}):
+                return_value={'width':1600,'height':900}):
             with self.assertRaises(TimeoutError):operation.click('Build','Build NVIDIA Image')
             self.assertEqual(len(operation.actions),1)
             self.assertEqual(len(operation.actions[0]['actualQMPInput']),2)
