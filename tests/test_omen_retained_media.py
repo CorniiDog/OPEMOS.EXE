@@ -1321,11 +1321,11 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
             for n in ast.parse(text).body if isinstance(n,ast.FunctionDef)}
         before=sources(original);modern=sources((SOURCE/'test_queue.py').read_text())
         composed=original
-        for name in ('exact_proc_revalidation_evidence','verify_terminal_pool_transition'):
+        for name in ('exact_proc_revalidation_evidence','verify_terminal_pool_transition','_finish_committed_terminal'):
             composed=composed.replace(before[name],modern[name])
         after=sources(composed)
         self.assertEqual([name for name,body in before.items()if after[name]!=body],
-                         ['verify_terminal_pool_transition','exact_proc_revalidation_evidence'])
+                         ['verify_terminal_pool_transition','_finish_committed_terminal','exact_proc_revalidation_evidence'])
         def terminal_method(text):
             cls=next(n for n in ast.parse(text).body
                      if isinstance(n,ast.ClassDef)and n.name=='ExpectedInvocation')
@@ -1526,8 +1526,76 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                     with self.assertRaisesRegex(ValueError,'Only durable retained terminal cleanup lease'):
                         q.finish_committed_terminal(db,repaired,final)
                     self.assertEqual(dict(db.execute("SELECT * FROM jobs WHERE id='failed-ubuntu'").fetchone()),final)
+                    # Real SQL commit, then an irreversible modeled manager
+                    # collection followed by the observed release-fence fault.
+                    # Reentry must finish only that original passed CPU row.
+                    own=backend.prefix+'e'*32+'.service';invocations={own:'f'*32,peer:'d'*32}
+                    spec=q.normalize_job(dict(closed_spec,id='passed-cleanup',resources=['passed-cleanup']),base)
+                    db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',('passed-cleanup',q.canonical(spec),
+                        'running','[0]',own,time.time(),None,None))
+                    binding=dict(version=1,job_id=spec['id'],unit=own,invocation=invocations[own],stateRoot=str(root),
+                        prefix=backend.prefix,specSHA256=hashlib.sha256(q.canonical(spec).encode()).hexdigest(),cpus=[0],memory=1024**3)
+                    db.execute('INSERT INTO pool_unit_bindings VALUES(?,?)',(spec['id'],q.canonical(binding)));db.commit()
+                    collected=[False];stops=[];base_props=props;base_proof=proof
+                    def passed_props(unit):
+                        value=base_props(unit)
+                        if unit==own:
+                            value.update(ActiveState='active',SubState='exited',Result='success',ExecMainStatus='0')
+                            if collected[0]:value.update(LoadState='not-found',ActiveState='inactive',SubState='dead',
+                                InvocationID='',MainPID='0',ControlGroup='')
+                        return value
+                    props=passed_props
+                    def collected_proof(rows):
+                        value=base_proof(rows)
+                        if collected[0]:
+                            value['unitProperties'][own]['known']=False
+                            value['knownInvocations'].pop(own);value['unknownReservationsRetained']=[own]
+                        return value
+                    def collected_manager(*args,**kwargs):
+                        if args[0]=='stop':
+                            self.assertEqual(args[1],own);self.assertFalse(collected[0])
+                            stops.append(own);collected[0]=True;return {}
+                        self.assertEqual(args[0],'show');return props(args[1])
+                    resumed=q.SystemdBackend(root,cfg);resumed._validate_pool_cut=lambda rows,deadline:collected_proof(rows)
+                    resumed.whole_owned_cgroup=lambda unit,p:dict(empty=unit==own,includesUID0=True,
+                        completeTraversal=True,derivedPath=pool+'/'+unit,processes=[]if unit==own else[os.getpid()],absent=unit==own)
+                    current=q.pool_rows(db,db.execute("SELECT * FROM jobs WHERE id='passed-cleanup'").fetchall())[0]
+                    clock=[100.];injected=[False];recent=q.recent_boundary
+                    def delayed_release(value,observed):
+                        if collected[0]and not injected[0]:clock[0]+=2;injected[0]=True
+                        return recent(value,observed)
+                    with patch.object(q,'time',modeled_time),patch.object(q,'recent_boundary',side_effect=delayed_release),\
+                            patch.object(q,'_RAW_SYSTEMCTL',side_effect=collected_manager):
+                        with self.assertRaisesRegex(ValueError,'Current effect proof/observation expired'):
+                            q.finish_bound(db,resumed,current,'passed',props(own))
+                        retained_passed=q.pool_rows(db,db.execute("SELECT * FROM jobs WHERE id='passed-cleanup'").fetchall())[0]
+                        saved_passed=json.loads(retained_passed['result'])
+                        self.assertEqual(retained_passed['state'],'terminal_cleanup');self.assertIsNone(retained_passed['finished'])
+                        self.assertEqual(saved_passed['terminalLifecycle']['intendedState'],'passed')
+                        others=[dict(r)for r in db.execute("SELECT * FROM jobs WHERE id!='passed-cleanup' ORDER BY rowid")]
+                        for fault in('numeric','invocation','group'):
+                            bad=copy.deepcopy(retained_passed);detail=json.loads(bad['result'])
+                            if fault=='numeric':detail['ExecMainStatus']='1'
+                            elif fault=='invocation':detail['zzCommitLiveFence']['manager']['InvocationID']='0'*32
+                            else:detail['finalAfterFsyncCgroupProof']['empty']=False
+                            bad['result']=q.canonical(detail)
+                            with self.subTest(collected_fault=fault),self.assertRaisesRegex(ValueError,
+                                    'Collected resume requires original positive committed passed CPU terminal'):
+                                q.finish_committed_terminal(db,resumed,bad)
+                        q.finish_committed_terminal(db,resumed,retained_passed)
+                    self.assertEqual(stops,[own],'never repeat the irreversible stop')
+                    done=dict(db.execute("SELECT * FROM jobs WHERE id='passed-cleanup'").fetchone());detail=json.loads(done['result'])
+                    self.assertEqual(done['state'],'passed');self.assertIsNotNone(done['finished'])
+                    self.assertEqual(detail['terminalLifecycle']['phase'],'CLOSED');self.assertFalse(detail['terminalLifecycle']['reservationRetained'])
+                    self.assertEqual(detail['collectedCompletionReconciliation']['originalStopReturned'],'UNKNOWN')
+                    self.assertFalse(detail['collectedCompletionReconciliation']['stopRepeated'])
+                    self.assertEqual([dict(r)for r in db.execute("SELECT * FROM jobs WHERE id!='passed-cleanup' ORDER BY rowid")],others)
+                    with self.assertRaisesRegex(ValueError,'Only durable retained terminal cleanup lease'):
+                        q.finish_committed_terminal(db,resumed,done)
+                    self.assertEqual(stops,[own])
                 self.assertEqual(dict(db.execute("SELECT * FROM jobs WHERE id='live-control'").fetchone()),peer_before)
-                self.assertEqual([tuple(r)for r in db.execute('SELECT * FROM pool_unit_bindings')],bindings)
+                self.assertEqual([tuple(r)for r in db.execute(
+                    "SELECT * FROM pool_unit_bindings WHERE job_id!='passed-cleanup'")],bindings)
                 self.assertEqual((root/'logs/failed-ubuntu/stderr.log').read_text(),'actual preparation FIRST retained\n')
             finally:db.close()
 

@@ -2373,16 +2373,47 @@ def _finish_committed_terminal(db, backend, row):
     # Lock precedes every potentially blocking read. The last operation before
     # stop is the same full original-invocation manager guard used for effects.
     with ctx.prepare_terminal():
-        preserved_before_stop=verify_terminal_pool_transition(preserved_epoch,ctx.terminal_epoch,row,False)
         latest=exact_unit_observation(backend,ctx.unit)
-        require((output_limit or terminal_observation(latest)) and latest.get("InvocationID") == ctx.invocation and (output_limit or all(latest.get(k) == saved.get(k) for k in
-                ("Result", "ExecMainCode", "ExecMainStatus"))), "Committed terminal changed")
+        collected_at_entry=(latest.get('LoadState')=='not-found'and latest.get('MainPID')=='0'and
+            latest.get('InvocationID')==latest.get('ControlGroup')==''and latest.get('ActiveState')=='inactive')
+        if collected_at_entry:
+            # A successful CPU job may have been stopped/collected before a
+            # later live-fence failure rolled back the final SQL transition.
+            # The original committed positive terminal observation remains the
+            # authority; absence alone never supplies a result or stop receipt.
+            spec=json.loads(row['spec']);fence=saved.get('zzCommitLiveFence',{})
+            original=fence.get('manager',{});group=saved.get('finalAfterFsyncCgroupProof',{})
+            prior_pool=fence.get('pool',{});path='/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/'+ctx.unit
+            require(lifecycle['intendedState']=='passed'and not output_limit and
+                'libvirt_domain'not in spec and NVIDIA_RESOURCE not in effective_resources(spec)and
+                fence.get('kind')=='CURRENT_SAME_HOST_TERMINAL_LIVE_FENCE'and
+                fence.get('ledgerEqualToPrepared')is True and fence.get('sameWriterTransaction')is True and
+                original.get('LoadState')=='loaded'and original.get('InvocationID')==ctx.invocation and
+                original.get('MainPID')=='0'and original.get('ControlGroup')==''and
+                all(original.get(k)==saved.get(k)for k in _EFFECT_FIELDS)and
+                (saved.get('Result'),saved.get('ExecMainCode'),saved.get('ExecMainStatus'))==('success','1','0')and
+                all(group.get(k)is True for k in('empty','includesUID0','completeTraversal'))and
+                group.get('derivedPath')==path and group.get('processes')==[]and
+                all(prior_pool.get(k)is True for k in('admitted','includesUID0','completeBoundedTraversal','allOwnedDescriptorsClosed'))and
+                prior_pool.get('knownInvocations',{}).get(ctx.unit)==ctx.invocation and
+                prior_pool.get('unitProperties',{}).get(ctx.unit,{}).get('known')is True and
+                all(prior_pool['unitProperties'][ctx.unit]['properties'].get(k)==original.get(k)
+                    for k in('LoadState','InvocationID','ControlGroup','MainPID','ActiveState','SubState'))and
+                type(prior_pool.get('tasks'))is list and
+                type(prior_pool.get('unknownReservationsRetained'))is list and
+                ctx.unit not in prior_pool.get('unknownReservationsRetained',[ctx.unit])and
+                not any(t['cgroup']==path or t['cgroup'].startswith(path+'/')for t in prior_pool.get('tasks',[])),
+                'Collected resume requires original positive committed passed CPU terminal and complete empty group')
+        else:
+            require((output_limit or terminal_observation(latest)) and latest.get("InvocationID") == ctx.invocation and (output_limit or all(latest.get(k) == saved.get(k) for k in
+                    ("Result", "ExecMainCode", "ExecMainStatus"))), "Committed terminal changed")
+        preserved_before_stop=verify_terminal_pool_transition(preserved_epoch,ctx.terminal_epoch,row,collected_at_entry)
         pre_stop_fence=ctx.recheck_terminal(ctx.terminal_epoch,latest,not output_limit)
-        if (output_limit and latest["ActiveState"] not in ("inactive", "failed")) or (latest["ActiveState"], latest["SubState"]) == ("active", "exited"):
+        if not collected_at_entry and ((output_limit and latest["ActiveState"] not in ("inactive", "failed")) or (latest["ActiveState"], latest["SubState"]) == ("active", "exited")):
             _RAW_SYSTEMCTL("stop", ctx.unit, manager=backend.cfg.get("manager", "user"))
             stopped = True
         after = exact_unit_observation(backend, ctx.unit)
-        collected = (stopped and after.get("LoadState") == "not-found" and after.get("MainPID") == "0" and
+        collected = ((stopped or collected_at_entry) and after.get("LoadState") == "not-found" and after.get("MainPID") == "0" and
                      after.get("InvocationID") == "" and after.get("ControlGroup") == "" and after.get("ActiveState") == "inactive")
         require(collected or (terminal_observation(after) and after["InvocationID"] == ctx.invocation and
                 after["ActiveState"] in ("inactive", "failed") and (output_limit or all(after.get(k) == saved.get(k) for k in
@@ -2417,6 +2448,10 @@ def _finish_committed_terminal(db, backend, row):
                      "postStopCgroupProof":group, "postStopPoolProof":pool,
                      "preStopPoolProof":ctx.terminal_epoch['pool'],"zzPreStopLiveFence":pre_stop_fence,
                      "preservedBeforeStop":preserved_before_stop,"preservedAfterStop":preserved_after_stop})
+        if collected_at_entry:
+            final['collectedCompletionReconciliation']={
+                'originalCommittedInvocation':ctx.invocation,'currentOwnUnitAbsent':True,
+                'originalStopReturned':'UNKNOWN','stopRepeated':False,'resultFromOriginalCommit':True}
         encoded=canonical(final)
         release_fence=ctx.recheck_terminal(post_epoch,after,True)
         encoded=terminal_encoded_fence(encoded,'zzReleaseLiveFence',release_fence)
