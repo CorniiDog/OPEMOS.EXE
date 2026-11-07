@@ -46,11 +46,36 @@ def gh(method,path,body=None):
          'bounded GitHub variable exchange')
     return result
 
-def state_from_current(probe,policy,now,nonce):
+def join_current_presence(full,connected):
+    """Join two actual current observations, never default missing role fields."""
+    need(full.get('kind')=='ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1'and
+         connected.get('kind')=='ROOT_RUNNER21_CONNECTIVITY_PROBE_V1',
+         'complete readiness plus independently native-bound connectivity roles')
+    need(full['control']==connected['control']and all(full[k]==connected[k]for k in
+         ('boot','controlBrokerSHA256','protectedMainCommit','queueSourceSHA256',
+          'runnerManifestSHA256','runnerId','registeredRunnerId'))and
+         abs(full['atUnix']-connected['atUnix'])<=15,
+         'same current source/control/lease/boot/API across heartbeat roles')
+    proof=connected['connectivityProof']
+    need(proof['kind']=='CONTROL_CONNECTIVITY_NATIVE_UNITS_R1'and
+         proof['operationOrReleaseAuthorized']is False and proof['ownJobId']==full['control']['jobId'],
+         'actual current native role proof required')
+    return dict(full,sourceWritersBusy=connected['sourceWritersBusy'],
+                unclassifiedRuntimeActors=connected['unclassifiedRuntimeActors'],
+                connectivityProof=proof)
+
+def state_from_current(probe,policy,now,nonce,*,presence_only=False):
     need(type(nonce) is str and len(nonce)==32 and
          all(c in '0123456789abcdef' for c in nonce),
          'exact Root in-flight heartbeat nonce')
     control=probe['control']
+    need(probe.get('kind')==('ROOT_RUNNER21_CONNECTIVITY_PROBE_V1'if presence_only else 'ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1'),
+         'explicit connected versus complete VM observation role')
+    need(type(probe.get('connectivityProof'))is dict,'actual native connectivity proof missing; full frame alone is not publication evidence')
+    proof=probe['connectivityProof']
+    need(proof['kind']=='CONTROL_CONNECTIVITY_NATIVE_UNITS_R1'and proof['operationOrReleaseAuthorized']is False and
+         proof['ownJobId']==control['jobId']and proof['VMReadiness']=='NOT_OBSERVED',
+         'actual own native connectivity proof, never VM admission')
     need(probe['networkReachable'] is True and
          probe['protectedMain'] is True and
          probe['runnerOnline'] is True and
@@ -64,18 +89,20 @@ def state_from_current(probe,policy,now,nonce):
          control['ownUnitBound'] is True and
          control['leaseExpiresUnix'] is not None and
          type(control['leaseExpiresUnix']) is int and
-         control['leaseExpiresUnix']>now+19000 and
+         control['leaseExpiresUnix']>now+(0 if presence_only else 19000) and
          probe['sourceWritersBusy'] is False and
          probe['unclassifiedRuntimeActors']==[] and
-         probe['unknownReservations']==[],
+         (presence_only or probe['unknownReservations']==[]),
          'actual current same-source runner/control/listener not jointly proven')
     return {'version':1,'repository':REPO,
             'source_commit':policy['mainCommit'],'checked_at':now,
-            'expires_at':now+180,'ready':True,'runner_id':21,
+            'expires_at':now+180,'ready':not presence_only,'runner_id':21,
             'queue_source_sha256':policy['queueSourceSHA256'],
             'recovery_nonce':nonce,
             'runner_name':'opemos-omen-robot','labels':LABELS,
-            'reason':'installed reviewed controller/listener bound; busy runner and GPU work queue normally; current per-VM admission remains separate'}
+            'reason':('actual connected process/lease-bound runner; VM admission is unverified'if presence_only else
+                      'installed reviewed controller/listener bound; busy runner and GPU work queue normally; current per-VM admission remains separate'),
+            **({'connected':True,'busy':probe['runnerBusy'],'vm_admission':'UNVERIFIED'}if presence_only else {})}
 
 def publish_once(state):
     need(state.get('recovery_nonce') and state.get('queue_source_sha256'),
@@ -114,7 +141,7 @@ def main():
          'fixed Root heartbeat source entry')
     source,policy=load_probe()
     need(source.root_policy()==policy,'current Root policy changed during heartbeat source load')
-    probe=source.observe(route_only=True)
+    probe=join_current_presence(source.observe(),source.observe(route_only=True))
     now=int(time.time())
     control=probe['control']
     prefix='root-github-robot-control-'

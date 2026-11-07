@@ -135,7 +135,9 @@ def run(action,nonce,policy_sha,probe_sha):
         # Keep the exact old finite lease. The next ordinary tick must renew;
         # no heartbeat publication, job token or VM admission is granted here.
     else:
-        h=hb.state_from_current(latest,p,now,nonce)
+        connected=cp.observe(route_only=True)
+        trigger.validate_probe(connected,p,int(time.time()),route_only=True)
+        h=hb.state_from_current(hb.join_current_presence(latest,connected),p,now,nonce)
         published=hb.publish_once(h)
         need(published['readbackCurrent'] is True,
              'same nonce current GitHub heartbeat readback')
@@ -217,6 +219,30 @@ def run_orphan_finalize(nonce,policy_sha,probe_sha,intent_sha):
             'nonce':nonce,'oldJobId':intent['oldJobId'],
             'dispatcherUnit':result['dispatcherUnit'],
             'remoteSHA256':sha(child.stdout),'remote':result,'vmAdmission':False}
+def run_presence(policy_sha):
+    """Existing trusted metadata path only; no queue/unit/VM lifecycle calls."""
+    raw=held(ROOT/'policy.json',65536,0,0o400)
+    need(sha(raw)==policy_sha,'same exact Root presence policy')
+    recovery=held(ROOT/'runner21_recovery.py',1048576,0,0o444)
+    trigger=module(recovery,'reviewed_presence_policy_validator')
+    p=trigger.validate_policy(trigger.strict(raw),int(time.time()))
+    need(sha(recovery)==p['recoverySourceSHA256'],'exact Root presence validator')
+    cp_raw=held(ROOT/'controller_probe.py',1048576,0,0o444)
+    hb_raw=held(ROOT/'normal_heartbeat.py',1048576,0,0o444)
+    need(sha(cp_raw)==p['controllerProbeSHA256']and sha(hb_raw)==p['heartbeatProducerSHA256'],
+         'exact existing presence producer/transport')
+    cp=module(cp_raw,'reviewed_current_presence_probe')
+    hb=module(hb_raw,'reviewed_current_presence_publisher')
+    current=cp.observe(route_only=True);trigger.validate_probe(current,p,int(time.time()),route_only=True)
+    job=current['control']['jobId'];prefix='root-github-robot-control-'
+    need(type(job)is str and job.startswith(prefix),'actual existing control identity')
+    state=hb.state_from_current(current,p,int(time.time()),job[len(prefix):],presence_only=True)
+    published=hb.publish_once(state)
+    need(published['readbackCurrent']is True,'actual same connected presence readback')
+    return {'kind':'ROOT_RUNNER21_PRESENCE_RESULT_V1','policySHA256':policy_sha,
+            'connected':True,'ready':False,'busy':current['runnerBusy'],
+            'jobId':job,'vmAdmission':False,'readbackCurrent':True}
+
 if __name__=='__main__':
     normal=(len(sys.argv)==6 and sys.argv[1]=='--normal-cycle' and
             sys.argv[2] in ACTIONS and
@@ -225,8 +251,10 @@ if __name__=='__main__':
     orphan=(len(sys.argv)==6 and sys.argv[1]=='--orphan-finalize' and
             re.fullmatch(r'[0-9a-f]{32}',sys.argv[2]) and
             all(re.fullmatch(r'[0-9a-f]{64}',x) for x in sys.argv[3:]))
-    need(os.geteuid()==0 and (normal or orphan),
+    presence=(len(sys.argv)==3 and sys.argv[1]=='--publish-presence'and re.fullmatch('[0-9a-f]{64}',sys.argv[2]))
+    need(os.geteuid()==0 and (normal or orphan or presence),
          'fixed Root controller normal-cycle/orphan ABI')
-    if sys.argv[1]=='--orphan-finalize':
+    if presence:print(enc(run_presence(sys.argv[2])).decode(),end='')
+    elif sys.argv[1]=='--orphan-finalize':
         print(enc(run_orphan_finalize(*sys.argv[2:])).decode(),end='')
     else:print(enc(run(*sys.argv[2:])).decode(),end='')

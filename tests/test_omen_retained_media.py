@@ -211,6 +211,13 @@ print(json.dumps({'realUID1000Child':True,'realISO':True,'configPinComplete':Tru
             original=original.replace(before[name],now[name])
         legacy=types.ModuleType('legacy_terminal_writer');legacy.__file__=str(SOURCE/'test_queue.py')
         exec(compile(original,legacy.__file__,'exec'),legacy.__dict__)
+        # This producer now has an explicit versioned closed-row representation.
+        # Retain the real old helper APIs, and provide its exact new codec and
+        # comparison functions rather than silently using historical R1 code.
+        legacy.HISTORY_COMPACT_KIND=current.HISTORY_COMPACT_KIND
+        legacy.HISTORY_CLOSED_ROW_KIND=current.HISTORY_CLOSED_ROW_KIND
+        for name in ('terminal_closed_row',):
+            exec(compile(now[name],legacy.__file__,'exec'),legacy.__dict__)
         with tempfile.TemporaryDirectory(prefix='opemos-live-peer-terminal-')as tmp:
             base=Path(tmp);state=base/'state'
             with contextlib.redirect_stdout(io.StringIO()):legacy.main(['--queue',str(state),'init'])
@@ -1027,7 +1034,11 @@ print(json.dumps({'realPrivateNamespace':True,'loopFDHeldThroughUnmount':True,'l
         original=enrolled_subject_body('physical_test_queue.py').decode()
         sources=lambda text:{n.name:ast.get_source_segment(text,n)
             for n in ast.parse(text).body if isinstance(n,ast.FunctionDef)}
-        before=sources(original);now=sources(Path(current.__file__).read_text())
+        before=sources(original)
+        historical=Path(__file__).parent/'fixtures/omen-ci-legacy-capacity-functions.json'
+        data=historical.read_bytes()
+        self.assertEqual(hashlib.sha256(data).hexdigest(),'7483fed3ac3960e7f642e53565e288bfe9f56c29f5cc8f9ce899f605f4cc5b50')
+        now=json.loads(data)['functions']
         candidate=original
         for name in ('enqueue','terminal_history_store','terminal_history_resolve'):
             candidate=candidate.replace(before[name],now[name])
@@ -3060,6 +3071,105 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                     offline=probe.observe()
                 self.assertIsNone(offline['mainCommit']);self.assertIsNone(offline['protectedMainCommit'])
                 self.assertIs(recovery.validate_probe(offline,policy,int(time.time())),offline)
+
+    def test_actual_connectivity_producer_validator_publisher_survive_retained_VM_contract_refusal(self):
+        from unittest import mock
+        import time,importlib.util
+        spec=importlib.util.spec_from_file_location('fixture_presence_actual_producer',SOURCE/'normal_probe.py')
+        n=importlib.util.module_from_spec(spec);spec.loader.exec_module(n)
+        spec=importlib.util.spec_from_file_location('fixture_presence_actual_publisher',SOURCE/'normal_heartbeat.py')
+        hb=importlib.util.module_from_spec(spec);spec.loader.exec_module(hb)
+        _,r=self.modules();now=int(time.time());job='root-github-robot-control-'+'f'*32
+        unit='opemos-testq-'+'a'*12+'-'+'b'*32+'.service';inv='c'*32;cg='/opemos.slice/'+unit
+        policy={k:'c'*64 for k in ('runnerManifestSHA256','queueSourceSHA256','queueLoggerSHA256',
+            'jobStartedSHA256','jobGuardSHA256','privatePeerSHA256','normalInstallerSHA256',
+            'normalQueueEntrySHA256','heartbeatProducerSHA256')}
+        policy.update(mainCommit='e'*40,controlBrokerSHA256='a'*64,priorControlBrokerSHA256='b'*64)
+        ctl={'jobId':job,'state':'running','terminalLifecycle':None,'reservationRetained':True,
+             'sourceCommit':policy['mainCommit'],'queueSourceSHA256':policy['queueSourceSHA256'],
+             'leaseExpiresUnix':now+500,'listenerAlive':True,'controllerAlive':True,'workerAlive':True,
+             'ownUnitBound':True,'brokerSHA256':policy['controlBrokerSHA256']}
+        def actor(pid,uid,argv):return {'pid':pid,'start':100+pid,'ppid':101,'uids':[uid]*4,'tgid':pid,'cgroup':cg,'argv':argv}
+        worker=actor(101,1000,['/usr/bin/python3',str(n.QUEUE/'queue_job.py')])
+        listener=actor(102,1000,[str(n.RUNNER/'bin/Runner.Listener'),'run','--startuptype','service'])
+        controller=actor(103,0,['python3',str(n.CONTROL/'releases'/('f'*32)/'control.py')])
+        # Native manager/PID facts are MODELED here. The test executes the
+        # actual observation/transport schema/heartbeat consumer, with the VM
+        # reader deliberately refusing; it is not a liveness/VM acceptance cut.
+        proof={'kind':'CONTROL_CONNECTIVITY_NATIVE_UNITS_R1','operationOrReleaseAuthorized':False,
+               'knownInvocations':{unit:inv},'ownJobId':job,'ownUnit':unit,'ownInvocation':inv,
+               'manager':{'LoadState':'loaded','ActiveState':'active','MainPID':'101','InvocationID':inv,'ControlGroup':cg},
+               'group':{'empty':False,'includesUID0':True,'completeTraversal':True,'processes':[101,102,103],'derivedPath':cg},
+               'roles':{'worker':worker,'listener':listener,'controller':controller},'VMReadiness':'NOT_OBSERVED',
+               'retainedVMJobIds':['failed-original-with-unavailable-observer']}
+        rows=[{'id':job,'state':'running','unit':unit,'spec':'{}'},
+              {'id':'failed-original-with-unavailable-observer','state':'terminal_cleanup','unit':'old-VM.service','spec':'{}'}]
+        bindings=[{'job_id':job,'value':json.dumps({'unit':unit,'invocation':inv})},
+                  {'job_id':rows[1]['id'],'value':json.dumps({'unit':'old-VM.service','invocation':'d'*32})}]
+        relevant=[dict(v,uid=v['uids'][0],cgroup='0::'+v['cgroup'])for v in proof['roles'].values()]
+        def github(path,timeout=10):
+            if path.endswith('/branches/main'):return {'protected':True,'commit':{'sha':'d'*40}}
+            if path.endswith('/actions/runners/21'):return {'id':21,'name':'opemos-omen-robot','status':'online','busy':True,'labels':[{'name':'opemos-omen-robot'}]}
+            if '/actions/variables/'in path:return {'value':'{}'}
+            raise AssertionError('presence must not enumerate repository jobs '+path)
+        def snapshot(validate):validate(None,rows,bindings,[{'value':'{}'}]);return rows,bindings,[{'value':'{}'}]
+        with tempfile.TemporaryDirectory()as tmp:
+            queue=Path(tmp);(queue/'state').mkdir();(queue/'state/worker.lock').touch()
+            with mock.patch.object(n,'QUEUE',queue),mock.patch.object(n,'root_policy',return_value=policy), \
+                 mock.patch.object(n,'local_sources',return_value=({'actual':'sources'},None,b'queue')), \
+                 mock.patch.object(n,'private_snapshot',side_effect=snapshot), \
+                 mock.patch.object(n,'private_queue',side_effect=RuntimeError('original VM observation/schema refuses'))as vm, \
+                 mock.patch.object(n,'connectivity_native_cut',return_value=proof), \
+                 mock.patch.object(n,'current_control',side_effect=lambda *args:dict(ctl)), \
+                 mock.patch.object(n,'actors',return_value=relevant), \
+                 mock.patch.object(n,'source_writers',return_value=False), \
+                 mock.patch.object(n,'intel_host_graphics',return_value='INTEL_HOST_NVIDIA_GUEST_ONLY'), \
+                 mock.patch.object(n,'gh_json',side_effect=github),mock.patch.object(n.os,'geteuid',return_value=0), \
+                 mock.patch.object(n.os,'fstat',return_value=types.SimpleNamespace(st_mode=0o100600,st_uid=1000,st_nlink=1)):
+                frame=n.observe(route_only=True)
+                vm.assert_not_called()
+                self.assertIs(r.validate_probe(frame,policy,int(time.time()),route_only=True),frame)
+                state=hb.state_from_current(frame,policy,int(time.time()),'f'*32,presence_only=True)
+                self.assertTrue(state['connected']);self.assertTrue(state['busy']);self.assertFalse(state['ready'])
+                self.assertEqual(state['vm_admission'],'UNVERIFIED')
+                self.assertEqual(frame['otherActiveJobs'],[rows[1]['id']])
+                self.assertEqual(frame['unclassifiedRuntimeActors'],[])
+                with self.assertRaisesRegex(RuntimeError,'original VM observation/schema refuses'):n.observe()
+                # The full VM reader retains its original refusal. Presence
+                # cannot be passed as a readiness/admission observation.
+                with self.assertRaises(RuntimeError):r.validate_probe(frame,policy,int(time.time()))
+                for key in ('ownInvocation','ownJobId'):
+                    bad=copy.deepcopy(frame);bad['connectivityProof'][key]='0'*32
+                    with self.subTest(key=key),self.assertRaises(RuntimeError):r.validate_probe(bad,policy,int(time.time()),route_only=True)
+
+    def test_existing_recovery_keeps_connectivity_on_known_VM_probe_refusal_but_not_native_UNKNOWN(self):
+        from unittest import mock
+        import time
+        _,r=self.modules();policy,state,_,_,_=self.pending(r);before=copy.deepcopy(state)
+        native={'reaped':True,'numeric':1,'eof':{'stdout':True,'stderr':True},'first':None,
+                'stdout':b'','stderr':b'original immutable VM observer/schema refusal'}
+        presence={'kind':'ROOT_RUNNER21_PRESENCE_RESULT_V1','connected':True,'ready':False,'vmAdmission':False}
+        first=RuntimeError('original VM probe closure/failure retained')
+        def execute(observed):
+            value=copy.deepcopy(before)
+            with mock.patch.object(r,'load_code',return_value=b'authenticated source'), \
+                 mock.patch.object(r,'start_held_python',return_value=object())as spawned, \
+                 mock.patch.object(r,'capture',return_value=observed), \
+                 mock.patch.object(r,'failed_probe',return_value=first)as preserved, \
+                 mock.patch.object(r,'refresh_current_presence',return_value=presence)as publish, \
+                 mock.patch.object(r,'write_state')as saved:
+                try:result=r.run_cycle(policy,value,int(time.time()))
+                except RuntimeError as exc:result=exc
+            return result,value,spawned.call_count,preserved.call_args,publish.call_count,saved.call_count
+        result,value,spawns,preserved,publishes,writes=execute(native)
+        self.assertEqual(result['decision'],'CONNECTED_VM_OBSERVATION_REFUSED')
+        self.assertEqual(result['originalVMProbeStderrSHA256'],r.sha(native['stderr']))
+        self.assertFalse(result['vmAdmission']);self.assertEqual((spawns,publishes,writes),(1,1,0))
+        self.assertEqual(value,before);self.assertEqual(preserved.args,('controller-native',native))
+        for bad in (dict(native,reaped=False),dict(native,first='helper closure UNKNOWN'),
+                    dict(native,eof={'stdout':True,'stderr':False})):
+            result,value,spawns,_,publishes,writes=execute(bad)
+            self.assertIs(result,first);self.assertEqual((spawns,publishes,writes),(1,0,0));self.assertEqual(value,before)
 
     def modules(self):
         import importlib.util

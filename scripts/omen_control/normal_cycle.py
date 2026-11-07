@@ -466,7 +466,8 @@ def dispatch(tx,policy,probe_module):
 
 def publish_heartbeat(policy,probe_module,nonce):
     source=module(ROOT/'normal_heartbeat.py',policy['heartbeatProducerSHA256'])
-    state=source.state_from_current(probe_module.observe(),policy,int(time.time()),nonce)
+    full=probe_module.observe();connected=probe_module.observe(route_only=True)
+    state=source.state_from_current(source.join_current_presence(full,connected),policy,int(time.time()),nonce)
     result=source.publish_once(state)
     need(result['readbackCurrent'] is True,'current heartbeat not read back')
     return result

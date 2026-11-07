@@ -45,7 +45,7 @@ def require_stable_github(before,after):
              'assigned work changed with Runner21 registration')
         raise IdleRunnerStatusTransition(before,after)
 
-def observe():
+def observe(route_only=False):
     from_source=held(ROOT/'runner21_recovery.py',1048576,0,0o444)
     trigger=module(from_source,'runner21_recovery')
     p=trigger.validate_policy(trigger.strict(held(ROOT/'policy.json',65536,0,0o400)),int(time.time()))
@@ -57,9 +57,9 @@ def observe():
     config=held(SSH,65536,1000,0o600)
     need(sha(config)==p['sshConfigSHA256'],'current pinned existing SSH route')
     m=module(raw,'current_github_and_remote_probe_source')
-    github=m.current_github(p) # controller only; existing gh/credential, no copy
+    github=m.current_github(p,route_only=True)if route_only else m.current_github(p) # existing controller credential only
     prefix=('REMOTE_POLICY='+repr(p)+'\nREMOTE_GITHUB='+repr(github)+
-            '\nimport sys\nsys.argv=["reviewed-remote-probe","--probe"]\n').encode()
+            '\nimport sys\nsys.argv=["reviewed-remote-probe",'+repr('--probe-route'if route_only else'--probe')+']\n').encode()
     source=prefix+raw
     need(len(source)<=1048576,'bounded pinned probe carrier')
     argv=['/usr/sbin/runuser','-u','connor','--','/usr/bin/ssh','-F',str(SSH),'-o','BatchMode=yes',
@@ -75,15 +75,15 @@ def observe():
             'stdout':proc.stdout,'stderr':proc.stderr,'reaped':True,
             'eof':{'stdout':True,'stderr':True},'first':None})
     v=trigger.strict(proc.stdout)
-    trigger.validate_probe(v,p,int(time.time()))
+    trigger.validate_probe(v,p,int(time.time()),route_only=route_only)
     # A second current API read closes the controller-to-OMEN observation.
-    after=m.current_github(p)
+    after=m.current_github(p,route_only=True)if route_only else m.current_github(p)
     require_stable_github(github,after)
     need(sha(held(SSH,65536,1000,0o600))==p['sshConfigSHA256'] and
          sha(held(ROOT/'normal_probe.py',1048576,0,0o444))==p['normalProbeSHA256'],
          'controller source/SSH changed after remote observation')
     return v
 if __name__=='__main__':
-    need(sys.argv==[sys.argv[0],'--probe'] and os.geteuid()==0,
+    need(sys.argv in([sys.argv[0],'--probe'],[sys.argv[0],'--probe-route'])and os.geteuid()==0,
          'fixed Root controller probe entry')
-    print(enc(observe()).decode(),end='')
+    print(enc(observe(route_only=sys.argv[1]=='--probe-route')).decode(),end='')

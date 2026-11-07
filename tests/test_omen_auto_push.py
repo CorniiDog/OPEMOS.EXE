@@ -146,16 +146,36 @@ print('normal candidate producer/consumer succeeded with connect denied; native 
 class RouteHeartbeat(unittest.TestCase):
     def state(self):
         policy={'mainCommit':'e'*40,'queueSourceSHA256':'c'*64,'controlBrokerSHA256':'b'*64}
-        probe={'networkReachable':True,'protectedMain':True,'mainCommit':'d'*40,'runnerOnline':True,
+        probe={'kind':'ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1','boot':'1'*36,'atUnix':1000,'protectedMainCommit':'d'*40,
+            'queueSourceSHA256':'c'*64,'runnerManifestSHA256':'a'*64,'runnerId':21,'registeredRunnerId':21,
+            'connectivityProof':{'kind':'CONTROL_CONNECTIVITY_NATIVE_UNITS_R1','operationOrReleaseAuthorized':False,
+                'VMReadiness':'NOT_OBSERVED','ownJobId':'root-github-robot-control-'+('f'*32)},
+            'networkReachable':True,'protectedMain':True,'mainCommit':'d'*40,'runnerOnline':True,
             'runnerBusy':True,'actionsInProgress':4,'controlBrokerSHA256':'b'*64,'sourceOwnerBusy':True,'sourceWritersBusy':False,
             'unknownReservations':[],'unclassifiedRuntimeActors':[],'otherActiveJobs':True,'guestActive':True,'gpuLeaseActive':True,
-            'control':{'state':'running','sourceCommit':'e'*40,'queueSourceSHA256':'c'*64,
+            'control':{'jobId':'root-github-robot-control-'+('f'*32),'state':'running','sourceCommit':'e'*40,'queueSourceSHA256':'c'*64,
                 'listenerAlive':True,'controllerAlive':True,'workerAlive':True,'ownUnitBound':True,'leaseExpiresUnix':22000}}
         return probe,policy
     def test_busy_real_runner_and_gpu_are_queueing_facts_not_route_vetoes(self):
         probe,policy=self.state();result=H.state_from_current(probe,policy,1000,'f'*32)
         self.assertEqual(result['source_commit'],'e'*40);self.assertEqual(result['expires_at'],1180)
         self.assertNotIn('gpu_admitted',result)
+    def test_presence_can_advance_past_readiness_TTL_while_busy_without_vm_admission(self):
+        probe,policy=self.state();probe['kind']='ROOT_RUNNER21_CONNECTIVITY_PROBE_V1';probe['control']['leaseExpiresUnix']=1600
+        probe['unknownReservations']=['retained-failed-VM-still-unresolved']
+        states=[H.state_from_current(probe,policy,now,'f'*32,presence_only=True)for now in (1000,1200,1400)]
+        self.assertEqual([r['checked_at']for r in states],[1000,1200,1400])
+        self.assertTrue(all(r['connected']is True and r['busy']is True and r['ready']is False and
+                            r['vm_admission']=='UNVERIFIED'for r in states))
+        # Normal first-hook/readiness authority is still refused on this short
+        # unextended lease; connectivity metadata cannot mint more VM time.
+        with self.assertRaises(RuntimeError):H.state_from_current(probe,policy,1400,'f'*32)
+        with self.assertRaises(RuntimeError):H.state_from_current(probe,policy,1600,'f'*32,presence_only=True)
+        for key in ('listenerAlive','controllerAlive','workerAlive','ownUnitBound'):
+            changed=copy.deepcopy(probe);changed['control'][key]=False
+            with self.subTest(key=key),self.assertRaises(RuntimeError):
+                H.state_from_current(changed,policy,1400,'f'*32,presence_only=True)
+
     def test_actual_source_worker_or_expiry_fault_still_refuses(self):
         for key,value in [('listenerAlive',False),('workerAlive',False),('sourceCommit','a'*40),('leaseExpiresUnix',20000)]:
             probe,policy=self.state();probe['control'][key]=value
@@ -168,7 +188,7 @@ class RouteHeartbeat(unittest.TestCase):
         vm='opemos-testq-'+('a'*12)+'-'+('c'*32)+'.service'
         rows=[{'id':'controller','state':'running','unit':own},{'id':'admitted-vm','state':'running','unit':vm}]
         bindings=[{'job_id':r['id'],'value':json.dumps({'unit':r['unit'],'invocation':str(i)*32})}for i,r in enumerate(rows,1)]
-        pool={'admitted':True,'unknownReservationsRetained':[],'knownInvocations':{own:'1'*32,vm:'2'*32}}
+        pool={'kind':'CONTROL_CONNECTIVITY_NATIVE_UNITS_R1','operationOrReleaseAuthorized':False,'knownInvocations':{own:'1'*32,vm:'2'*32}}
         actors=[{'pid':100,'start':123,'uid':1000,'argv':['/installed/queue_job.py'],'cgroup':'0::/opemos.slice/'+vm}]
         probe,policy=self.state()
         probe['unclassifiedRuntimeActors']=N.unclassified_route_actors(actors,own,rows,bindings,pool)
@@ -190,6 +210,22 @@ class RouteHeartbeat(unittest.TestCase):
         self.assertFalse(C.job_window_valid(0,22000,4000))
         probe,policy=self.state()
         with self.assertRaises(RuntimeError):H.state_from_current(probe,policy,4000,'f'*32)
+    def test_actual_full_probe_shape_requires_independent_connectivity_join(self):
+        full,policy=self.state();connected=copy.deepcopy(full)
+        connected['kind']='ROOT_RUNNER21_CONNECTIVITY_PROBE_V1'
+        for key in('sourceWritersBusy','unclassifiedRuntimeActors','connectivityProof'):full.pop(key)
+        with self.assertRaisesRegex(RuntimeError,'native connectivity proof missing'):
+            H.state_from_current(full,policy,1000,'f'*32)
+        joined=H.join_current_presence(full,connected)
+        self.assertTrue(H.state_from_current(joined,policy,1000,'f'*32)['ready'])
+        self.assertNotIn('connectivityProof',full) # preserve original actual full-role ABI
+        for key,value in [('boot','2'*36),('queueSourceSHA256','0'*64),('protectedMainCommit','a'*40)]:
+            wrong=copy.deepcopy(connected);wrong[key]=value
+            with self.subTest(key=key),self.assertRaisesRegex(RuntimeError,'same current source'):
+                H.join_current_presence(full,wrong)
+        wrong=copy.deepcopy(connected);wrong['control']['jobId']='root-github-robot-control-'+('0'*32)
+        with self.assertRaisesRegex(RuntimeError,'same current source'):H.join_current_presence(full,wrong)
+
     def test_real_route_metadata_uses_runner21_not_repository_job_frontier(self):
         calls=[]
         def github(path,timeout=10):

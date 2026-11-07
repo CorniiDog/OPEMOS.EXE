@@ -168,7 +168,11 @@ def runner21_assigned_jobs(active, read):
 
 def current_github(p,route_only=False):
     if 'REMOTE_GITHUB' in globals():
-        return REMOTE_GITHUB
+        value=dict(REMOTE_GITHUB)
+        if route_only:
+            value.update(actionsInProgress=None,actionsQueued=None)
+            if value['networkReachable']:value['mainCommit']=value['protectedMainCommit']
+        return value
     try:
         branch=gh_json('repos/CorniiDog/OPEMOS.EXE/branches/main')
         if route_only:
@@ -291,11 +295,8 @@ def health_queue(source_raw,implementation_pin=None):
             if old is missing:sys.modules.pop(name,None)
             else:sys.modules[name]=old
 
-def private_queue(source_raw,observer_capture=None,pool_capture=None,implementation_pin=None):
-    # normal_cycle.current_rows also uses this entry directly. Its existing
-    # authenticated policy must select the same observer as observe().
-    if implementation_pin is None:
-        implementation_pin=root_policy().get('healthImplementationDefinitionPin')
+def private_snapshot(validate=None):
+    """One held canonical/WAL epoch; SQL is private-only and never writes live state."""
     state=QUEUE/'state'; names=['queue.sqlite3','queue.sqlite3-wal',
                                 'queue.sqlite3-shm','queue.sqlite3-journal']
     limits=[MAX_DB,8*1024*1024,1024*1024,8*1024*1024]
@@ -339,21 +340,7 @@ def private_queue(source_raw,observer_capture=None,pool_capture=None,implementat
             config=[dict(x) for x in db.execute('SELECT * FROM config ORDER BY rowid')]
             need(db.total_changes==0 and len(rows)<=4096 and len(bindings)<=4096 and
                  len(config)==1,'bounded canonical private queue relation')
-            with health_queue(source_raw,implementation_pin) as q:
-                backend=q.SystemdBackend(state,json.loads(config[0]['value']))
-                if implementation_pin is not None:backend.terminal_implementation_pin=implementation_pin
-                if observer_capture is not None:
-                    need(type(observer_capture)is list and len(observer_capture)==0,'fresh bounded readonly observer capture buffer')
-                    backend.observer_captures=observer_capture
-                proof=backend.validate_pool(
-                    q.pool_rows(db,db.execute('SELECT * FROM jobs ORDER BY rowid').fetchall()))
-            need(proof.get('admitted') is True and
-                 type(proof.get('unknownReservationsRetained')) is list and
-                 proof['unknownReservationsRetained']==[],
-                 'canonical current whole-pool proof')
-            if pool_capture is not None:
-                need(type(pool_capture) is list and not pool_capture,'fresh actual pool proof capture')
-                pool_capture.append(proof)
+            if validate is not None:validate(db,rows,bindings,config)
             db.rollback()
         finally:db.close()
     finally:shutil.rmtree(temp)
@@ -366,6 +353,27 @@ def private_queue(source_raw,observer_capture=None,pool_capture=None,implementat
             need(identity==initial[name]['full9'] and sha(raw)==initial[name]['sha256'],
                  'queue source changed after private SQL')
     return rows,bindings,config
+
+def private_queue(source_raw,observer_capture=None,pool_capture=None,implementation_pin=None):
+    if implementation_pin is None:
+        implementation_pin=root_policy().get('healthImplementationDefinitionPin')
+    def validate(db,rows,bindings,config):
+        with health_queue(source_raw,implementation_pin) as q:
+            backend=q.SystemdBackend(state,json.loads(config[0]['value']))
+            if implementation_pin is not None:backend.terminal_implementation_pin=implementation_pin
+            if observer_capture is not None:
+                need(type(observer_capture)is list and len(observer_capture)==0,'fresh bounded readonly observer capture buffer')
+                backend.observer_captures=observer_capture
+            proof=backend.validate_pool(
+                q.pool_rows(db,db.execute('SELECT * FROM jobs ORDER BY rowid').fetchall()))
+        need(proof.get('admitted') is True and
+             type(proof.get('unknownReservationsRetained')) is list and
+             proof['unknownReservationsRetained']==[],
+             'canonical current whole-pool proof')
+        if pool_capture is not None:
+            need(type(pool_capture) is list and not pool_capture,'fresh actual pool proof capture')
+            pool_capture.append(proof)
+    return private_snapshot(validate)
 
 def classify_rows(rows,bindings,p):
     active=[r for r in rows if r['state'] in ('running','terminal_cleanup')]
@@ -477,10 +485,69 @@ def current_control(row,p):
     result['brokerSHA256']=broker_sha
     return result
 
+def connectivity_native_cut(source_raw,rows,bindings,config,p,relevant):
+    """Current control/native membership only; never VM admission or release."""
+    selected,_,_=classify_rows(rows,bindings,p)
+    need(selected is not None and selected['state']=='running','actual running connection subject')
+    with health_queue(source_raw,p.get('healthImplementationDefinitionPin')) as q:
+        backend=q.SystemdBackend(QUEUE/'state',json.loads(config[0]['value']))
+        need(backend.cfg.get('manager')=='system','actual system manager for connected control')
+        native=sys.modules['libvirt_peer'];known={};own=None
+        connection_units=set()
+        for actor in relevant:
+            if any(key in arg for arg in actor['argv']for key in ('Runner.Listener','Runner.Worker','/queue_job.py','/control.py')):
+                connection_units.update(re.findall(r'opemos-testq-[0-9a-f-]+\.service',actor['cgroup']))
+        for row in rows:
+            if row['state']not in('running','terminal_cleanup')or (row['unit']not in connection_units and row['id']!=selected['id']):continue
+            matches=[b for b in bindings if b['job_id']==row['id']]
+            need(len(matches)==1,'one actual connection-unit canonical binding')
+            bound=json.loads(matches[0]['value']);spec=json.loads(row['spec'])
+            need(bound['version']==1 and bound['job_id']==row['id']==spec['id']and
+                 bound['unit']==row['unit']and bound['stateRoot']==str(QUEUE/'state')and
+                 bound['prefix']==backend.prefix and bound['specSHA256']==q.hashlib.sha256(q.canonical(spec).encode()).hexdigest()and
+                 bound['cpus']==json.loads(row['cpus'])and bound['memory']==spec['memory'],
+                 'exact original connection row/spec/resource/binding')
+            props=backend.pool_unit_properties(row['unit'])
+            need(props['LoadState']=='loaded'and props['InvocationID']==bound['invocation'],
+                 'current connection-unit kernel invocation')
+            known[row['unit']]=bound['invocation']
+            if row['id']==selected['id']:own=(row,bound,props)
+        need(own is not None,'own connected canonical/native unit')
+        row,bound,props=own;group=backend.whole_owned_cgroup(row['unit'],props)
+        need(props['ActiveState']=='active'and int(props['MainPID'])>0 and
+             group['empty']is False and group['includesUID0']is True and group['completeTraversal']is True,
+             'actual complete nonempty own connection unit')
+        current={pid:native.process_snapshot(pid)for pid in group['processes']}
+        main=int(props['MainPID']);need(main in current,'actual manager PID in held native unit')
+        release=CONTROL/'releases'/row['id'].removeprefix('root-github-robot-control-')
+        roles={
+          'listener':[v for v in current.values()if v['uids']==[1000]*4 and v['argv']==[str(RUNNER/'bin/Runner.Listener'),'run','--startuptype','service']],
+          'worker':[v for v in current.values()if v['uids']==[1000]*4 and str(QUEUE/'queue_job.py')in v['argv']],
+          'controller':[v for v in current.values()if v['uids']==[0]*4 and str(release/'control.py')in v['argv']]}
+        need(all(len(v)==1 for v in roles.values())and roles['worker'][0]['pid']==main,
+             'unique exact current listener/controller/canonical worker roles')
+        for role,values in roles.items():
+            actor=values[0];need(actor['cgroup']==props['ControlGroup'],'exact role current cgroup')
+            chain=set();cursor=actor
+            while cursor['pid']!=main:
+                need(cursor['pid']not in chain and cursor['ppid']in current,'actual role belongs to original worker ancestry')
+                chain.add(cursor['pid']);cursor=current[cursor['ppid']]
+        need(backend.pool_unit_properties(row['unit'])==props,'same own manager source/invocation after native observation')
+        for actor in current.values():need(native.process_snapshot(actor['pid'])==actor,'actual own PID/start/UID/argv/cgroup changed')
+        last=backend.whole_owned_cgroup(row['unit'],props)
+        need(last['empty']is False and last['processes']==group['processes']and
+             last['derivedPath']==group['derivedPath'],'same complete own native membership after role proof')
+        return {'kind':'CONTROL_CONNECTIVITY_NATIVE_UNITS_R1','operationOrReleaseAuthorized':False,
+                'knownInvocations':known,'ownJobId':row['id'],'ownUnit':row['unit'],
+                'ownInvocation':bound['invocation'],'manager':props,'group':last,
+                'roles':{name:values[0]for name,values in roles.items()},
+                'VMReadiness':'NOT_OBSERVED','retainedVMJobIds':[r['id']for r in rows
+                    if r['id']!=row['id']and r['state']in('running','terminal_cleanup','unknown')]}
+
 def unclassified_route_actors(relevant,own_unit,rows,bindings,pool):
     """Recognize busy actors only through current canonical/kernel unit joins."""
-    need(pool.get('admitted') is True and pool.get('unknownReservationsRetained')==[],
-         'actual admitted whole-pool proof for route actor classification')
+    need(pool.get('kind')=='CONTROL_CONNECTIVITY_NATIVE_UNITS_R1'and pool.get('operationOrReleaseAuthorized')is False,
+         'actual native connection membership, never VM admission')
     invocations=pool.get('knownInvocations')
     need(type(invocations) is dict,'actual kernel-validated unit invocations')
     known={}
@@ -489,10 +556,14 @@ def unclassified_route_actors(relevant,own_unit,rows,bindings,pool):
         matched=[b for b in bindings if b['job_id']==row['id']]
         need(len(matched)==1,'active admitted owner exact canonical binding')
         value=json.loads(matched[0]['value']);unit=value.get('unit');invocation=value.get('invocation')
+        # A retained actorless VM is not part of a live connection role.
+        # Unknown live actors still fail below; absence of VM-observation
+        # proof cannot erase the independently proved current listener.
+        if unit not in invocations:continue
         need(unit==row.get('unit') and type(unit) is str and
              re.fullmatch(r'opemos-testq-[0-9a-f-]+\.service',unit) and
              type(invocation) is str and re.fullmatch(r'[0-9a-f]{32}',invocation) and
-             invocations.get(unit)==invocation,'current row/binding/kernel invocation join')
+             invocations[unit]==invocation,'current row/binding/kernel invocation join')
         known[unit]=row['id']
     unknown=[]
     for actor in relevant:
@@ -508,11 +579,16 @@ def observe(route_only=False):
     need(os.geteuid()==0,'fixed Root readonly probe entry')
     p=root_policy();sources,release,queue_source=local_sources(p)
     github=current_github(p,route_only=route_only)
-    pool_capture=[]
-    rows,bindings,config=private_queue(queue_source,pool_capture=pool_capture if route_only else None,
-        implementation_pin=p.get('healthImplementationDefinitionPin'))
+    pool_capture=[];native_actors=[]
+    if route_only:
+        def native_validate(db,rows,bindings,config):
+            relevant=actors();native_actors.extend(relevant)
+            pool_capture.append(connectivity_native_cut(queue_source,rows,bindings,config,p,relevant))
+        rows,bindings,config=private_snapshot(native_validate)
+    else:
+        rows,bindings,config=private_queue(queue_source,implementation_pin=p.get('healthImplementationDefinitionPin'))
     selected,foreign,unknown=classify_rows(rows,bindings,p)
-    relevant=actors();ctl=current_control(selected,p)
+    relevant=native_actors if route_only else actors();ctl=current_control(selected,p)
     broker_sha=ctl.pop('brokerSHA256',None)
     # Only actual running work blocks; pending jobs stay pending for a normal
     # dispatcher. Unknown actors or source writers are left to the normal
@@ -550,7 +626,7 @@ def observe(route_only=False):
               CONTROL/'guard/job-started.sh',CONTROL/'guard/job_guard.py']
     writers=source_writers(protected_sources) if route_only or not foreign_runtime else False
     source_busy=foreign_runtime or writers
-    frame={'kind':'ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1','atUnix':time.time(),
+    frame={'kind':('ROOT_RUNNER21_CONNECTIVITY_PROBE_V1'if route_only else 'ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1'),'atUnix':time.time(),
            'boot':Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
            'protectedMain':github['protectedMain'],'mainCommit':github['mainCommit'],
            'protectedMainCommit':github['protectedMainCommit'],
@@ -580,14 +656,20 @@ def observe(route_only=False):
         # effect-bearing recovery probe's original stricter owner predicate;
         # the read-only route exposes actual source writers separately.
         frame['sourceWritersBusy']=writers
-        need(len(pool_capture)==1,'one complete actual pool cut')
+        need(len(pool_capture)==1,'one complete actual native connectivity cut')
+        frame['connectivityProof']=pool_capture[0]
+        proof=pool_capture[0]
+        ctl.update(listenerAlive=proof['roles']['listener']['pid']>0,
+                   controllerAlive=proof['roles']['controller']['pid']>0,
+                   workerAlive=proof['roles']['worker']['pid']>0,
+                   ownUnitBound=proof['ownUnit']==unit and proof['ownInvocation']==json.loads(bound[0]['value'])['invocation'])
         frame['unclassifiedRuntimeActors']=unclassified_route_actors(relevant,unit,rows,bindings,pool_capture[0])
     after,_,_=local_sources(p)
     need(after==sources,'all installed current source identities changed during probe')
     return frame
 
 def main():
-    need(sys.argv==[sys.argv[0],'--probe'],'fixed Root probe argv')
-    print(enc(observe()).decode(),end='')
+    need(sys.argv in ([sys.argv[0],'--probe'],[sys.argv[0],'--probe-route']),'fixed Root probe argv')
+    print(enc(observe(route_only=sys.argv[1]=='--probe-route')).decode(),end='')
 
 if __name__=='__main__':main()

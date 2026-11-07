@@ -184,7 +184,7 @@ def current_closed_predecessor(policy, control):
          'same exact closed predecessor in current deployment definition')
     return True
 
-def validate_probe(v, policy, now):
+def validate_probe(v, policy, now,*,route_only=False):
     keys={'kind','atUnix','boot','protectedMain','mainCommit','protectedMainCommit','runnerId',
           'registeredRunnerId','runnerManifestSHA256','queueSourceSHA256',
           'queueLoggerSHA256','jobStartedSHA256','jobGuardSHA256',
@@ -196,7 +196,8 @@ def validate_probe(v, policy, now):
           'sourceOwnerBusy','queueKnown','workerLockFree','unknownReservations',
           'otherActiveJobs','guestActive','gpuLeaseActive','hostGraphics',
           'control','effects'}
-    need(type(v) is dict and set(v)==keys and v['kind']=='ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1'
+    extra={'sourceWritersBusy','unclassifiedRuntimeActors','connectivityProof'}if route_only else set()
+    need(type(v) is dict and set(v)==keys|extra and v['kind']==('ROOT_RUNNER21_CONNECTIVITY_PROBE_V1'if route_only else 'ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1')
          and v['effects']==[] and
          v['runnerId']==v['registeredRunnerId']==RUNNER_ID and
          type(v['boot']) is str and re.fullmatch(r'[0-9a-f-]{36}',v['boot']) and
@@ -225,11 +226,13 @@ def validate_probe(v, policy, now):
          re.fullmatch(r'[0-9a-f]{32}',v['heartbeatNonce']),
          'bounded current heartbeat nonce')
     if v['networkReachable']:
-        need(v['protectedMain'] is True and v['mainCommit']==policy['mainCommit'] and
+        need(v['protectedMain'] is True and
+              v['mainCommit']==(v['protectedMainCommit']if route_only else policy['mainCommit']) and
              type(v['protectedMainCommit']) is str and
              re.fullmatch(r'[0-9a-f]{40}',v['protectedMainCommit']) and
-             type(v['actionsInProgress']) is int and v['actionsInProgress']>=0 and
-             type(v['actionsQueued']) is int and v['actionsQueued']>=0,
+             ((route_only and v['actionsInProgress']is None and v['actionsQueued']is None)or
+              (type(v['actionsInProgress']) is int and v['actionsInProgress']>=0 and
+               type(v['actionsQueued']) is int and v['actionsQueued']>=0)),
              'fresh protected Main/Actions proof')
     else:
         need(v['protectedMain'] is False and v['mainCommit'] is None and
@@ -238,6 +241,37 @@ def validate_probe(v, policy, now):
              v['runnerOnline'] is False and v['heartbeatCurrent'] is False,
              'offline state never cached as current GitHub proof')
         need(v['heartbeatNonce'] is None,'offline heartbeat nonce cannot be cached')
+    if route_only:
+        need(type(v['sourceWritersBusy'])is bool and type(v['unclassifiedRuntimeActors'])is list,
+             'complete presence source-writer/actor diagnostics')
+        proof=v['connectivityProof']
+        need(type(proof)is dict and proof.get('kind')=='CONTROL_CONNECTIVITY_NATIVE_UNITS_R1'and
+             proof.get('operationOrReleaseAuthorized')is False and proof.get('VMReadiness')=='NOT_OBSERVED'and
+             proof.get('ownJobId')==v['control']['jobId'],'actual own native connection proof, no VM grant')
+        need(set(proof)=={'kind','operationOrReleaseAuthorized','knownInvocations','ownJobId','ownUnit',
+                 'ownInvocation','manager','group','roles','VMReadiness','retainedVMJobIds'}and
+             type(proof['ownUnit'])is str and re.fullmatch(r'opemos-testq-[0-9a-f-]+\.service',proof['ownUnit'])and
+             type(proof['ownInvocation'])is str and re.fullmatch(r'[0-9a-f]{32}',proof['ownInvocation'])and
+             proof['knownInvocations'].get(proof['ownUnit'])==proof['ownInvocation'],
+             'complete native current control unit/invocation proof')
+        manager=proof['manager'];group=proof['group'];roles=proof['roles']
+        need(manager['LoadState']=='loaded'and manager['ActiveState']=='active'and
+             manager['InvocationID']==proof['ownInvocation']and
+             group['empty']is False and group['includesUID0']is True and group['completeTraversal']is True and
+             manager['ControlGroup']==group['derivedPath']and set(roles)=={'listener','worker','controller'}and
+             len({role['pid']for role in roles.values()})==3 and
+             roles['worker']['pid']==int(manager['MainPID']),
+             'actual complete own native manager/group/roles')
+        for name,actor in roles.items():
+            need(type(actor['pid'])is int and actor['pid']>1 and type(actor['start'])is int and actor['start']>0 and
+                 actor['pid']in group['processes']and actor['cgroup']==group['derivedPath']and
+                 actor['uids']==([0]*4 if name=='controller'else[1000]*4),
+                 'complete native role PID/start/UID/cgroup')
+        release='/var/lib/opemos-robot-control-r1/releases/'+proof['ownJobId'].removeprefix('root-github-robot-control-')
+        need(roles['listener']['argv']==['/home/connor/.local/share/opemos-ci/github-runner/bin/Runner.Listener','run','--startuptype','service']and
+             '/home/connor/.local/state/opemos-test-queue-r2/queue_job.py'in roles['worker']['argv']and
+             release+'/control.py'in roles['controller']['argv'],
+             'exact current connection role executable paths')
     c=v['control']
     need(set(c)=={'jobId','state','terminalLifecycle','reservationRetained',
                  'sourceCommit','queueSourceSHA256','leaseExpiresUnix',
@@ -875,7 +909,7 @@ def failed_probe(stage, native):
     error=RuntimeError('full current probe native closure; numeric='+str(native['numeric'])+
                        '; stderrSHA256='+sha(native['stderr']))
     try:
-        need(stage in('controller-native','controller-ssh')and
+        need(stage in('controller-native','controller-ssh','controller-connectivity-native','presence-only')and
              type(native['stderr'])is bytes and len(native['stderr'])<=65536,
              'finite fixed-stage failed stderr')
         record={'kind':'ROOT_RUNNER21_FAILED_PROBE_NATIVE_V1','stage':stage,
@@ -957,7 +991,20 @@ def run_cycle(policy, state, now):
     observed=capture(probe_child,MAX_PROBE_SECONDS,abort_readonly=True)
     if not(observed['reaped'] and observed['numeric']==0 and
            all(observed['eof'].values()) and observed['first'] is None and observed['stderr']==b''):
-        raise failed_probe('controller-native',observed)
+        first=failed_probe('controller-native',observed)
+        # A known closed VM-readiness refusal is not loss of connectivity.
+        # UNKNOWN native closure never permits another effect-bearing child.
+        if observed['reaped']and all(observed['eof'].values())and observed['first']is None:
+            try:presence=refresh_current_presence(policy)
+            except BaseException as secondary:
+                first.add_note('independent connectivity observation: '+type(secondary).__name__+':'+str(secondary)[:300])
+            else:
+                if presence is not None:
+                    return {'decision':'CONNECTED_VM_OBSERVATION_REFUSED','effect':'CONNECTIVITY_METADATA_ONLY',
+                            'originalVMProbeSHA256':sha(observed['stdout']),
+                            'originalVMProbeStderrSHA256':sha(observed['stderr']),
+                            'presence':presence,'vmAdmission':False}
+        raise first
     probe=receipt(observed['stdout'],'ROOT_RUNNER21_NORMAL_CURRENT_PROBE_V1')
     # The authenticated remote timestamp is later than the main entry clock.
     # Sample a fresh local clock only after the complete native probe receipt.
@@ -1003,7 +1050,8 @@ def run_cycle(policy, state, now):
             heartbeat_raw=load_code(ROOT/'normal_heartbeat.py',policy['heartbeatProducerSHA256'])
             heartbeat=types.ModuleType('reviewed_materialized_heartbeat')
             exec(compile(heartbeat_raw,str(ROOT/'normal_heartbeat.py'),'exec'),heartbeat.__dict__)
-            published=heartbeat.publish_once(heartbeat.state_from_current(probe,policy,now,nonce))
+            connected=current_connection_probe(policy)
+            published=heartbeat.publish_once(heartbeat.state_from_current(heartbeat.join_current_presence(probe,connected),policy,now,nonce))
             need(published.get('readbackCurrent') is True and published.get('recoveryNonce')==nonce,'same nonce materialized heartbeat readback')
         result_sha=None if published is None else published['stateSHA256']
         state['inflight']=None;state['completedCycles']+=1;state['totalCycles']+=1;state['failureCount']=0;state['nextAttemptUnix']=now+60
@@ -1099,7 +1147,13 @@ def run_cycle(policy, state, now):
     action=decision(probe,policy,now,state)
     if action not in ('CREATE','RESUME_PENDING','RECONCILE_CLOSED',
                       'GRACEFUL_RENEW','REFRESH_HEARTBEAT'):
-        return {'decision':action,'probeSHA256':sha(observed['stdout']),'effect':False}
+        # Assigned Actions work and owned VMs keep the same healthy listener.
+        # Presence publication proves its own native roles and finite lease;
+        # the original VM/admission/lifecycle hold is returned unchanged.
+        presence=(refresh_current_presence(policy)if action in
+                  ('WAIT_ACTIVE_ACTION_OR_SOURCE_OWNER','WAIT_SHARED_OWNER_OR_GPU')else None)
+        return {'decision':action,'probeSHA256':sha(observed['stdout']),'effect':False,
+                **({'presence':presence}if presence is not None else {})}
     cycle_raw=load_code(CYCLE,policy['controllerCycleSHA256'])
     previous_outcome=strict(canonical(state['lastOutcome']))
     nonce=os.urandom(16).hex()
@@ -1200,6 +1254,39 @@ def run_cycle(policy, state, now):
     return {'decision':action,'effect':'NORMAL_CONTROL_ONLY',
             'nonce':nonce,'resultSHA256':sha(outcome['stdout']),
             'jobId':result.get('jobId'),'phase':result.get('phase')}
+
+def current_connection_probe(policy):
+    source=load_code(PROBE,policy['controllerProbeSHA256'])
+    child=start_held_python(source,['--probe-route'])
+    observed=capture(child,MAX_PROBE_SECONDS,abort_readonly=True)
+    if not(observed['reaped']and observed['numeric']==0 and all(observed['eof'].values())and observed['first']is None and observed['stderr']==b''):
+        raise failed_probe('controller-connectivity-native',observed)
+    return validate_probe(receipt(observed['stdout'],'ROOT_RUNNER21_CONNECTIVITY_PROBE_V1'),policy,int(time.time()),route_only=True)
+
+def refresh_current_presence(policy):
+    """Metadata only, independent of lifecycle in-flight state/backoff/VM readiness.
+
+    A failed VM probe cannot overwrite a known listener as offline. The
+    separately authenticated existing controller path must still prove actual
+    connectivity, current finite control lease/source/actors and readback.
+    """
+    source=load_code(CYCLE,policy['controllerCycleSHA256'])
+    child=start_held_python(source,['--publish-presence',sha(canonical(policy))])
+    out=capture(child,MAX_PROBE_SECONDS)
+    need(out['reaped']and all(out['eof'].values())and out['first']is None,
+         'presence child native closure UNKNOWN; no control action authorized')
+    if out['numeric']!=0 or out['stderr']:
+        # This is a known closed metadata attempt, never a control lifecycle
+        # reservation. Preserve its exact failure without resetting recovery.
+        failed_probe('presence-only',out)
+        return None
+    result=receipt(out['stdout'],'ROOT_RUNNER21_PRESENCE_RESULT_V1')
+    need(result.get('policySHA256')==sha(canonical(policy))and
+         result.get('readbackCurrent')is True and result.get('connected')is True and
+         result.get('ready')is False and result.get('vmAdmission')is False,
+         'exact source-bound presence acknowledgement, no readiness grant')
+    return result
+
 
 def main():
     need(os.geteuid()==0 and sys.argv==[sys.argv[0]],'Root fixed timer entry; no caller argv')

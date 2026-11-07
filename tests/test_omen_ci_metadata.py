@@ -143,6 +143,17 @@ class LosslessHistoryRepack(unittest.TestCase):
         self.assertTrue(result['rollbackPreserved']);self.assertEqual(result['originalLeafCount'],2)
         self.assertLess(result['activeAllocatedBytes'],gate['sourceAllocatedBytes'])
         self.assertEqual(limits,(q.HISTORY_FILE_MAX,q.HISTORY_METADATA_MAX,q.HISTORY_NAMESPACE_MAX,q.HISTORY_ENTRY_MAX,q.HISTORY_ARCHIVE_STAGE_MAX))
+        rootfd=os.open(self.root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+        try:all_retained=q.history_retained_allocation(rootfd,self.uid)
+        finally:os.close(rootfd)
+        self.assertEqual(result['allRetainedAllocatedBytes'],all_retained)
+        self.assertGreater(all_retained,result['activePlusRollbackBytes'])
+        # The FIRST rollback is still physically charged after a second
+        # exchange. It cannot disappear from the budget because it is older.
+        with mock.patch.object(q,'HISTORY_ARCHIVE_STAGE_MAX',result['activePlusRollbackBytes']):
+            with self.assertRaisesRegex(ValueError,'All retained history generations'):
+                q.history_archive_migrate(self.root,self.uid,'terminal-history-rollback-third',self.gate(pins))
+        self.assertFalse((self.root/'terminal-history-rollback-third').exists())
         with q.history_directory(self.root,self.uid)as fd:
             self.assertEqual(set(os.listdir(fd)),{q.HISTORY_ARCHIVE_INDEX,q.HISTORY_ARCHIVE_DATA})
             archive=q.history_archive_index(fd,self.uid)
@@ -155,6 +166,180 @@ class LosslessHistoryRepack(unittest.TestCase):
             for pin,raw in ((original,first),(new,second)):
                 self.assertEqual(q.history_read_leaf(rollback,pin,self.uid,q.HISTORY_FILE_MAX),raw)
         finally:os.close(rollback)
+
+    def test_complete_originals_over_64MiB_use_compact_closed_epoch_without_sql_edits(self):
+        import sqlite3
+        q=self.q;rows=[];pins=[];expected={}
+        payload='x'*(22*1024**2)
+        for i in range(3):
+            row={'id':'closed-'+str(i),'unit':'original-'+str(i)+'.service','state':'failed',
+                 'spec':'original complete spec','cpus':'[0]','finished':i+1,
+                 'result':q.canonical({'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False},
+                                      'originalUnknown':'preserved','payload':payload+str(i)})}
+            raw=(q.canonical(row)+'\n').encode();rows.append(row)
+            with q.history_directory(self.root,self.uid,True)as fd:
+                pin=q.history_publish(fd,raw,'row',self.uid)
+            pins.append(pin);expected[pin['name']]=hashlib.sha256(raw).hexdigest()
+            if i==1:
+                q.history_archive_migrate(self.root,self.uid,'terminal-history-rollback-large',self.gate(pins))
+        owned={'id':'current','unit':'current.service','state':'running','result':None}
+        epoch={'rows':rows+[owned],'pool':{'original':'all pool fields'},'bindings':[],'config':[]}
+        self.assertGreater(len((q.canonical(epoch)+'\n').encode()),q.HISTORY_FILE_MAX)
+        db=sqlite3.connect(self.root/'queue.sqlite3')
+        try:
+            db.execute('CREATE TABLE originals (id TEXT PRIMARY KEY, value TEXT)')
+            for row in rows:db.execute('INSERT INTO originals VALUES (?,?)',(row['id'],q.canonical(row)))
+            db.commit();before=list(db.execute('SELECT * FROM originals ORDER BY id'));changes=db.total_changes
+            db.execute('BEGIN IMMEDIATE')
+            ref=q.terminal_history_store(db,epoch,owned,'a'*32);db.commit()
+            self.assertEqual(ref['kind'],q.HISTORY_COMPACT_KIND)
+            self.assertLess(ref['epochBytes'],4096)
+            actual=q.terminal_history_resolve(self.root,self.uid,ref,owned['id'],owned['unit'],'a'*32)
+            self.assertEqual(actual['rows'],[q.terminal_closed_row(r)for r in rows]+[owned])
+            self.assertEqual((db.total_changes,list(db.execute('SELECT * FROM originals ORDER BY id'))),(changes,before))
+            with q.history_directory(self.root,self.uid)as fd:
+                for pin in pins:
+                    raw=q.history_read_leaf(fd,pin,self.uid,q.HISTORY_FILE_MAX)
+                    self.assertEqual(hashlib.sha256(raw).hexdigest(),expected[pin['name']])
+            changed=dict(rows[0],result=rows[0]['result']+' ')
+            self.assertNotEqual(q.terminal_closed_row(changed),actual['rows'][0])
+            with self.assertRaisesRegex(ValueError,'reference context'):
+                q.terminal_history_resolve(self.root,self.uid,dict(ref,epochBytes=q.HISTORY_FILE_MAX+1),owned['id'],owned['unit'],'a'*32)
+        finally:db.close()
+
+    def test_complete_assignment_producer_and_reader_preserve_over64MiB_originals(self):
+        import sqlite3
+        q=self.q;db=sqlite3.connect(self.root/'queue.sqlite3');db.row_factory=sqlite3.Row
+        db.executescript('CREATE TABLE jobs(id TEXT,unit TEXT,state TEXT,spec TEXT,cpus TEXT,finished REAL,result TEXT);'
+                         'CREATE TABLE pool_unit_bindings(job_id TEXT,value TEXT);CREATE TABLE config(id INTEGER,value TEXT);')
+        rows=[];pins=[];payload='x'*(22*1024**2)
+        try:
+            for i in range(3):
+                row={'id':'original-'+str(i),'unit':'original-'+str(i)+'.service','state':'failed','spec':'exact-original',
+                     'cpus':'[0]','finished':i+1,'result':q.canonical({'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False},'originalUnknown':'preserved','payload':payload+str(i)})}
+                rows.append(row);db.execute('INSERT INTO jobs VALUES(:id,:unit,:state,:spec,:cpus,:finished,:result)',row)
+                enriched=dict(row,_poolBinding=None)
+                with q.history_directory(self.root,self.uid,True)as fd:
+                    pins.append(q.history_publish(fd,(q.canonical(enriched)+'\n').encode(),'row',self.uid))
+            q.history_archive_migrate(self.root,self.uid,'terminal-history-rollback-assignment-large',self.gate(pins))
+            own={'id':'current','unit':'current.service','state':'running','spec':'exact-current','cpus':'[1]','finished':None,'result':None}
+            bound={'version':1,'invocation':'a'*32};db.execute('INSERT INTO jobs VALUES(:id,:unit,:state,:spec,:cpus,:finished,:result)',own)
+            db.execute('INSERT INTO pool_unit_bindings VALUES(?,?)',(own['id'],q.canonical(bound)));db.execute('INSERT INTO config VALUES(1,?)',('{}',));db.commit()
+            before=q.diagnostic_ledger(db);changes=db.total_changes
+            # Immutable VM request derivation is unchanged and separately
+            # exercised by the existing installed Root fixture. This codec test
+            # models that operand only, never a VM or privileged approval.
+            request={'jobId':own['id'],'modeledImmutableRequest':True}
+            with mock.patch.object(q,'libvirt_request',return_value=request):
+                pin=q.publish_libvirt_assignment(db,dict(own,_poolBinding=bound),bound)
+                with q.libvirt_export_directory(self.root,self.uid)as fd:
+                    header,_=q.libvirt_assignment_read_header(fd,own['id']+'.json',self.uid)
+                self.assertGreater(header['canonicalBytes'],64*1024**2)
+                self.assertLessEqual(header['canonicalBytes'],q.HISTORY_ASSIGNMENT_MAX)
+                value,evidence=q.read_libvirt_assignment_export(self.root,own['id'],header['producer'],header['source'],header['bootID'])
+                self.assertEqual(value,before);self.assertEqual(evidence['canonicalSHA256'],header['canonicalSHA256'])
+                self.assertEqual((db.total_changes,q.diagnostic_ledger(db)),(changes,before))
+                with self.assertRaisesRegex(ValueError,'worker/source/boot'):
+                    q.read_libvirt_assignment_export(self.root,own['id'],header['producer'],dict(header['source'],sha256='0'*64),header['bootID'])
+                archive=self.root/q.HISTORY_DIRECTORY/q.HISTORY_ARCHIVE_DATA
+                archive.chmod(0o600)
+                with archive.open('r+b')as stream:
+                    first=stream.read(1);stream.seek(0);stream.write(bytes([first[0]^1]));stream.flush();os.fsync(stream.fileno())
+                archive.chmod(0o400)
+                with self.assertRaises(ValueError):
+                    q.read_libvirt_assignment_export(self.root,own['id'],header['producer'],header['source'],header['bootID'])
+        finally:db.close()
+
+    def test_archived_logical_rows_do_not_consume_physical_entry_slots(self):
+        import sqlite3
+        q=self.q;rows=[];pins=[]
+        with q.history_directory(self.root,self.uid,True)as fd:
+            for i in range(4094):
+                row={'id':'archived-'+str(i),'unit':'original-'+str(i)+'.service',
+                     'state':'failed','spec':'exact-original','cpus':'[0]',
+                     'result':q.canonical({'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False}})}
+                rows.append(row);pins.append(q.history_publish(fd,(q.canonical(row)+'\n').encode(),'row',self.uid))
+        q.history_archive_migrate(self.root,self.uid,'terminal-history-rollback-logical-limit',self.gate(pins))
+        with q.history_directory(self.root,self.uid)as fd:
+            self.assertEqual(set(os.listdir(fd)),{q.HISTORY_ARCHIVE_INDEX,q.HISTORY_ARCHIVE_DATA})
+        db=sqlite3.connect(self.root/'queue.sqlite3')
+        try:
+            own={'id':'new-current','unit':'new-current.service','state':'running','spec':'exact-current','cpus':'[1]','result':None}
+            epoch={'rows':rows+[own],'pool':{'modeled':True},'bindings':[],'config':[]}
+            db.execute('BEGIN IMMEDIATE')
+            with mock.patch.object(q,'terminal_history_maintain',side_effect=AssertionError('no physical capacity pressure')):
+                ref=q.terminal_history_store(db,epoch,own,'a'*32)
+            db.commit()
+            actual=q.terminal_history_resolve(self.root,self.uid,ref,own['id'],own['unit'],'a'*32)
+            self.assertEqual(actual['rows'],[q.terminal_closed_row(r)for r in rows]+[own])
+            with q.history_directory(self.root,self.uid)as fd:
+                self.assertEqual(len(os.listdir(fd)),4) # two archive files, current row, manifest
+                for i in range(5):q.history_publish(fd,q.canonical({'additionalPhysicalLeaf':i}).encode(),'row',self.uid)
+                with mock.patch.object(q,'HISTORY_ENTRY_MAX',8),self.assertRaisesRegex(ValueError,'Finite history entry count'):
+                    q.history_inventory(fd,self.uid)
+        finally:db.close()
+
+    def test_closed_reference_compares_every_original_byte_at_normal_terminal_boundary(self):
+        q=self.q;unit='owned.service'
+        closed={'id':'old','unit':'old.service','state':'failed','spec':'exact original spec','cpus':'[0]',
+                'result':q.canonical({'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False}})}
+        running={'id':'current','unit':unit,'state':'running','result':None,'spec':'current','cpus':'[1]'}
+        pending=dict(running,state='terminal_cleanup',result='retained original pending result')
+        pool={'admitted':True,'includesUID0':True,'completeBoundedTraversal':True,'allOwnedDescriptorsClosed':True,
+              'canonicalPool':'/modeled-pool','systemdPoolProperties':{},'unitProperties':{unit:{}},
+              'unknownReservationsRetained':[],'knownInvocations':{unit:'a'*32},'positiveMainPIDProofs':{},
+              'tasks':[],'rootParentCustody':[('/modeled-pool',[1,2,0o40755,0,0,2,3,4])]}
+        before={'rows':[q.terminal_closed_row(closed),running],'pool':copy.deepcopy(pool),'bindings':[],'config':[]}
+        after={'rows':[closed,pending],'pool':copy.deepcopy(pool),'bindings':[],'config':[]}
+        self.assertEqual(q.verify_terminal_pool_transition(before,after,pending,False)['otherRowsPreserved'],1)
+        for key,value in [('spec','changed'),('cpus','[4]'),('result',closed['result']+' '),('unit','foreign.service')]:
+            changed=copy.deepcopy(after);changed['rows'][0][key]=value
+            with self.subTest(key=key),self.assertRaisesRegex(ValueError,'Other full job'):
+                q.verify_terminal_pool_transition(before,changed,pending,False)
+
+    def test_normal_terminal_writer_repackages_before_headroom_failure_without_sql_changes(self):
+        import sqlite3
+        q=self.q;rows=[];pins=[]
+        # Scaled operation storage bounds keep this a small real-file test;
+        # all production writer/fence/archive/readback code is executed.
+        with mock.patch.object(q,'HISTORY_NAMESPACE_MAX',512*1024), \
+             mock.patch.object(q,'HISTORY_METADATA_MAX',64*1024), \
+             mock.patch.object(q,'HISTORY_ARCHIVE_STAGE_MAX',2*1024**2):
+            for i in range(3):
+                row={'id':'prior-'+str(i),'unit':'prior-'+str(i)+'.service','state':'failed',
+                     'result':q.canonical({'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False},
+                                          'payload':str(i)*96*1024})}
+                raw=(q.canonical(row)+'\n').encode();rows.append(row)
+                with q.history_directory(self.root,self.uid,True)as fd:pins.append(q.history_publish(fd,raw,'row',self.uid))
+            own={'id':'current','unit':'current.service','state':'running','result':'x'*(96*1024)}
+            epoch={'rows':rows+[own],'pool':{},'bindings':[],'config':[]}
+            db=sqlite3.connect(self.root/'queue.sqlite3');db.row_factory=sqlite3.Row
+            try:
+                db.execute('CREATE TABLE jobs (id TEXT PRIMARY KEY, unit TEXT, state TEXT, result TEXT)')
+                db.execute('CREATE TABLE pool_unit_bindings (job_id TEXT PRIMARY KEY, value TEXT)')
+                for r in rows+[own]:db.execute('INSERT INTO jobs VALUES (?,?,?,?)',tuple(r[k]for k in ('id','unit','state','result')))
+                db.execute('INSERT INTO pool_unit_bindings VALUES (?,?)',(own['id'],q.canonical({'invocation':'a'*32})))
+                db.commit();before=[tuple(r)for r in db.execute('SELECT * FROM jobs')];changes=db.total_changes
+                db.execute('BEGIN IMMEDIATE');ref=q.terminal_history_store(db,epoch,own,'a'*32);db.commit()
+                self.assertEqual(([tuple(r)for r in db.execute('SELECT * FROM jobs')],db.total_changes),(before,changes))
+                rollbacks=list(self.root.glob('terminal-history-rollback-auto-*'));self.assertEqual(len(rollbacks),1)
+                actual=q.terminal_history_resolve(self.root,self.uid,ref,own['id'],own['unit'],'a'*32)
+                self.assertEqual(actual['rows'],[q.terminal_closed_row(r)for r in rows]+[own])
+                with q.history_directory(self.root,self.uid)as fd:
+                    self.assertLess(q.history_inventory(fd,self.uid)[0],256*1024)
+                    for pin in pins:self.assertEqual(hashlib.sha256(q.history_read_leaf(fd,pin,self.uid,q.HISTORY_FILE_MAX)).hexdigest(),pin['sha256'])
+                # The rollback is retained; this test grants no cleanup or
+                # process/VM authority and does not erase historical originals.
+                self.assertTrue(rollbacks[0].is_dir())
+            finally:db.close()
+
+    def test_unfinished_reserved_unknown_and_nonjson_results_are_never_compacted(self):
+        q=self.q
+        for state,result in [('running',None),('terminal_cleanup',q.canonical({'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False}})),
+            ('unknown',q.canonical({'terminalLifecycle':{'phase':'CLOSED','reservationRetained':True}})),
+            ('failed','original unreadable result'),('failed','null')]:
+            row={'id':'preserved','unit':'original.service','state':state,'result':result}
+            self.assertEqual(q.terminal_closed_row(row),row)
 
     def test_wrong_complete_pin_set_refuses_before_exchange_and_preserves_old_pair(self):
         original,raw=self.publish('old');q=self.q

@@ -1457,16 +1457,22 @@ import stat
 import ctypes
 import zlib
 HISTORY_KIND = 'OPEMOS_PINNED_TERMINAL_EPOCH_R1'
+HISTORY_COMPACT_KIND = 'OPEMOS_PINNED_TERMINAL_EPOCH_R2'
+HISTORY_CLOSED_ROW_KIND = 'OPEMOS_EXACT_CLOSED_ROW_SHA256_R1'
 HISTORY_DIRECTORY = 'terminal-history-r1'
 HISTORY_FILE_MAX = 64 * 1024**2
-HISTORY_METADATA_MAX = 1024**2
-HISTORY_NAMESPACE_MAX = 64 * 1024**2
-HISTORY_ENTRY_MAX = 1536
+# Complete assignment is an in-memory ledger in the existing2GiB controller.
+# Individual immutable leaves retain64MiB and all physical metadata/VM bounds.
+# Three22MiB original rows are a valid complete ledger, not an oversized leaf.
+HISTORY_ASSIGNMENT_MAX = 128 * 1024**2
+HISTORY_METADATA_MAX = 8 * 1024**2
+HISTORY_NAMESPACE_MAX = 160 * 1024**2
+HISTORY_ENTRY_MAX = 4096
 HISTORY_FIELDS = ('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
 HISTORY_ARCHIVE_INDEX = 'lossless-history-index.json'
 HISTORY_ARCHIVE_DATA = 'lossless-history-data.zlib'
 HISTORY_ARCHIVE_KIND = 'OPEMOS_LOSSLESS_HISTORY_ARCHIVE_R1'
-HISTORY_ARCHIVE_STAGE_MAX = 160 * 1024**2
+HISTORY_ARCHIVE_STAGE_MAX = 400 * 1024**2
 
 def history_close_owned(fd):
     active=sys.exc_info()[1]
@@ -1497,7 +1503,7 @@ def history_archive_regular(parent,name,uid,cap):
 
 def history_archive_parse(raw,index_ident,data,data_ident):
     index=json.loads(raw)
-    require((canonical(index)+'\n').encode()==raw and set(index)=={'kind','dataBytes','dataSHA256','dataIdentity','leaves'} and index['kind']==HISTORY_ARCHIVE_KIND and type(index['leaves'])is list and 0<len(index['leaves'])<=HISTORY_ENTRY_MAX,'Closed canonical archive index')
+    require((canonical(index)+'\n').encode()==raw and set(index)=={'kind','dataBytes','dataSHA256','dataIdentity','leaves'} and index['kind']==HISTORY_ARCHIVE_KIND and type(index['leaves'])is list and 0<len(index['leaves'])<=len(raw),'Closed canonical archive index')
     require(len(data)==index['dataBytes'] and hashlib.sha256(data).hexdigest()==index['dataSHA256'] and data_ident==index['dataIdentity'],'Complete archive data identity/bytes/SHA')
     leaves={};end=0
     for item in index['leaves']:
@@ -1530,7 +1536,7 @@ def history_archive_view(parent,uid,metrics=None):
         names=set(os.listdir(parent));pair={HISTORY_ARCHIVE_INDEX,HISTORY_ARCHIVE_DATA}&names
         require(not pair or pair=={HISTORY_ARCHIVE_INDEX,HISTORY_ARCHIVE_DATA},'Incomplete lossless history archive')
         if pair:
-            raw,index_ident=read(HISTORY_ARCHIVE_INDEX,HISTORY_METADATA_MAX);data,data_ident=read(HISTORY_ARCHIVE_DATA,HISTORY_FILE_MAX)
+            raw,index_ident=read(HISTORY_ARCHIVE_INDEX,HISTORY_METADATA_MAX);data,data_ident=read(HISTORY_ARCHIVE_DATA,HISTORY_NAMESPACE_MAX)
             view['archive']=history_archive_parse(raw,index_ident,data,data_ident);view['archivePairAuthentications']=1
             view['archiveBytesRead']=len(raw)+len(data)
         yield view
@@ -1605,17 +1611,58 @@ def history_archive_exchange(rootfd,stage):
     if result!=0:raise OSError(ctypes.get_errno(),'Atomic lossless history directory exchange')
     os.fsync(rootfd)
 
-def history_archive_migrate(root,uid,stage,gate):
-    """Offline-only, create-only physical migration; exchanged old directory is rollback.
+def history_retained_allocation(rootfd,uid):
+    """Charge every creator-owned retained generation, including old rollbacks.
 
-    Caller must independently prove exclusive queue/worker closure and hold it
-    through this call. This function cannot grant that lifecycle authority.
+    No old generation is deleted or silently uncharged by another exchange.
+    The remaining global metadata/whole-VM budgets are independent guards.
+    """
+    names=[n for n in os.listdir(rootfd)if n==HISTORY_DIRECTORY or n.startswith('terminal-history-rollback-')]
+    total=0;seen=set()
+    for name in names:
+        require(name==HISTORY_DIRECTORY or re.fullmatch(r'terminal-history-rollback-[a-z0-9-]{1,48}',name),
+                'Unclassified retained history generation')
+        fd=os.open(name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=rootfd)
+        try:
+            ident=history_equal(fd,rootfd,name);key=(ident['st_dev'],ident['st_ino'])
+            require(stat.S_ISDIR(ident['st_mode'])and ident['st_uid']==uid and
+                    stat.S_IMODE(ident['st_mode'])==0o700 and key not in seen,
+                    'Retained generation exact owner/mode/no alias')
+            seen.add(key);allocated,_=history_inventory(fd,uid);total+=allocated
+            require(total<=HISTORY_ARCHIVE_STAGE_MAX,'All retained history generations exceed finite storage allowance')
+            require(history_equal(fd,rootfd,name)==ident,'Retained generation changed during allocation census')
+        finally:history_close_owned(fd)
+    require(set(names)=={n for n in os.listdir(rootfd)if n==HISTORY_DIRECTORY or n.startswith('terminal-history-rollback-')},
+            'Retained generation set changed during census')
+    return total
+
+def history_archive_migrate(root,uid,stage,gate,*,writer=None):
+    """Lossless create-only exchange; every old physical generation is retained.
+
+    External callers retain the original exclusive offline gate. The normal
+    terminal writer can instead supply its existing SQLite writer transaction
+    and exact original row/invocation; no queue/process admission is granted.
     """
     require(type(stage)is str and re.fullmatch(r'terminal-history-rollback-[a-z0-9-]{1,48}',stage)is not None,'Exact new rollback directory name')
-    require(type(gate)is dict and set(gate)=={'offlineQueueAndWorkerClosed','sourceDirectoryIdentity','sourcePinsSHA256','sourceAllocatedBytes','sourceLeafCount'} and gate['offlineQueueAndWorkerClosed'] is True,'External offline lifecycle gate required')
+    fields={'sourceDirectoryIdentity','sourcePinsSHA256','sourceAllocatedBytes','sourceLeafCount'}
+    if writer is None:
+        require(type(gate)is dict and set(gate)==fields|{'offlineQueueAndWorkerClosed'}and gate['offlineQueueAndWorkerClosed']is True,'External offline lifecycle gate required')
+    else:
+        require(type(gate)is dict and set(gate)==fields|{'normalWriterFence'}and writer.in_transaction,'Existing normal SQLite writer fence required')
+        require(history_root(writer)==(Path(root),uid),'Normal writer owns this exact history namespace')
+        fence=gate['normalWriterFence'];require(set(fence)=={'jobId','unit','invocation','rowSHA256'},'Exact original normal writer context')
+        original=writer.execute('SELECT * FROM jobs WHERE id=?',(fence['jobId'],)).fetchone()
+        bound=writer.execute('SELECT value FROM pool_unit_bindings WHERE job_id=?',(fence['jobId'],)).fetchone()
+        require(original is not None and bound is not None and original['unit']==fence['unit']and
+                original['state']in('running','terminal_cleanup')and json.loads(bound[0])['invocation']==fence['invocation']and
+                hashlib.sha256(canonical(dict(original)).encode()).hexdigest()==fence['rowSHA256'],
+                'Same original row/invocation under existing writer transaction')
+        sql_changes=writer.total_changes
+
     root=Path(root).absolute();rootfd=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
     try:
         rootid=os.fstat(rootfd);require(rootid.st_uid==uid and stat.S_IMODE(rootid.st_mode)==0o700 and os.getuid()==os.geteuid()==uid,'Owned offline migration root')
+        retained_before=history_retained_allocation(rootfd,uid)
         os.mkdir(stage,0o700,dir_fd=rootfd);os.fsync(rootfd)
         staged=os.open(stage,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=rootfd)
         try:
@@ -1650,15 +1697,23 @@ def history_archive_migrate(root,uid,stage,gate):
                     compressed=zlib.compress(raw,9)
                     require(0<len(compressed)<=HISTORY_FILE_MAX,'Bounded compressed original')
                     leaves.append({'pin':pin,'offset':len(blob),'compressedBytes':len(compressed),'compressedSHA256':hashlib.sha256(compressed).hexdigest()})
-                    blob.extend(compressed);require(len(blob)<=HISTORY_FILE_MAX,'Archive active product finite64MiB')
+                    blob.extend(compressed);require(len(blob)<=HISTORY_NAMESPACE_MAX,'Archive active product bounded by history storage allowance')
                 require(hashlib.sha256(canonical(pins).encode()).hexdigest()==gate['sourcePinsSHA256'],'All original pins and unknown bytes fixed before migration')
-                data=bytes(blob);dataid=history_archive_write(staged,HISTORY_ARCHIVE_DATA,data)
+                data=bytes(blob)
+                projected=((len(data)+4095)//4096)*4096+HISTORY_METADATA_MAX+4096
+                require(retained_before+projected<=HISTORY_ARCHIVE_STAGE_MAX,
+                        'All prior rollbacks plus new staging allocation bounded before write')
+                space=os.fstatvfs(rootfd)
+                require(space.f_bavail*space.f_frsize>=projected+HISTORY_NAMESPACE_MAX//5,
+                        'Actual available storage for lossless staging and headroom')
+                dataid=history_archive_write(staged,HISTORY_ARCHIVE_DATA,data)
                 index={'kind':HISTORY_ARCHIVE_KIND,'dataBytes':len(data),'dataSHA256':hashlib.sha256(data).hexdigest(),'dataIdentity':dataid,'leaves':leaves}
                 index_raw=(canonical(index)+'\n').encode();require(len(index_raw)<=HISTORY_METADATA_MAX,'Finite archive index')
                 history_archive_write(staged,HISTORY_ARCHIVE_INDEX,index_raw)
                 stage_allocated,stage_count=history_inventory(staged,uid)
-                require(stage_allocated+HISTORY_METADATA_MAX<=HISTORY_NAMESPACE_MAX*4//5 and stage_count<=HISTORY_ENTRY_MAX,'Unchanged active cap/headroom/entries after migration')
-                require(allocated+stage_allocated<=HISTORY_ARCHIVE_STAGE_MAX,'Bounded active plus rollback staging allocation')
+                require(stage_allocated+HISTORY_METADATA_MAX<=HISTORY_NAMESPACE_MAX*4//5 and len(os.listdir(staged))<=HISTORY_ENTRY_MAX,'Active cap/headroom/physical entries after migration')
+                retained_staged=history_retained_allocation(rootfd,uid)
+                require(retained_staged<=HISTORY_ARCHIVE_STAGE_MAX,'Bounded ALL old rollbacks plus active and staging allocation')
                 staged_archive=history_archive_index(staged,uid);require(staged_archive is not None and len(staged_archive[0])==len(pins),'Complete staged archive')
                 for pin in pins:
                     require(history_archive_read(staged,pin,uid,HISTORY_METADATA_MAX if pin['name'].endswith('.epoch.json') else HISTORY_FILE_MAX)==original_bytes(source,pin),'Every original exact byte readback before exchange')
@@ -1681,12 +1736,14 @@ def history_archive_migrate(root,uid,stage,gate):
                     require(history_archive_index(rollback,uid)==archive,'Original archived pair preserved in rollback')
                     for pin in pins:original_bytes(rollback,pin)
                     require(history_archive_index(rollback,uid)==archive,'Rollback archived pair unchanged after all reads')
-                    require(history_inventory(rollback,uid)[0]+stage_allocated<=HISTORY_ARCHIVE_STAGE_MAX,'Post-exchange total bounded')
+                    history_inventory(rollback,uid)
+                    require(history_retained_allocation(rootfd,uid)==retained_staged,'Post-exchange ALL retained allocation unchanged')
                 finally:history_close_owned(rollback)
             except BaseException:
                 history_archive_exchange(rootfd,stage)
                 raise
-            return {'kind':HISTORY_ARCHIVE_KIND,'originalLeafCount':len(pins),'originalPinsSHA256':gate['sourcePinsSHA256'],'originalAllocatedBytes':allocated,'activeAllocatedBytes':stage_allocated,'activeIndexSHA256':hashlib.sha256(index_raw).hexdigest(),'activeDataSHA256':index['dataSHA256'],'rollbackDirectory':stage,'rollbackPreserved':True,'activePlusRollbackBytes':allocated+stage_allocated,'activeHeadroomLimitBytes':HISTORY_NAMESPACE_MAX*4//5}
+            require(writer is None or writer.in_transaction and writer.total_changes==sql_changes,'Lossless exchange never changes canonical SQL')
+            return {'kind':HISTORY_ARCHIVE_KIND,'originalLeafCount':len(pins),'originalPinsSHA256':gate['sourcePinsSHA256'],'originalAllocatedBytes':allocated,'activeAllocatedBytes':stage_allocated,'activeIndexSHA256':hashlib.sha256(index_raw).hexdigest(),'activeDataSHA256':index['dataSHA256'],'rollbackDirectory':stage,'rollbackPreserved':True,'activePlusRollbackBytes':allocated+stage_allocated,'allRetainedAllocatedBytes':retained_staged,'activeHeadroomLimitBytes':HISTORY_NAMESPACE_MAX*4//5}
         finally:history_close_owned(staged)
     finally:history_close_owned(rootfd)
 
@@ -1764,7 +1821,7 @@ def history_inventory(parent,uid,archive_view=None):
         fd=os.open(name,os.O_RDONLY|os.O_NOFOLLOW,dir_fd=parent)
         try:
             s=history_equal(fd,parent,name)
-            require(stat.S_ISREG(s['st_mode']) and stat.S_IMODE(s['st_mode'])==0o400 and s['st_uid']==uid and s['st_nlink']==1 and 0<s['st_size']<=HISTORY_FILE_MAX,'History inventory custody/type/cap')
+            require(stat.S_ISREG(s['st_mode']) and stat.S_IMODE(s['st_mode'])==0o400 and s['st_uid']==uid and s['st_nlink']==1 and 0<s['st_size']<=(HISTORY_NAMESPACE_MAX if name==HISTORY_ARCHIVE_DATA else HISTORY_FILE_MAX),'History inventory custody/type/cap')
             key=(s['st_dev'],s['st_ino']);require(key not in seen,'Aliased history object');seen.add(key);total+=os.fstat(fd).st_blocks*512
         finally:history_close_owned(fd)
     require(total<=HISTORY_NAMESPACE_MAX,'Existing actual allocated history cap')
@@ -1773,7 +1830,7 @@ def history_inventory(parent,uid,archive_view=None):
     archived=set(archive[0]) if archive else set()
     require(not (live & archived),'Conflicting live and archived history leaf names')
     logical=len(live)+len(archived)+1
-    require(logical<=HISTORY_ENTRY_MAX and len(names)+1<=HISTORY_ENTRY_MAX,'Unchanged finite logical and physical history entry caps')
+    require(len(names)+1<=HISTORY_ENTRY_MAX,'Finite physical history entries; archived logical count is bounded by the authenticated index bytes')
     return total,logical
 
 def history_publish(parent,raw,suffix,uid,archive_view=None):
@@ -1809,45 +1866,115 @@ def history_publish(parent,raw,suffix,uid,archive_view=None):
     require(history_read_leaf(parent,pin,uid,limit,archive_view)==raw,'History readback differs')
     return pin
 
+def terminal_closed_row(row,raw=None):
+    """Compact comparison of an immutable CLOSED row; original bytes stay stored.
+
+    Active, unfinished and UNKNOWN-reserved rows retain their complete value.
+    A digest reference is DATA only and never supplies process/admission proof.
+    """
+    if row.get('kind')==HISTORY_CLOSED_ROW_KIND:
+        require(set(row)=={'kind','id','unit','state','originalRowBytes','originalRowSHA256'}and
+                type(row['id'])is str and row['state']in TERMINAL and
+                type(row['originalRowBytes'])is int and 0<row['originalRowBytes']<=HISTORY_FILE_MAX and
+                re.fullmatch(r'[0-9a-f]{64}',row['originalRowSHA256'])is not None,
+                'Exact compact original CLOSED row context')
+        return row
+    if row.get('state')not in TERMINAL or not row.get('result'):return row
+    if type(row['result'])is not str:return row
+    try:result=json.loads(row['result'])
+    except (ValueError,TypeError):return row
+    if type(result)is not dict:return row
+    life=result.get('terminalLifecycle',{})
+    if type(life)is not dict or not(life.get('phase')=='CLOSED'and life.get('reservationRetained')is False):return row
+    raw=(canonical(row)+'\n').encode()if raw is None else raw
+    require(0<len(raw)<=HISTORY_FILE_MAX,'Complete individual original history row')
+    return {'kind':HISTORY_CLOSED_ROW_KIND,'id':row['id'],'unit':row['unit'],'state':row['state'],
+            'originalRowBytes':len(raw),'originalRowSHA256':hashlib.sha256(raw).hexdigest()}
+
+
+def terminal_history_maintain(db,root,uid,row,invocation):
+    """Repack through the existing lossless creator API, before writer headroom fails."""
+    require(db.in_transaction,'Existing normal terminal writer transaction required')
+    with history_directory(root,uid,True)as parent:
+        allocated,count=history_inventory(parent,uid);archive=history_archive_index(parent,uid)
+        names=set(os.listdir(parent));live=names-{HISTORY_ARCHIVE_INDEX,HISTORY_ARCHIVE_DATA}
+        originals={}if archive is None else {n:item['pin']for n,item in archive[0].items()}
+        for name in live:
+            fd=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=parent)
+            try:ident=history_equal(fd,parent,name)
+            finally:history_close_owned(fd)
+            originals[name]={'name':name,'bytes':ident['st_size'],'sha256':name[:64],'identity':ident}
+        pins=[originals[n]for n in sorted(originals)]
+        original=db.execute('SELECT * FROM jobs WHERE id=?',(row['id'],)).fetchone()
+        require(original is not None,'Current original normal writer row')
+        gate={'sourceDirectoryIdentity':history_identity(os.fstat(parent)),
+              'sourcePinsSHA256':hashlib.sha256(canonical(pins).encode()).hexdigest(),
+              'sourceAllocatedBytes':allocated,'sourceLeafCount':len(pins),
+              'normalWriterFence':{'jobId':row['id'],'unit':row['unit'],'invocation':invocation,
+                'rowSHA256':hashlib.sha256(canonical(dict(original)).encode()).hexdigest()}}
+    return history_archive_migrate(root,uid,'terminal-history-rollback-auto-'+os.urandom(12).hex(),gate,writer=db)
+
+
 def terminal_history_store(db,epoch,row,invocation):
     require(db.in_transaction,'History preparation retains original SQLite writer lock')
     root,uid=history_root(db)
-    raw=(canonical(epoch)+'\n').encode();require(len(raw)<=HISTORY_FILE_MAX,'Complete history within unchanged byte ceiling')
+    require(all(r.get('kind')!=HISTORY_CLOSED_ROW_KIND for r in epoch['rows']),'Original full rows required before history representation')
+    objects=[(canonical(r)+'\n').encode() for r in epoch['rows']]
+    projected=[terminal_closed_row(r,b)for r,b in zip(epoch['rows'],objects)]
+    # This is the same complete ordered pool, with byte/hash references only
+    # for immutable CLOSED history. Do not serialize every old result again
+    # into each current aggregate or change any canonical jobs/history rows.
+    compact=dict(epoch,rows=projected);raw=(canonical(compact)+'\n').encode()
+    require(len(raw)<=HISTORY_FILE_MAX,'Complete current history comparison within byte ceiling')
     identity={'jobId':row['id'],'unit':row['unit'],'InvocationID':invocation}
+    missing={hashlib.sha256(x).hexdigest()+'.row.json':x for x in objects}
+    with history_directory(root,uid,True)as parent:
+        allocated,count=history_inventory(parent,uid)
+        archive=history_archive_index(parent,uid);present=set(os.listdir(parent))|(set(archive[0])if archive else set())
+        extra=sum(((len(x)+4095)//4096)*4096 for n,x in missing.items()if n not in present)
+        maintenance=(allocated+extra+HISTORY_METADATA_MAX>HISTORY_NAMESPACE_MAX*4//5 or
+                     len(set(os.listdir(parent)))+len(set(missing)-present)+1>HISTORY_ENTRY_MAX)
+    if maintenance:terminal_history_maintain(db,root,uid,row,invocation)
     with history_directory(root,uid,True) as parent:
         allocated,count=history_inventory(parent,uid)
-        objects=[(canonical(r)+'\n').encode() for r in epoch['rows']]
-        missing={hashlib.sha256(x).hexdigest()+'.row.json':x for x in objects}
         names=set(os.listdir(parent));archive=history_archive_index(parent,uid);present=names|(set(archive[0]) if archive else set())
-        extra=sum(((len(x)+4095)//4096)*4096 for n,x in missing.items() if n not in present)
-        # Reserve complete worst-case metadata BEFORE any object write; 20% of
-        # existing finite64MiB namespace remains headroom, not a raised quota.
-        require(allocated+extra+HISTORY_METADATA_MAX<=HISTORY_NAMESPACE_MAX*4//5 and count+len(set(missing)-present)+1<=HISTORY_ENTRY_MAX,'History planned20percent headroom/entries')
-        fs=os.fstatvfs(parent);require(fs.f_bavail*fs.f_frsize>=extra+HISTORY_METADATA_MAX+HISTORY_NAMESPACE_MAX//5 and fs.f_favail>=len(missing)+2,'History free bytes/inodes')
+        new_live=set(missing)-present
+        extra=sum(((len(missing[n])+4095)//4096)*4096 for n in new_live)
+        require(allocated+extra+HISTORY_METADATA_MAX<=HISTORY_NAMESPACE_MAX*4//5 and len(names)+len(new_live)+1<=HISTORY_ENTRY_MAX,'History planned20percent headroom/entries')
+        rootfd=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+        try:require(history_retained_allocation(rootfd,uid)+extra+HISTORY_METADATA_MAX<=HISTORY_ARCHIVE_STAGE_MAX,'All retained generations and new normal history planned allocation')
+        finally:history_close_owned(rootfd)
+        fs=os.fstatvfs(parent);require(fs.f_bavail*fs.f_frsize>=extra+HISTORY_METADATA_MAX+HISTORY_NAMESPACE_MAX//5 and fs.f_favail>=len(new_live)+2,'History free bytes/inodes')
         pins=[history_publish(parent,x,'row',uid) for x in objects]
-        manifest={'kind':HISTORY_KIND,'identity':identity,'rows':pins,'pool':epoch['pool'],'bindings':epoch['bindings'],'config':epoch['config'],'epochBytes':len(raw),'epochSHA256':hashlib.sha256(raw).hexdigest()}
+        closed=[r if r.get('kind')==HISTORY_CLOSED_ROW_KIND else None for r in projected]
+        manifest={'kind':HISTORY_COMPACT_KIND,'identity':identity,'rows':pins,'closedRows':closed,'pool':epoch['pool'],'bindings':epoch['bindings'],'config':epoch['config'],'epochBytes':len(raw),'epochSHA256':hashlib.sha256(raw).hexdigest()}
         mraw=(canonical(manifest)+'\n').encode();pin=history_publish(parent,mraw,'epoch',uid)
         require(history_inventory(parent,uid)[0]<=HISTORY_NAMESPACE_MAX*4//5,'Actual allocated history20percent headroom')
-    return {'kind':HISTORY_KIND,'identity':identity,'manifest':pin,'epochBytes':len(raw),'epochSHA256':hashlib.sha256(raw).hexdigest(),'rowCount':len(epoch['rows'])}
+    return {'kind':HISTORY_COMPACT_KIND,'identity':identity,'manifest':pin,'epochBytes':len(raw),'epochSHA256':hashlib.sha256(raw).hexdigest(),'rowCount':len(epoch['rows'])}
 
 def terminal_history_resolve(root,uid,value,job,unit,invocation):
     require(type(value)is dict,'Exact retained terminal epoch type')
-    if value.get('kind')!=HISTORY_KIND:
+    if value.get('kind')not in (HISTORY_KIND,HISTORY_COMPACT_KIND):
         require(set(value)=={'rows','pool','bindings','config'} and type(value['rows'])is list,'Exact legacy embedded epoch, never unknown reference')
         return value
+    compact=value['kind']==HISTORY_COMPACT_KIND
     require(set(value)=={'kind','identity','manifest','epochBytes','epochSHA256','rowCount'} and value['identity']=={'jobId':job,'unit':unit,'InvocationID':invocation} and type(value['rowCount'])is int and 0<value['rowCount']and type(value['epochBytes'])is int and 0<value['epochBytes']<=HISTORY_FILE_MAX,'Exact original terminal reference context')
     with history_directory(root,uid) as parent:
         history_inventory(parent,uid)
         mraw=history_read_leaf(parent,value['manifest'],uid,HISTORY_METADATA_MAX);m=json.loads(mraw)
-        require((canonical(m)+'\n').encode()==mraw and set(m)=={'kind','identity','rows','pool','bindings','config','epochBytes','epochSHA256'} and m['kind']==HISTORY_KIND and m['identity']==value['identity'] and m['epochBytes']==value['epochBytes'] and m['epochSHA256']==value['epochSHA256'] and len(m['rows'])==value['rowCount'],'Whole canonical manifest binding')
+        fields={'kind','identity','rows','pool','bindings','config','epochBytes','epochSHA256'}|({'closedRows'}if compact else set())
+        require((canonical(m)+'\n').encode()==mraw and set(m)==fields and m['kind']==value['kind'] and m['identity']==value['identity'] and m['epochBytes']==value['epochBytes'] and m['epochSHA256']==value['epochSHA256'] and len(m['rows'])==value['rowCount'],'Whole canonical manifest binding')
+        require(not compact or type(m['closedRows'])is list and len(m['closedRows'])==len(m['rows']),'Complete ordered original-row representation')
         rows=[];row_bytes=2;seen=set()
-        for pin in m['rows']:
+        for index,pin in enumerate(m['rows']):
             b=history_read_leaf(parent,pin,uid,HISTORY_FILE_MAX);r=json.loads(b);require((canonical(r)+'\n').encode()==b,'Whole canonical history row')
-            row_bytes+=len(b);require(row_bytes<=HISTORY_FILE_MAX and r['id']not in seen,'Bounded unique complete history rows');seen.add(r['id']);rows.append(r)
-        require(len({r['id'] for r in rows})==len(rows),'Unique ordered history IDs')
+            require(r.get('kind')!=HISTORY_CLOSED_ROW_KIND,'History leaf must contain complete original row, not another reference')
+            projected=terminal_closed_row(r,b)if compact else r
+            if compact:require(m['closedRows'][index]==(projected if projected.get('kind')==HISTORY_CLOSED_ROW_KIND else None),'Original CLOSED status and complete row SHA/bytes binding')
+            row_bytes+=len((canonical(projected)+'\n').encode())
+            require(row_bytes<=HISTORY_FILE_MAX and r['id']not in seen,'Bounded unique complete history rows');seen.add(r['id']);rows.append(projected)
         epoch={'rows':rows,'pool':m['pool'],'bindings':m['bindings'],'config':m['config']};raw=(canonical(epoch)+'\n').encode()
         require(len(raw)==value['epochBytes'] and hashlib.sha256(raw).hexdigest()==value['epochSHA256'],'Complete ordered epoch reconstruction SHA/bytes')
-        # Re-read manifest and every row after decoding to refuse replacement.
         require(history_read_leaf(parent,value['manifest'],uid,HISTORY_METADATA_MAX)==mraw,'Manifest changed during complete decode')
         for pin in m['rows']:history_read_leaf(parent,pin,uid,HISTORY_FILE_MAX)
         return epoch
@@ -2037,7 +2164,7 @@ def verify_terminal_pool_transition(initial, current, owned_row, collected, *, r
             'Post-effect full UID0 observation unknown')
     require(current['bindings']==initial['bindings'] and current['config']==initial['config'], 'Full bindings/config changed during own finalization')
     require([r['id']for r in current['rows']]==[r['id']for r in initial['rows']], 'Full ordered history changed during own finalization')
-    old={r['id']:r for r in initial['rows']};new={r['id']:r for r in current['rows']}
+    old={r['id']:terminal_closed_row(r)for r in initial['rows']};new={r['id']:terminal_closed_row(r)for r in current['rows']}
     require(all(new[k]==v for k,v in old.items()if k!=job),'Other full job/spec/cpus/result/finished/resource row changed')
     require(new[job]==terminal_json_domain(owned_row), 'Current complete pending original row changed')
     require({k:v for k,v in old[job].items()if k not in ('state','result')}==
@@ -3329,15 +3456,33 @@ def publish_libvirt_assignment(db,row,bound,metrics=None):
         require(own=={k:v for k,v in row.items()if k!='_poolBinding'}and own['state']=='running'and own['finished']is None and own['result']is None and bindings[own['id']]==canonical(bound),'Exact committed running row/binding in same SQL snapshot')
         require(libvirt_request(own,json.loads(bindings[own['id']]))==request,'Snapshot exact immutable spec/unit/invocation/CPU derivation')
         require(len({r['id']for r in value['rows']})==len(value['rows'])and len(bindings)==len(value['bindings']),'Complete unique current history')
-        raw=(canonical(value)+'\n').encode();require(len(raw)<=HISTORY_FILE_MAX,'Existing complete64MiB history product bound')
+        raw=(canonical(value)+'\n').encode();require(len(raw)<=HISTORY_ASSIGNMENT_MAX,'Complete assignment memory bound for existing2GiB controller')
         change_count=db.total_changes;require(change_count==before_changes,'Read snapshot cannot mutate queue SQL')
     finally:db.rollback()
     require(not db.in_transaction and db.total_changes==before_changes,'Readonly snapshot closed without SQL changes')
     objects=[(canonical(r)+'\n').encode()for r in archive_rows]
     with history_directory(root,uid,True)as parent,history_archive_view(parent,uid,archive_metrics)as archive_view:
-        allocated,count=history_inventory(parent,uid,archive_view);names=set(os.listdir(parent));archive=history_archive_view_check(archive_view,parent,uid);present=names|(set(archive[0]) if archive else set());missing={hashlib.sha256(x).hexdigest()+'.row.json':x for x in objects};extra=sum(((len(x)+4095)//4096)*4096 for n,x in missing.items()if n not in present)
-        require(allocated+extra+HISTORY_METADATA_MAX<=HISTORY_NAMESPACE_MAX*4//5 and count+len(set(missing)-present)+1<=HISTORY_ENTRY_MAX,'Assignment shares unchanged history64MiB/20percent/entry guards')
-        space=os.fstatvfs(parent);require(space.f_bavail*space.f_frsize>=extra+HISTORY_METADATA_MAX+HISTORY_NAMESPACE_MAX//5 and space.f_favail>=len(missing)+2,'Assignment bytes/inodes admission')
+        allocated,_=history_inventory(parent,uid,archive_view);names=set(os.listdir(parent));archive=history_archive_view_check(archive_view,parent,uid)
+        present=names|(set(archive[0])if archive else set());missing={hashlib.sha256(x).hexdigest()+'.row.json':x for x in objects}
+        new_live=set(missing)-present;extra=sum(((len(missing[n])+4095)//4096)*4096 for n in new_live)
+        maintenance=(allocated+extra+HISTORY_METADATA_MAX>HISTORY_NAMESPACE_MAX*4//5 or len(names)+len(new_live)+1>HISTORY_ENTRY_MAX)
+    if maintenance:
+        # Reuse the same creator's fenced lossless maintenance before an
+        # assignment can hit its headroom guard. No job/SQL row is rewritten.
+        db.execute('BEGIN IMMEDIATE')
+        try:
+            require(diagnostic_ledger(db)==value and db.total_changes==before_changes,
+                    'Complete original assignment SQL snapshot unchanged before maintenance')
+            terminal_history_maintain(db,root,uid,row,bound['invocation'])
+            require(db.total_changes==before_changes,'Assignment maintenance never changes canonical SQL')
+        finally:db.rollback()
+    with history_directory(root,uid,True)as parent,history_archive_view(parent,uid,archive_metrics)as archive_view:
+        allocated,count=history_inventory(parent,uid,archive_view);names=set(os.listdir(parent));archive=history_archive_view_check(archive_view,parent,uid);present=names|(set(archive[0]) if archive else set());missing={hashlib.sha256(x).hexdigest()+'.row.json':x for x in objects};new_live=set(missing)-present;extra=sum(((len(missing[n])+4095)//4096)*4096 for n in new_live)
+        require(allocated+extra+HISTORY_METADATA_MAX<=HISTORY_NAMESPACE_MAX*4//5 and len(names)+len(new_live)+1<=HISTORY_ENTRY_MAX,'Assignment actual physical history headroom/entry guards')
+        rootfd=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+        try:require(history_retained_allocation(rootfd,uid)+extra+HISTORY_METADATA_MAX<=HISTORY_ARCHIVE_STAGE_MAX,'All retained generations and new assignment planned allocation')
+        finally:history_close_owned(rootfd)
+        space=os.fstatvfs(parent);require(space.f_bavail*space.f_frsize>=extra+HISTORY_METADATA_MAX+HISTORY_NAMESPACE_MAX//5 and space.f_favail>=len(new_live)+2,'Assignment bytes/inodes admission')
         rows=[history_publish(parent,x,'row',uid,archive_view)for x in objects]
         manifest={'kind':LIBVIRT_ASSIGNMENT_KIND,'request':request,'rows':rows,'bindings':value['bindings'],'config':value['config'],'canonicalBytes':len(raw),'canonicalSHA256':hashlib.sha256(raw).hexdigest()}
         mp=history_publish(parent,(canonical(manifest)+'\n').encode(),'epoch',uid,archive_view)
@@ -3382,10 +3527,10 @@ def read_libvirt_assignment_export(root,job,expectedWorker,expectedSource,expect
                 require(row['id']not in seen,'Unique complete snapshot rows');seen.add(row['id'])
                 require('_poolBinding'in row and row['_poolBinding']==(json.loads(bindings[row['id']])if row['id']in bindings else None),'Every augmented binding matches original raw SQL binding')
                 row_bytes+=len(canonical({k:v for k,v in row.items()if k!='_poolBinding'}).encode())+1
-                require(row_bytes<=HISTORY_FILE_MAX,'Complete snapshot within unchanged byte ceiling');enriched.append(row)
+                require(row_bytes<=HISTORY_ASSIGNMENT_MAX,'Complete assignment aggregate memory bound');enriched.append(row)
             rows=[{k:v for k,v in r.items()if k!='_poolBinding'}for r in enriched]
             value={'rows':rows,'bindings':manifest['bindings'],'config':manifest['config']};raw=(canonical(value)+'\n').encode()
-            require(len(raw)==header['canonicalBytes']==manifest['canonicalBytes']<=HISTORY_FILE_MAX and hashlib.sha256(raw).hexdigest()==header['canonicalSHA256']==manifest['canonicalSHA256'],'Complete exact current rows/bindings/config SHA')
+            require(len(raw)==header['canonicalBytes']==manifest['canonicalBytes']<=HISTORY_ASSIGNMENT_MAX and hashlib.sha256(raw).hexdigest()==header['canonicalSHA256']==manifest['canonicalSHA256'],'Complete exact current rows/bindings/config SHA')
             require(len(rows)==header['rowCount'] and len({r['id']for r in rows})==len(rows)and len(dict(value['bindings']))==len(value['bindings'])==header['bindingCount']and len(value['config'])==header['configCount'],'Unique complete snapshot counts')
             own=next(r for r in rows if r['id']==job);bound=json.loads(dict(value['bindings'])[job]);require(own['state']=='running'and own['finished']is None and own['result']is None and libvirt_request(own,bound)==header['request'],'Actual snapshot running invocation/spec/request')
             require(history_read_leaf(history,header['manifest'],uid,HISTORY_METADATA_MAX,archive_view)==mr,'Manifest reread unchanged')
