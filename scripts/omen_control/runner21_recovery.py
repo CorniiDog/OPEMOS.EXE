@@ -1141,10 +1141,9 @@ def run_cycle(policy, state, now):
         return {'decision':'RECONCILED_SAME_NONCE_HEARTBEAT',
                 'effect':'CURRENT_HEARTBEAT_ONLY','nonce':nonce}
     renewal=renew_epoch(policy,state,probe,now)
-    if renewal=='WAIT_SAFE_IDLE_POLICY_RENEWAL':
-        return {'decision':renewal,'probeSHA256':sha(observed['stdout']),
-                'effect':False}
-    action=decision(probe,policy,now,state)
+    # Epoch renewal may wait for idle while the same finite control is busy.
+    # Keep this decision in the common metadata-only hold/wait return path.
+    action=renewal if renewal=='WAIT_SAFE_IDLE_POLICY_RENEWAL'else decision(probe,policy,now,state)
     if action not in ('CREATE','RESUME_PENDING','RECONCILE_CLOSED',
                       'GRACEFUL_RENEW','REFRESH_HEARTBEAT'):
         # Assigned Actions work and owned VMs keep the same healthy listener.
@@ -1153,9 +1152,7 @@ def run_cycle(policy, state, now):
         # An assigned job can race the final CREATE observation. Its retained
         # lifecycle outcome stays held; independently proven connectivity does
         # not require an idle acknowledgement or clear that in-flight intent.
-        presence=(refresh_current_presence(policy)if action in
-                  ('WAIT_ACTIVE_ACTION_OR_SOURCE_OWNER','WAIT_SHARED_OWNER_OR_GPU')or
-                  (action=='HOLD_INFLIGHT'and probe['runnerOnline']is True)else None)
+        presence=refresh_current_presence(policy)if probe['runnerOnline']is True else None
         return {'decision':action,'probeSHA256':sha(observed['stdout']),'effect':False,
                 **({'presence':presence}if presence is not None else {})}
     cycle_raw=load_code(CYCLE,policy['controllerCycleSHA256'])
