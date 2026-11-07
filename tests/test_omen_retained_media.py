@@ -30,6 +30,9 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                          'real protected Root APT cache regression')
     def test_actual_offline_apt_local_archive_cache_without_installing_on_test_host(self):
         """Real .deb/APT acquisition; download-only, private status/cache, no dpkg effects."""
+        import functools
+        import http.server
+        import threading
         import ubuntu_guest_build as guest
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -46,20 +49,54 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                            capture_output=True,check=True,timeout=10)
             before = deb.read_bytes()
             argv = guest.prerequisite_install_argv(cache,[{'name':deb.name}])
-            isolation = ['--download-only','-o','Dir::State::status=/dev/null',
-                         '-o','Dir::Etc::sourcelist=/dev/null',
-                         '-o','Dir::Etc::sourceparts=-']
-            # Reproduce the actual old missing-cache join without installing a
-            # package or downloading anything. Then run the production argv.
-            old_cache = root / 'empty-cache'; old_cache.mkdir()
-            broken = [*argv[:argv.index('install')], '-o',
-                      'Dir::Cache::archives='+str(old_cache), *isolation,
-                      *argv[argv.index('install'):]]
-            failed = subprocess.run(broken,capture_output=True,timeout=20)
-            self.assertEqual(failed.returncode,100,failed.stdout+failed.stderr)
-            fixed = subprocess.run([*argv[:argv.index('install')],*isolation,
-                                    *argv[argv.index('install'):]],capture_output=True,timeout=20)
-            self.assertEqual(fixed.returncode,0,fixed.stdout+fixed.stderr)
+            # The real guest also has repository metadata for many of the
+            # supplied versions. A local-file-only fixture misses that choice.
+            repo = root / 'repository'; repo.mkdir()
+            (repo/'Packages').write_text(
+                'Package: '+name+'\nVersion: 1\nArchitecture: all\n'
+                'Maintainer: OPEMOS fixture <fixture@example.invalid>\n'
+                'Filename: pool/'+deb.name+'\nSize: '+str(len(before))+'\n'
+                'SHA256: '+hashlib.sha256(before).hexdigest()+'\n'
+                'Description: non-executable offline acquisition fixture\n\n')
+            requests = []
+            class Handler(http.server.SimpleHTTPRequestHandler):
+                def do_GET(self):
+                    requests.append(self.path)
+                    super().do_GET()
+                def log_message(self,*args):pass
+            server = http.server.ThreadingHTTPServer(('127.0.0.1',0),
+                functools.partial(Handler,directory=str(repo)))
+            thread = threading.Thread(target=server.serve_forever,daemon=True)
+            thread.start()
+            try:
+                sources = root/'sources.list'
+                sources.write_text('deb [trusted=yes] http://127.0.0.1:'+str(server.server_port)+'/ ./\n')
+                parts = root/'sources.d'; parts.mkdir()
+                lists = root/'lists'; lists.mkdir()
+                status = root/'status'; status.write_text('')
+                isolation = ['-o','Dir::State::status='+str(status),
+                             '-o','Dir::State::lists='+str(lists),
+                             '-o','Dir::Etc::sourcelist='+str(sources),
+                             '-o','Dir::Etc::sourceparts='+str(parts)]
+                subprocess.run(['/usr/bin/apt-get',*isolation,'update'],
+                               capture_output=True,check=True,timeout=20)
+                requests.clear()
+                # No installation or payload fetch occurs on this test host.
+                old_cache = root / 'empty-cache'; old_cache.mkdir()
+                broken = [*argv[:argv.index('install')], '-o',
+                          'Dir::Cache::archives='+str(old_cache), '--download-only',
+                          *isolation, *argv[argv.index('install'):]]
+                failed = subprocess.run(broken,capture_output=True,timeout=20)
+                self.assertEqual(failed.returncode,100,failed.stdout+failed.stderr)
+                fixed = subprocess.run([*argv[:argv.index('install')],'--download-only',
+                                        *isolation,*argv[argv.index('install'):]],
+                                       capture_output=True,timeout=20)
+                self.assertEqual(fixed.returncode,0,fixed.stdout+fixed.stderr)
+                self.assertFalse(any(x.endswith('.deb')for x in requests),requests)
+                self.assertEqual(status.read_bytes(),b'')
+            finally:
+                server.shutdown();server.server_close();thread.join(5)
+                self.assertFalse(thread.is_alive())
             self.assertEqual(deb.read_bytes(),before)
 
     def test_real_archive_extraction_returns_actual_apt_refusal_to_existing_event_log(self):
