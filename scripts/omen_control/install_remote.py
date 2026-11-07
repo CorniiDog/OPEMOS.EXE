@@ -214,11 +214,12 @@ def replacement(path,data,uid,mode,expected,tx,backup_path=None):
         raise
 
 
-def original_custody(before,installed,outcomes,txdir):
-    need(set(before)==set(installed)==set(outcomes)==set(targets()),
+def original_custody(before,installed,outcomes,txdir,payload=None):
+    selected=targets(payload)
+    need(set(before)==set(installed)==set(outcomes)==set(selected),
          'complete target outcome membership')
     result={}
-    for label,path in targets(payload).items():
+    for label,path in selected.items():
         backup=txdir/('backup-'+label);old=before[label]
         need(full(path)==installed[label],'installed target drift '+label)
         outcome=outcomes[label]
@@ -583,7 +584,7 @@ def _install_locked(payload,payload_sha,source,engine):
                              'lease':release/'lease.json',
                              'job':lease_dir/'job.json'})
         current={k:full(v) for k,v in targets(payload).items()}
-        originals=original_custody(before,current,outcomes,txdir)
+        originals=original_custody(before,current,outcomes,txdir,payload)
         new_file(txdir/'postflight.json',enc({'kind':'ROBOT_INSTALL_VERIFIED_NO_QUEUE_EFFECT',
           'transaction':tx,'installed':current,'targetOutcomes':outcomes,
           'originalCustody':originals,

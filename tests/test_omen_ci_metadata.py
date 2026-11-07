@@ -20,6 +20,36 @@ stage=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(stage)
 
 
+class SourceProducerInstallationCustody(unittest.TestCase):
+    def test_actual_optional_workflow_target_is_in_full_original_custody(self):
+        source=Path(__file__).resolve().parents[1]/'scripts/omen_control/install_remote.py'
+        spec=importlib.util.spec_from_file_location('source_producer_installer',source)
+        installer=importlib.util.module_from_spec(spec);spec.loader.exec_module(installer)
+        with tempfile.TemporaryDirectory()as directory:
+            root=Path(directory)
+            with mock.patch.object(installer,'ROOT',root/'root'), \
+                 mock.patch.object(installer,'CONFIG',root/'config'), \
+                 mock.patch.object(installer,'RUNNER',root/'runner'):
+                for enabled in (False,True):
+                    payload={'policy':{'sourceBuildEnabled':enabled}}
+                    selected=installer.targets(payload)
+                    self.assertEqual('producerWorkflow'in selected,enabled)
+                    for path in selected.values():
+                        path.parent.mkdir(parents=True,exist_ok=True)
+                        if not path.exists():path.write_bytes(b'original exact installed bytes')
+                    before={name:installer.full(path)for name,path in selected.items()}
+                    outcomes={name:'unchanged'for name in selected}
+                    result=installer.original_custody(before,dict(before),outcomes,root,payload)
+                    self.assertEqual(set(result),set(selected))
+                    self.assertTrue(all(item['location']=='original-target'for item in result.values()))
+                    if enabled:
+                        # A drift in the seventh target must fail just like
+                        # drift in the original six, never disappear from custody.
+                        selected['producerWorkflow'].write_bytes(b'changed workflow grant')
+                        with self.assertRaisesRegex(RuntimeError,'installed target drift producerWorkflow'):
+                            installer.original_custody(before,dict(before),outcomes,root,payload)
+
+
 class OwnedNBDDisconnect(unittest.TestCase):
     """Real owned PID/pidfd exit, with device/sysfs operations modeled."""
     def setUp(self):
