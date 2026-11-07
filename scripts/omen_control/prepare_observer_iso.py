@@ -284,7 +284,8 @@ DISPLAY="${DISPLAY:-:0}" python3 "$media/observer_guest.py" "$nonce" 'OPEMOS EXE
     create_file(root/'start.sh',start.encode(),0o444)
     iso=root/'observer.iso'
     argv=['/usr/bin/genisoimage','-quiet','-iso-level','3','-R','-J','-V','OPROBOT',
-          '-o',str(iso),'observer_guest.py','operation.json','start.sh','candidate']
+          '-graft-points','-o',str(iso),'observer_guest.py','operation.json','start.sh',
+          'candidate=candidate']
     done=subprocess.run(argv,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=120,check=False)
     if done.returncode or not iso.is_file():raise RuntimeError('normal guest medium creation refused: '+repr(done.stderr[:1024]))
     iso.chmod(0o400);digest=hashlib.sha256()
