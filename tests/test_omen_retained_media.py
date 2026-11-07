@@ -928,8 +928,10 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                 backend=types.SimpleNamespace(whole_owned_cgroup=lambda u,p:{'empty':own_empty})
                 return method(None,backend,error,typed,[row],[row],records)
         before=set(os.listdir('/proc/self/fd'))
+        esrch=dict(known,errno=3,originalFailure={'type':'ProcessLookupError','reason':'[Errno 3] No such process'})
         for method,typed,marker in((q.monitor_first_proc_read_exit,first,'incompleteFirstReadObservation'),
-                                  (q.monitor_proc_revalidation_exit,known,'procRevalidationExitObservation')):
+                                  (q.monitor_proc_revalidation_exit,known,'procRevalidationExitObservation'),
+                                  (q.monitor_proc_revalidation_exit,esrch,'procRevalidationExitObservation')):
             for pool_empty in(True,False):
                 result=call(method,typed,empty=pool_empty);last=result['originalReadonlyMonitor'][-1]
                 self.assertEqual(last[marker],typed)
@@ -944,6 +946,8 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                     (dict(props,ActiveState='inactive',ExecMainCode=''),False,None),(props,True,['foreign'])):
                 with self.subTest(method=method.__name__,changed=changed,empty=empty,unknown=unknown),self.assertRaises(ValueError):
                     call(method,typed,changed,empty,unknown)
+        for wrong in(dict(esrch,errno=13),dict(esrch,originalFailure=known['originalFailure'])):
+            with self.assertRaises(ValueError):q.exact_proc_revalidation_evidence(wrong,[row])
         self.assertEqual(set(os.listdir('/proc/self/fd')),before)
 
     def test_proc_exit_monitor_then_normal_tick_closes_only_terminal_unit_with_live_peer(self):

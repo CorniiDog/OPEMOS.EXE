@@ -3876,7 +3876,7 @@ def monitor_membership_race(db,backend,error):
     return {'firstFailure':e,'originalReadonlyMonitor':records,'newAdmissionEffectsReleaseForbidden':True,'originalServiceNotCancelled':True}
 
 def exact_proc_revalidation_evidence(typed,running):
-    require(type(typed)is dict and set(typed)=={'type','reason','errno','tid','path','stage','process','originalFailure'} and typed['type']=='TransientProcRevalidationObservation' and typed['reason']=='previously observed proc task vanished during revalidation' and type(typed['errno'])is int and typed['errno']==2 and type(typed['tid'])is int and typed['tid']>0 and typed['path']=='/proc/'+str(typed['tid']) and typed['stage']=='previous-task-revalidation','exact prior task ENOENT revalidation observation')
+    require(type(typed)is dict and set(typed)=={'type','reason','errno','tid','path','stage','process','originalFailure'} and typed['type']=='TransientProcRevalidationObservation' and typed['reason']=='previously observed proc task vanished during revalidation' and type(typed['errno'])is int and typed['errno']in(2,3) and type(typed['tid'])is int and typed['tid']>0 and typed['path']=='/proc/'+str(typed['tid']) and typed['stage']=='previous-task-revalidation','exact prior task ENOENT revalidation observation')
     process=typed['process']
     require(type(process)is dict and set(process)=={'tid','start','ppid','tgid','uids','cgroup'} and all(type(process[k])is int and process[k]>0 for k in ('tid','start','tgid')) and type(process['ppid'])is int and process['ppid']>=0 and type(process['uids'])is list and len(process['uids'])==4 and all(type(v)is int and v>=0 for v in process['uids']) and process['tid']==typed['tid'],'complete prior task identity, no guessed original')
     # A failed pid-directory open retains a structured observation. A field
@@ -3885,7 +3885,7 @@ def exact_proc_revalidation_evidence(typed,running):
     original=typed['originalFailure']
     directory_missing=(type(original)is dict and set(original)=={'type','errno','tid','path','stage'} and original['type']=='TransientProcObservation' and type(original['errno'])is int and original['errno']==2 and type(original['tid'])is int and original['tid']==typed['tid'] and original['path']==typed['path'] and original['stage']=='pid-directory-open')
     field_missing=(type(original)is dict and set(original)=={'type','reason'} and original['type']in('ProcessLookupError','FileNotFoundError') and type(original['reason'])is str)
-    require(directory_missing or field_missing,'exact original ENOENT proc refusal retained')
+    require((directory_missing and typed['errno']==2)or(field_missing and(typed['errno']==2 or original['type']=='ProcessLookupError')),'exact original ENOENT/ESRCH proc refusal retained')
     matches=[]
     for row in running:
         group='/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/'+row['unit']
