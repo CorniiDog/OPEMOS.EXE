@@ -696,7 +696,8 @@ print(json.dumps({'realUID1000':True,'sourceRecipeMaterialized':True,'actualRead
             config={'kind':'ROOT_ADMITTED_UBUNTU_SOURCE_BUILD_V1','nonce':'b'*32,
                 'programRoot':str(programs),
                 'normalPolicy':{'programSHA256':{'ubuntu_guest_build.py':hashlib.sha256(body).hexdigest()}},
-                'source_input':{'descriptor':{'input':{'archive_sha256':'d'*64,'expanded_bytes':4096}}}}
+                'source_input':{'descriptor':{'input':{'archive_sha256':'d'*64,
+                    'expanded_bytes':4096,'packages':['build-essential','qemu-utils']}}}}
             work=root/'new';work.mkdir(mode=0o700)
             result=module.write_guest_source_files(config,work)
             self.assertEqual(len(result),3)
@@ -705,6 +706,20 @@ print(json.dumps({'realUID1000':True,'sourceRecipeMaterialized':True,'actualRead
             text=module.debugfs('cat '+sudo['path'])['stdout']
             self.assertIn('--install-prerequisites',text)
             self.assertNotIn('NOPASSWD: ALL',text)
+            root_config=next(item for item in result if item['path'].endswith('.json'))
+            actual=json.loads(module.debugfs('cat '+root_config['path'])['stdout'])
+            self.assertEqual(actual['packages'],config['source_input']['descriptor']['input']['packages'])
+            # The same installed Root consumer prepares GUI prerequisites from
+            # the produced companion. It must receive the same declared roots.
+            gui=dict(config,kind='ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1',nonce='c'*32,
+                guest_prerequisites={'relative_path':'package.runtime/ubuntu-prerequisites.tar',
+                    'tar_sha256':'e'*64,'expanded_bytes':4096,'packages':actual['packages']})
+            gui_work=root/'gui-new';gui_work.mkdir(mode=0o700)
+            gui_result=module.write_guest_source_files(gui,gui_work)
+            gui_config=next(item for item in gui_result if item['path'].endswith('.json'))
+            gui_actual=json.loads(module.debugfs('cat '+gui_config['path'])['stdout'])
+            self.assertEqual(gui_actual['packages'],actual['packages'])
+            self.assertEqual(gui_actual['input_sha256'],'e'*64)
             with self.assertRaisesRegex(RuntimeError,'target already exists'):
                 module.write_guest_source_files(config,work)
             second=dict(config,nonce='e'*32)

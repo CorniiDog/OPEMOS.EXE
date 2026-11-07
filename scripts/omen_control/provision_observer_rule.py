@@ -240,7 +240,8 @@ def source_build_guest_files(config):
                            config['normalPolicy']['programSHA256']['ubuntu_guest_build.py'])
     stem='/usr/local/bin/opemos-source-build-'+nonce
     guest={'nonce':nonce,'input_archive':input_path,
-           'input_sha256':input_sha,'expanded_bytes':definition['expanded_bytes']}
+           'input_sha256':input_sha,'expanded_bytes':definition['expanded_bytes'],
+           'packages':definition['packages']}
     sudo=('opemosgui ALL=(root) NOPASSWD: /usr/bin/python3 -I -B '+stem+
           '.py --install-prerequisites\n').encode()
     return [(stem+'.py',program,0o755),

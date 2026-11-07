@@ -323,7 +323,8 @@ def build(config, workspace):
         prerequisite={'kind':'OFFLINE_UBUNTU_GUEST_PREREQUISITES_V1',
             'source_input_sha256':config['input_sha256'],'tar_name':runtime.name,
             'tar_bytes':runtime.stat().st_size,'tar_sha256':sha(runtime),
-            'expanded_bytes':sum(item['bytes']for item in members),'members':members}
+            'expanded_bytes':sum(item['bytes']for item in members),'members':members,
+            'packages':config['packages']}
         (companion/'ubuntu-prerequisites.json').write_text(json.dumps(prerequisite,sort_keys=True)+'\n')
         for file in sorted(directory.rglob('*')):
             info = file.lstat()
