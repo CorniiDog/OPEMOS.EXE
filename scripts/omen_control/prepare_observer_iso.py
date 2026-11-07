@@ -225,6 +225,11 @@ def pipeline_medium(config):
     observer=held_input(config['observer_source'],65536,0)
     create_file(root/'observer_guest.py',observer,0o444)
     operation=config['guest_operation']
+    display=operation.get('display')
+    if (type(display)is not list or len(display)!=2 or
+        any(type(value)is not int for value in display)or
+        not 640<=display[0]<=3840 or not 480<=display[1]<=2160):
+        raise ValueError('finite actual guest display dimensions')
     if (operation['nonce']!=nonce or operation['source_commit']!=descriptor['source_commit']or
         operation['package_sha256']!=descriptor['package_sha256']or
         operation['usb_serial']!='opemos-'+nonce or

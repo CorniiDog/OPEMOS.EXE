@@ -414,13 +414,23 @@ def main():
             'exact fresh observer nonce required')
     expected_title=sys.argv[2]
     require(3<=len(expected_title)<=80, 'exact app title fragment required')
-    x=X11();before=[];app=None;deadline=time.monotonic()+180
+    x=X11();before=[];matches=[];app=None;deadline=time.monotonic()+180
     while time.monotonic()<deadline:
         before=x.windows()
         matches=[w for w in before if expected_title.lower() in w['title'].lower()]
         if len(matches)==1:
             app=matches[0];break
         time.sleep(.2)
+    if app is None:
+        # A captured desktop can show an app even when the native identity
+        # predicate fails. Retain its actual, bounded inventory rather than
+        # translating this observation failure into 'the app never opened'.
+        print(json.dumps({'kind':'NATIVE_WINDOW_SELECTION_REFUSED',
+            'expected_title':expected_title,'match_count':len(matches),
+            'mapped_pid_windows':before[:12],
+            'display':os.environ.get('DISPLAY'),
+            'session_type':os.environ.get('XDG_SESSION_TYPE')},
+            sort_keys=True),file=sys.stderr,flush=True)
     require(app is not None, 'unique actual app native X11 window absent')
     cfg=pipeline_config(sys.argv[4],sys.argv[5],sys.argv[1])if pipeline else None
     expected={'bytes':cfg['native_executable_bytes'],'sha256':cfg['native_executable_sha256']}if pipeline else None

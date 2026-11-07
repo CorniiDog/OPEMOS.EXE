@@ -53,7 +53,7 @@ class UbuntuCandidateDiscLayout(unittest.TestCase):
                           'observer_source': {}, 'expanded_limit': 4096,
                           'guest_operation': {'nonce': nonce, 'source_commit': commit,
                               'package_sha256': digest, 'usb_serial': 'opemos-' + nonce,
-                              'native_executable_sha256': 'd' * 64}}
+                              'native_executable_sha256': 'd' * 64, 'display': [1600, 900]}}
 
                 def extracted(_archive, _descriptor, destination, _limit):
                     # Archive authentication is exercised separately. This
@@ -82,6 +82,13 @@ class UbuntuCandidateDiscLayout(unittest.TestCase):
                     self.assertEqual(actual, expected_bytes)
                 script = (root / 'prepared/start.sh').read_text()
                 self.assertIn(shlex.quote('/media/opemosgui/OPROBOT' + expected), script)
+                self.assertLess(script.index('phase=guest_display'),
+                                script.index('phase=native_app_and_observer'))
+                subprocess.run(['bash', '-n', str(root / 'prepared/start.sh')], check=True)
+                operation = json.loads(subprocess.run(
+                    ['isoinfo', '-R', '-i', iso, '-x', '/operation.json'],
+                    capture_output=True, check=True).stdout)
+                self.assertEqual(operation['display'], [1600, 900])
                 self.assertFalse(result['VMOrGUIAcceptance'])
 
 

@@ -90,7 +90,7 @@
           "source_commit": {
             "$candidate": "source_commit"
           },
-          "usb_bytes": 8400000000,
+          "usb_bytes": 8400003072,
           "whole_seconds": 7200
         },
         "image_carrier": {
