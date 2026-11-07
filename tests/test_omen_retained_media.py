@@ -1530,7 +1530,10 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                     # collection followed by the observed release-fence fault.
                     # Reentry must finish only that original passed CPU row.
                     own=backend.prefix+'e'*32+'.service';invocations={own:'f'*32,peer:'d'*32}
-                    spec=q.normalize_job(dict(closed_spec,id='passed-cleanup',resources=['passed-cleanup']),base)
+                    spec=q.normalize_job(dict(id='passed-cleanup',platform='fixture',owner='exe',
+                        command=['/usr/bin/true'],cwd=str(base),files=[str(marker)],cores=1,memory=1024**3,
+                        timeout_seconds=300,resources=['passed-cleanup'],approval={'path':str(marker),
+                        'sha256':hashlib.sha256(marker.read_bytes()).hexdigest()}),base)
                     db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',('passed-cleanup',q.canonical(spec),
                         'running','[0]',own,time.time(),None,None))
                     binding=dict(version=1,job_id=spec['id'],unit=own,invocation=invocations[own],stateRoot=str(root),
