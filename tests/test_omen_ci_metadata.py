@@ -416,13 +416,16 @@ class LosslessHistoryRepack(unittest.TestCase):
     def test_archived_logical_rows_do_not_consume_physical_entry_slots(self):
         import sqlite3
         q=self.q;rows=[];pins=[]
-        with q.history_directory(self.root,self.uid,True)as fd:
-            for i in range(10):
-                row={'id':'archived-'+str(i),'unit':'original-'+str(i)+'.service',
-                     'state':'failed','spec':'exact-original','cpus':'[0]',
-                     'result':q.canonical({'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False}})}
-                rows.append(row);pins.append(q.history_publish(fd,(q.canonical(row)+'\n').encode(),'row',self.uid))
-        q.history_archive_migrate(self.root,self.uid,'terminal-history-rollback-logical-limit',self.gate(pins))
+        # Grow across two real generations so every retained physical
+        # namespace also remains under the scaled eight-entry fixture bound.
+        for first in (0,5):
+            with q.history_directory(self.root,self.uid,True)as fd:
+                for i in range(first,first+5):
+                    row={'id':'archived-'+str(i),'unit':'original-'+str(i)+'.service',
+                         'state':'failed','spec':'exact-original','cpus':'[0]',
+                         'result':q.canonical({'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False}})}
+                    rows.append(row);pins.append(q.history_publish(fd,(q.canonical(row)+'\n').encode(),'row',self.uid))
+            q.history_archive_migrate(self.root,self.uid,'terminal-history-rollback-logical-'+str(first),self.gate(pins))
         with q.history_directory(self.root,self.uid)as fd:
             self.assertEqual(set(os.listdir(fd)),{q.HISTORY_ARCHIVE_INDEX,q.HISTORY_ARCHIVE_DATA})
         db=sqlite3.connect(self.root/'queue.sqlite3')
@@ -436,15 +439,43 @@ class LosslessHistoryRepack(unittest.TestCase):
             # fails; thousands of redundant durable fsyncs add no coverage.
             self.assertGreater(len(rows),8)
             with mock.patch.object(q,'HISTORY_ENTRY_MAX',8),mock.patch.object(q,'terminal_history_maintain',side_effect=AssertionError('no physical capacity pressure')):
-                ref=q.terminal_history_store(db,epoch,own,'a'*32)
+                written={};read={}
+                ref=q.terminal_history_store(db,epoch,own,'a'*32,metrics=written)
                 db.commit()
-                actual=q.terminal_history_resolve(self.root,self.uid,ref,own['id'],own['unit'],'a'*32)
+                actual=q.terminal_history_resolve(self.root,self.uid,ref,own['id'],own['unit'],'a'*32,metrics=read)
+                for metrics in (written,read):
+                    self.assertEqual(metrics['archivePairAuthentications'],1)
+                    self.assertGreaterEqual(metrics['archiveLeafReads'],len(rows))
+                    self.assertTrue(metrics['archiveDescriptorsClosed']);self.assertTrue(metrics['archiveAfterGuardPassed'])
             self.assertEqual(actual['rows'],[q.terminal_closed_row(r)for r in rows]+[own])
             with q.history_directory(self.root,self.uid)as fd:
                 self.assertEqual(len(os.listdir(fd)),4) # two archive files, current row, manifest
                 for i in range(5):q.history_publish(fd,q.canonical({'additionalPhysicalLeaf':i}).encode(),'row',self.uid)
                 with mock.patch.object(q,'HISTORY_ENTRY_MAX',8),self.assertRaisesRegex(ValueError,'Finite history entry count'):
                     q.history_inventory(fd,self.uid)
+        finally:db.close()
+
+    def test_real_bulk_archive_roundtrip_authenticates_pair_per_operation_not_per_original(self):
+        import sqlite3
+        q=self.q;rows=[];pins=[]
+        with q.history_directory(self.root,self.uid,True)as fd:
+            for i in range(512):
+                row={'id':'bulk-'+str(i),'unit':'original.service','state':'failed',
+                     'spec':'exact-original','result':q.canonical({'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False},'payload':'x'*2048})}
+                rows.append(row);pins.append(q.history_publish(fd,(q.canonical(row)+'\n').encode(),'row',self.uid))
+        with mock.patch.object(q,'history_archive_parse',wraps=q.history_archive_parse)as parsed:
+            q.history_archive_migrate(self.root,self.uid,'terminal-history-rollback-bulk',self.gate(pins))
+        self.assertLess(parsed.call_count,20) # all creator readback passes, not 2N opens/parses
+        db=sqlite3.connect(self.root/'queue.sqlite3')
+        try:
+            own={'id':'current','unit':'current.service','state':'running','result':None}
+            epoch={'rows':rows+[own],'pool':{'modeled':True},'bindings':[],'config':[]};db.execute('BEGIN IMMEDIATE')
+            written={};read={};ref=q.terminal_history_store(db,epoch,own,'a'*32,metrics=written);db.commit()
+            actual=q.terminal_history_resolve(self.root,self.uid,ref,own['id'],own['unit'],'a'*32,metrics=read)
+            self.assertEqual(actual['rows'],[q.terminal_closed_row(row)for row in rows]+[own])
+            for metrics in (written,read):
+                self.assertEqual(metrics['archivePairAuthentications'],1);self.assertGreaterEqual(metrics['archiveLeafReads'],len(rows))
+                self.assertTrue(metrics['archiveAfterGuardPassed']);self.assertTrue(metrics['archiveDescriptorsClosed'])
         finally:db.close()
 
     def test_closed_reference_compares_every_original_byte_at_normal_terminal_boundary(self):

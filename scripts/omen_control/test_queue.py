@@ -1715,8 +1715,9 @@ def history_archive_migrate(root,uid,stage,gate,*,writer=None):
                 retained_staged=history_retained_allocation(rootfd,uid)
                 require(retained_staged<=HISTORY_ARCHIVE_STAGE_MAX,'Bounded ALL old rollbacks plus active and staging allocation')
                 staged_archive=history_archive_index(staged,uid);require(staged_archive is not None and len(staged_archive[0])==len(pins),'Complete staged archive')
-                for pin in pins:
-                    require(history_archive_read(staged,pin,uid,HISTORY_METADATA_MAX if pin['name'].endswith('.epoch.json') else HISTORY_FILE_MAX)==original_bytes(source,pin),'Every original exact byte readback before exchange')
+                with history_archive_view(staged,uid)as staged_view:
+                    for pin in pins:
+                        require(history_archive_read(staged,pin,uid,HISTORY_METADATA_MAX if pin['name'].endswith('.epoch.json') else HISTORY_FILE_MAX,staged_view)==original_bytes(source,pin),'Every original exact byte readback before exchange')
                 require(history_archive_index(source,uid)==archive,'Original archive pair unchanged after all cached reads')
             # The external exclusive offline gate must remain held here. Fresh
             # source check closes any accidental pre-exchange mutation window.
@@ -1726,9 +1727,9 @@ def history_archive_migrate(root,uid,stage,gate,*,writer=None):
                 require(history_archive_index(source,uid)==archive,'Original archive pair unchanged immediately before exchange')
             history_archive_exchange(rootfd,stage)
             try:
-                with history_directory(root,uid) as current:
-                    require(history_inventory(current,uid)[0]==stage_allocated,'Active archive allocation after exchange')
-                    for pin in pins:history_read_leaf(current,pin,uid,HISTORY_METADATA_MAX if pin['name'].endswith('.epoch.json') else HISTORY_FILE_MAX)
+                with history_directory(root,uid)as current,history_archive_view(current,uid)as current_view:
+                    require(history_inventory(current,uid,current_view)[0]==stage_allocated,'Active archive allocation after exchange')
+                    for pin in pins:history_read_leaf(current,pin,uid,HISTORY_METADATA_MAX if pin['name'].endswith('.epoch.json') else HISTORY_FILE_MAX,current_view)
                 rollback=os.open(stage,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=rootfd)
                 try:
                     rollback_id=history_identity(os.fstat(rollback))
@@ -1918,7 +1919,7 @@ def terminal_history_maintain(db,root,uid,row,invocation):
     return history_archive_migrate(root,uid,'terminal-history-rollback-auto-'+os.urandom(12).hex(),gate,writer=db)
 
 
-def terminal_history_store(db,epoch,row,invocation):
+def terminal_history_store(db,epoch,row,invocation,*,metrics=None):
     require(db.in_transaction,'History preparation retains original SQLite writer lock')
     root,uid=history_root(db)
     require(all(r.get('kind')!=HISTORY_CLOSED_ROW_KIND for r in epoch['rows']),'Original full rows required before history representation')
@@ -1938,9 +1939,10 @@ def terminal_history_store(db,epoch,row,invocation):
         maintenance=(allocated+extra+HISTORY_METADATA_MAX>HISTORY_NAMESPACE_MAX*4//5 or
                      len(set(os.listdir(parent)))+len(set(missing)-present)+1>HISTORY_ENTRY_MAX)
     if maintenance:terminal_history_maintain(db,root,uid,row,invocation)
-    with history_directory(root,uid,True) as parent:
-        allocated,count=history_inventory(parent,uid)
-        names=set(os.listdir(parent));archive=history_archive_index(parent,uid);present=names|(set(archive[0]) if archive else set())
+    archive_metrics={}
+    with history_directory(root,uid,True)as parent,history_archive_view(parent,uid,archive_metrics)as archive_view:
+        allocated,count=history_inventory(parent,uid,archive_view)
+        names=set(os.listdir(parent));archive=history_archive_view_check(archive_view,parent,uid);present=names|(set(archive[0]) if archive else set())
         new_live=set(missing)-present
         extra=sum(((len(missing[n])+4095)//4096)*4096 for n in new_live)
         require(allocated+extra+HISTORY_METADATA_MAX<=HISTORY_NAMESPACE_MAX*4//5 and len(names)+len(new_live)+1<=HISTORY_ENTRY_MAX,'History planned20percent headroom/entries')
@@ -1948,29 +1950,30 @@ def terminal_history_store(db,epoch,row,invocation):
         try:require(history_retained_allocation(rootfd,uid)+extra+HISTORY_METADATA_MAX<=HISTORY_ARCHIVE_STAGE_MAX,'All retained generations and new normal history planned allocation')
         finally:history_close_owned(rootfd)
         fs=os.fstatvfs(parent);require(fs.f_bavail*fs.f_frsize>=extra+HISTORY_METADATA_MAX+HISTORY_NAMESPACE_MAX//5 and fs.f_favail>=len(new_live)+2,'History free bytes/inodes')
-        pins=[history_publish(parent,x,'row',uid) for x in objects]
+        pins=[history_publish(parent,x,'row',uid,archive_view) for x in objects]
         closed=[r if r.get('kind')==HISTORY_CLOSED_ROW_KIND else None for r in projected]
         manifest={'kind':HISTORY_COMPACT_KIND,'identity':identity,'rows':pins,'closedRows':closed,'pool':epoch['pool'],'bindings':epoch['bindings'],'config':epoch['config'],'epochBytes':len(raw),'epochSHA256':hashlib.sha256(raw).hexdigest()}
-        mraw=(canonical(manifest)+'\n').encode();pin=history_publish(parent,mraw,'epoch',uid)
-        require(history_inventory(parent,uid)[0]<=HISTORY_NAMESPACE_MAX*4//5,'Actual allocated history20percent headroom')
+        mraw=(canonical(manifest)+'\n').encode();pin=history_publish(parent,mraw,'epoch',uid,archive_view)
+        require(history_inventory(parent,uid,archive_view)[0]<=HISTORY_NAMESPACE_MAX*4//5,'Actual allocated history20percent headroom')
+    if metrics is not None:metrics.update(archive_metrics)
     return {'kind':HISTORY_COMPACT_KIND,'identity':identity,'manifest':pin,'epochBytes':len(raw),'epochSHA256':hashlib.sha256(raw).hexdigest(),'rowCount':len(epoch['rows'])}
 
-def terminal_history_resolve(root,uid,value,job,unit,invocation):
+def terminal_history_resolve(root,uid,value,job,unit,invocation,*,metrics=None):
     require(type(value)is dict,'Exact retained terminal epoch type')
     if value.get('kind')not in (HISTORY_KIND,HISTORY_COMPACT_KIND):
         require(set(value)=={'rows','pool','bindings','config'} and type(value['rows'])is list,'Exact legacy embedded epoch, never unknown reference')
         return value
     compact=value['kind']==HISTORY_COMPACT_KIND
     require(set(value)=={'kind','identity','manifest','epochBytes','epochSHA256','rowCount'} and value['identity']=={'jobId':job,'unit':unit,'InvocationID':invocation} and type(value['rowCount'])is int and 0<value['rowCount']and type(value['epochBytes'])is int and 0<value['epochBytes']<=HISTORY_FILE_MAX,'Exact original terminal reference context')
-    with history_directory(root,uid) as parent:
-        history_inventory(parent,uid)
-        mraw=history_read_leaf(parent,value['manifest'],uid,HISTORY_METADATA_MAX);m=json.loads(mraw)
+    with history_directory(root,uid)as parent,history_archive_view(parent,uid,metrics)as archive_view:
+        history_inventory(parent,uid,archive_view)
+        mraw=history_read_leaf(parent,value['manifest'],uid,HISTORY_METADATA_MAX,archive_view);m=json.loads(mraw)
         fields={'kind','identity','rows','pool','bindings','config','epochBytes','epochSHA256'}|({'closedRows'}if compact else set())
         require((canonical(m)+'\n').encode()==mraw and set(m)==fields and m['kind']==value['kind'] and m['identity']==value['identity'] and m['epochBytes']==value['epochBytes'] and m['epochSHA256']==value['epochSHA256'] and len(m['rows'])==value['rowCount'],'Whole canonical manifest binding')
         require(not compact or type(m['closedRows'])is list and len(m['closedRows'])==len(m['rows']),'Complete ordered original-row representation')
         rows=[];row_bytes=2;seen=set()
         for index,pin in enumerate(m['rows']):
-            b=history_read_leaf(parent,pin,uid,HISTORY_FILE_MAX);r=json.loads(b);require((canonical(r)+'\n').encode()==b,'Whole canonical history row')
+            b=history_read_leaf(parent,pin,uid,HISTORY_FILE_MAX,archive_view);r=json.loads(b);require((canonical(r)+'\n').encode()==b,'Whole canonical history row')
             require(r.get('kind')!=HISTORY_CLOSED_ROW_KIND,'History leaf must contain complete original row, not another reference')
             projected=terminal_closed_row(r,b)if compact else r
             if compact:require(m['closedRows'][index]==(projected if projected.get('kind')==HISTORY_CLOSED_ROW_KIND else None),'Original CLOSED status and complete row SHA/bytes binding')
@@ -1978,8 +1981,8 @@ def terminal_history_resolve(root,uid,value,job,unit,invocation):
             require(row_bytes<=HISTORY_FILE_MAX and r['id']not in seen,'Bounded unique complete history rows');seen.add(r['id']);rows.append(projected)
         epoch={'rows':rows,'pool':m['pool'],'bindings':m['bindings'],'config':m['config']};raw=(canonical(epoch)+'\n').encode()
         require(len(raw)==value['epochBytes'] and hashlib.sha256(raw).hexdigest()==value['epochSHA256'],'Complete ordered epoch reconstruction SHA/bytes')
-        require(history_read_leaf(parent,value['manifest'],uid,HISTORY_METADATA_MAX)==mraw,'Manifest changed during complete decode')
-        for pin in m['rows']:history_read_leaf(parent,pin,uid,HISTORY_FILE_MAX)
+        require(history_read_leaf(parent,value['manifest'],uid,HISTORY_METADATA_MAX,archive_view)==mraw,'Manifest changed during complete decode')
+        for pin in m['rows']:history_read_leaf(parent,pin,uid,HISTORY_FILE_MAX,archive_view)
         return epoch
 
 def terminal_history_load(db,value,row,invocation):
