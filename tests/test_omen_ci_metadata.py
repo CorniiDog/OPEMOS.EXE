@@ -566,6 +566,19 @@ class LosslessHistoryRepack(unittest.TestCase):
         before={'rows':[q.terminal_closed_row(closed),running],'pool':copy.deepcopy(pool),'bindings':[],'config':[]}
         after={'rows':[closed,pending],'pool':copy.deepcopy(pool),'bindings':[],'config':[]}
         self.assertEqual(q.verify_terminal_pool_transition(before,after,pending,False)['otherRowsPreserved'],1)
+        queued={'id':'next-normal-job','state':'pending','unit':None,'started':None,'finished':None,
+                'result':None,'cpus':None,'_poolBinding':None,'spec':'retained queued source operands'}
+        appended=copy.deepcopy(after);appended['rows'].append(queued)
+        self.assertEqual(q.verify_terminal_pool_transition(before,appended,pending,False)['otherRowsPreserved'],1)
+        self.assertEqual(appended['rows'][-1],queued)
+        for key,value in [('state','running'),('unit','new.service'),('started',1),('finished',2),
+                          ('result','changed'),('cpus','[2]'),('_poolBinding',{})]:
+            wrong=copy.deepcopy(appended);wrong['rows'][-1][key]=value
+            with self.subTest(newPending=key),self.assertRaisesRegex(ValueError,'Only new unstarted'):
+                q.verify_terminal_pool_transition(before,wrong,pending,False)
+        duplicate=copy.deepcopy(appended);duplicate['rows'][-1]['id']=closed['id']
+        with self.assertRaisesRegex(ValueError,'Full ordered original history'):
+            q.verify_terminal_pool_transition(before,duplicate,pending,False)
         for key,value in [('spec','changed'),('cpus','[4]'),('result',closed['result']+' '),('unit','foreign.service')]:
             changed=copy.deepcopy(after);changed['rows'][0][key]=value
             with self.subTest(key=key),self.assertRaisesRegex(ValueError,'Other full job'):

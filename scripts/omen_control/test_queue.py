@@ -2169,7 +2169,17 @@ def verify_terminal_pool_transition(initial, current, owned_row, collected, *, r
     require(all(after.get(k)is True for k in ('admitted','includesUID0','completeBoundedTraversal','allOwnedDescriptorsClosed')),
             'Post-effect full UID0 observation unknown')
     require(current['bindings']==initial['bindings'] and current['config']==initial['config'], 'Full bindings/config changed during own finalization')
-    require([r['id']for r in current['rows']]==[r['id']for r in initial['rows']], 'Full ordered history changed during own finalization')
+    original_ids=[r['id']for r in initial['rows']];current_ids=[r['id']for r in current['rows']]
+    require(current_ids[:len(original_ids)]==original_ids and len(current_ids)==len(set(current_ids)),
+            'Full ordered original history changed during own finalization')
+    # Concurrent enqueue appends inert metadata. It cannot allocate a unit,
+    # CPU, invocation or process and must not prevent this failed unit closing.
+    # Every original row/binding/config and the whole native pool stay exact.
+    for added in current['rows'][len(original_ids):]:
+        require({'id','state','unit','started','finished','result','cpus','_poolBinding'}<=set(added)
+                and added['state']=='pending'and all(added[k]is None for k in
+                    ('unit','started','finished','result','_poolBinding'))and added['cpus']in(None,'[]'),
+                'Only new unstarted unallocated pending metadata may accompany own finalization')
     old={r['id']:terminal_closed_row(r)for r in initial['rows']};new={r['id']:terminal_closed_row(r)for r in current['rows']}
     require(all(new[k]==v for k,v in old.items()if k!=job),'Other full job/spec/cpus/result/finished/resource row changed')
     require(new[job]==terminal_json_domain(owned_row), 'Current complete pending original row changed')
