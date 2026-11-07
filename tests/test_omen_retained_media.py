@@ -137,7 +137,7 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
             prefix=[*argv[:at],'--download-only',*isolation,'install']
             # The old explicit-all-files request forces an unnecessary library
             # upgrade and removal of the existing desktop. The guard must refuse.
-            failed=subprocess.run([*prefix,*[str(cache[d['name']])for d in debs]],
+            failed=subprocess.run([*prefix,*[str(cache/d['name'])for d in debs]],
                                   capture_output=True,timeout=20)
             self.assertEqual(failed.returncode,100,failed.stdout+failed.stderr)
             self.assertIn(b'remove',failed.stdout+failed.stderr)
@@ -604,7 +604,8 @@ with io.BytesIO()as buf:
   item=tarfile.TarInfo('source/package.json');data=b'{"private":true}';item.size=len(data);tar.addfile(item,io.BytesIO(data))
  tarraw=buf.getvalue()
 definition={'kind':'UBUNTU_GUEST_SOURCE_INPUT_V1','compiled_or_packaged':False,
- 'archive_bytes':len(tarraw),'archive_sha256':hashlib.sha256(tarraw).hexdigest(),'expanded_bytes':1024}
+ 'archive_bytes':len(tarraw),'archive_sha256':hashlib.sha256(tarraw).hexdigest(),'expanded_bytes':1024,
+ 'packages':['package']}
 with zipfile.ZipFile(archive,'x')as z:
  z.writestr('ubuntu-source-inputs.tar',tarraw);z.writestr('source-input.json',json.dumps(definition))
 archive.chmod(0o400);raw=archive.read_bytes()
