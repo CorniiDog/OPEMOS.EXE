@@ -427,7 +427,7 @@ def main():
         # translating this observation failure into 'the app never opened'.
         print(json.dumps({'kind':'NATIVE_WINDOW_SELECTION_REFUSED',
             'expected_title':expected_title,'match_count':len(matches),
-            'mapped_pid_windows':before[:12],
+            'mapped_pid_windows':[dict(row,title=row['title'][:96])for row in before[:8]],
             'display':os.environ.get('DISPLAY'),
             'session_type':os.environ.get('XDG_SESSION_TYPE')},
             sort_keys=True),file=sys.stderr,flush=True)

@@ -18,13 +18,22 @@ import types
 
 FIELDS=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
 PROGRAMS={'run_approved.py','job.py','provision_observer_rule.py','connection_control.py',
-          'observer_guest.py','prepare_observer_iso.py','virtual_usb.py','vm_write_ceiling.py','owned_command.py'}
+          'observer_guest.py','prepare_observer_iso.py','ubuntu_guest_build.py','virtual_usb.py','vm_write_ceiling.py','owned_command.py'}
 ENGINE={'scripts/omen_robot.py','scripts/omen_ci_reader.py','scripts/omen_ci_stage.py',
         'scripts/omen_ci_inventory.py','scripts/omen_ci_executables.py','scripts/omen_ci_result.py',
         'scripts/OPEMOSPointer.py','scripts/OPEMOSGuest.py','scripts/run_omen_robot_guest.py',
         'ci/required-vms.json','tests/robot/guest.robot','tests/robot/role.robot',
         'tests/robot/inventory.robot','scripts/required_omen.py','scripts/check_full_stack_acceptance.py'}
 TRUSTED=Path('/var/lib/opemos-robot-control-r1/releases')
+
+SOURCE_KIND='ROOT_ADMITTED_UBUNTU_SOURCE_BUILD_V1'
+
+
+def source_build(cfg):return cfg['kind']==SOURCE_KIND
+
+
+def operation_input(cfg):return cfg['source_input']if source_build(cfg)else cfg['candidate']
+
 
 def need(value,reason):
     if not value:raise ValueError(reason)
@@ -90,13 +99,13 @@ def storage_generation(base_fd,base,nonce):
     except BaseException:
         os.close(fd);raise  # keep partial data; never adopt or overwrite it
 
-def archive_pin(ref):
+def archive_pin(ref,cap=2147483648):
     path=Path(ref['path']);need(path.is_absolute()and path.resolve()==path,'canonical downloaded candidate')
     fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
     try:
         first=os.fstat(fd);sig=lambda s:{k:getattr(s,k)for k in FIELDS}
         need(stat.S_ISREG(first.st_mode)and first.st_uid==os.getuid()and first.st_nlink==1
-             and stat.S_IMODE(first.st_mode)==0o400 and first.st_size==ref['bytes']<=2147483648,
+             and stat.S_IMODE(first.st_mode)==0o400 and first.st_size==ref['bytes']<=cap<=60_000_000_000,
              'same opaque candidate bytes/owner/bound')
         digest=hashlib.sha256()
         while block:=os.read(fd,1048576):digest.update(block)
@@ -108,7 +117,7 @@ def archive_pin(ref):
 def definition(config_ref,root=False):
     need(os.getuid()==os.geteuid()==(0 if root else 1000),'exact normal storage or queue owner only')
     raw,_=read(config_ref['path'],1048576,1000,config_ref['sha256'],0o400);cfg=json.loads(raw)
-    nonce=cfg['nonce'];need(cfg['kind']=='ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1'
+    nonce=cfg['nonce'];need(cfg['kind']in('ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1',SOURCE_KIND)
         and re.fullmatch('[0-9a-f]{32}',nonce)and re.fullmatch('[0-9a-f]{40}',cfg['source_commit']),
         'same bounded normal Ubuntu operation')
     ref=cfg['normalPolicyPin'];path=Path(ref['path'])
@@ -141,6 +150,15 @@ def definition(config_ref,root=False):
          'normal operation stays within exact queue policy')
     for role in('base','code','vars_template','image_carrier','loginPin','ext4_dev','retained_union_bytes','original_source'):
         need(cfg[role]==policy['operationOperands'][role],'same immutable deployment operand: '+role)
+    if source_build(cfg):
+        expected=cfg['source_input']['descriptor']
+        need(policy.get('sourceBuildEnabled')is True and
+             expected['kind']=='UBUNTU_SOURCE_INPUT_ARTIFACT_V1' and
+             expected['repository']=='CorniiDog/OPEMOS.EXE' and
+             re.fullmatch('[0-9a-f]{40}',expected['source_commit']) and
+             cfg['source_input']['archive']['sha256']==expected['artifact_archive_sha256'] and
+             cfg['source_commit']==policy['sourceCommit'], 'explicit reviewed source-only operation')
+        return cfg,policy,programs,pins,engine,operation
     expected=cfg['candidate']['descriptor'];need(expected['platform']=='ubuntu'
          and expected['repository']=='CorniiDog/OPEMOS.EXE'and cfg['source_commit']==policy['sourceCommit']
          and re.fullmatch('[0-9a-f]{40}',expected['source_commit'])
@@ -150,7 +168,7 @@ def definition(config_ref,root=False):
 
 def materialize(config_ref):
     cfg,policy,programs,pins,engine,operation=definition(config_ref)
-    nonce=cfg['nonce'];expected=cfg['candidate']['descriptor']
+    nonce=cfg['nonce'];expected=operation_input(cfg)['descriptor']
     storage=cfg['runtime_storage'];mount=operation/'scratch'
     info=mount.lstat()
     need(storage['kind']=='CURRENT_ROOT_PRIVATE_FILE_BACKED_EXT4_V1'and
@@ -176,14 +194,25 @@ def materialize(config_ref):
     cfg.update(programRoot=str(target),programPins=pins,normalPolicy=policy,engineRoot=str(engine_target))
     need(0<cfg['operation_started_monotonic']<=time.monotonic()<cfg['operation_end_monotonic']<=
          cfg['operation_started_monotonic']+cfg['whole_seconds'],'original operation clock includes storage and preparation')
-    cfg['candidate']['archive']=archive_pin(cfg['candidate']['archive'])
-    guest=cfg['guest_operation'];guest['input_carrier_serial']=nonce[:20]
-    guest['usb_serial']='opemos-'+nonce
-    guest['output_directory']='/home/opemosgui/opemos-robot-'+nonce+'/output'
-    guest.pop('output_path',None)  # observed completed export, never guessed filename
-    prepare={'nonce':nonce,'source_commit':expected['source_commit'],'candidate':cfg['candidate'],
-        'prepared_directory':storage['preparedDirectory'],'expanded_limit':2147483648,
-        'observer_source':pins['observer_guest.py'],'guest_operation':guest}
+    actual_input=operation_input(cfg)
+    input_cap=policy['sourceBuildInputBytes']if source_build(cfg)else 2147483648
+    actual_input['archive']=archive_pin(actual_input['archive'],input_cap)
+    if source_build(cfg):
+        prepare={'kind':SOURCE_KIND,'nonce':nonce,'candidate_source_commit':expected['source_commit'],
+            'source_input':cfg['source_input'],'source_input_cap_bytes':input_cap,
+            'prepared_directory':storage['preparedDirectory'],
+            'guest_builder_source':pins['ubuntu_guest_build.py'],'owned_command_source':pins['owned_command.py'],
+            'remaining_seconds':cfg['operation_end_monotonic']-time.monotonic()}
+    else:
+        guest=cfg['guest_operation'];guest['input_carrier_serial']=nonce[:20]
+        guest['usb_serial']='opemos-'+nonce
+        guest['output_directory']='/home/opemosgui/opemos-robot-'+nonce+'/output'
+        guest.pop('output_path',None)
+        prepare={'nonce':nonce,'source_commit':expected['source_commit'],'candidate':cfg['candidate'],
+            'prepared_directory':storage['preparedDirectory'],'expanded_limit':2147483648,
+            'observer_source':pins['observer_guest.py'],'guest_operation':guest,
+            'guest_prerequisites_required':policy.get('guestPrerequisitesRequired')is True,
+            'guest_builder_source':pins.get('ubuntu_guest_build.py')}
     prep_raw=(json.dumps(prepare,sort_keys=True,separators=(',',':'))+'\n').encode()
     create(target/'prepare.json',prep_raw,0o400)
     # The preparation process consumes a full held-input pin, including its
@@ -202,11 +231,13 @@ def materialize(config_ref):
     result=json.loads(read(operation/'prepare.stdout',4194304,1000)[0]);iso=Path(result['path']);info=iso.lstat()
     cfg['observer_iso']={k:result[k]for k in('path','bytes','sha256','nonce','source_commit')}
     cfg['observer_iso']['identity']={k:getattr(info,k)for k in FIELDS}
+    if not source_build(cfg)and 'prerequisites'in result['candidate']:
+        cfg['guest_prerequisites']=result['candidate']['prerequisites']
     need(iso==mount/'prepared/observer.iso'and stat.S_IMODE(info.st_mode)==0o400,
          'actual generated readonly observer medium path/mode')
     # The fixed backing already charges all inner preparation/COW allocations.
     # The opaque archive is outside that container and charged separately once.
-    allocated=Path(cfg['candidate']['archive']['path']).stat().st_blocks*512
+    allocated=Path(operation_input(cfg)['archive']['path']).stat().st_blocks*512
     cfg['retained_union_bytes']+=allocated
     config_raw=(json.dumps(cfg,sort_keys=True,separators=(',',':'))+'\n').encode()
     create(target/'operation.json',config_raw,0o400)
@@ -339,15 +370,20 @@ def owned_storage(config_ref):
             s=os.fstat(fd);need(s.st_uid in(0,1000)and not s.st_mode&0o022,'trusted data ancestor owner/mode')
             held.append((current,fd,signature(s)))
         for path,descriptor,s in held:need(signature(path.lstat())==signature(os.fstat(descriptor))==s,'held storage ancestry')
-        total=policy['fixedStorageBytes'];usb_bytes=cfg['guest_operation']['usb_bytes']
+        total=policy['fixedStorageBytes'];usb_bytes=2147483648 if source_build(cfg)else cfg['guest_operation']['usb_bytes']
         need(type(total)is int and total>0 and total%4096==0 and
              total>=cfg['cow_growth_bytes']+5_500_000_000 and
              total+usb_bytes+sum(cfg[k]['bytes']for k in('base','code','vars_template','image_carrier'))+
-             cfg['candidate']['archive']['bytes']+cfg['retained_union_bytes']+500_000_000<=cfg['maxVMBytes'],
+             operation_input(cfg)['archive']['bytes']+cfg['retained_union_bytes']+500_000_000<=cfg['maxVMBytes'],
              'whole original/archive/fixed scratch/USB/retained/metadata charge')
         sv=os.fstatvfs(fd);need(sv.f_bavail*sv.f_frsize>=total+usb_bytes+500_000_000,
                               'actual Games free capacity for all new allocations')
         generation,generation_fd,generation_identity=storage_generation(fd,base,nonce)
+        if source_build(cfg):
+            os.mkdir('exports',0o700,dir_fd=generation_fd)
+            exportfd=os.open('exports',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=generation_fd)
+            try:os.fchown(exportfd,1000,1000);os.fchmod(exportfd,0o700);os.fsync(exportfd)
+            finally:os.close(exportfd)
         held.append((generation,generation_fd,generation_identity))
         libc=ctypes.CDLL(None,use_errno=True)
         need(libc.unshare(0x00020000)==0,'actual private mount namespace: '+str(ctypes.get_errno()))
@@ -360,7 +396,8 @@ def owned_storage(config_ref):
         cfg['runtime_storage']={'kind':'CURRENT_ROOT_PRIVATE_FILE_BACKED_EXT4_V1',**data,
              'mountNamespace':private,'device':observed['device'],'mountID':observed['mountID'],
              'cowPath':str(operation/'scratch/desktop-overlay.qcow2'),
-             'preparedDirectory':str(operation/'scratch/prepared'),'usbDirectory':str(generation/'usb')}
+             'preparedDirectory':str(operation/'scratch/prepared'),'usbDirectory':str(generation/'usb'),
+             'exportsDirectory':str(generation/'exports')if source_build(cfg)else None}
         cfg['operation_started_monotonic']=started;cfg['operation_end_monotonic']=end
         target=operation/'storage-operation.json';payload=(json.dumps(cfg,sort_keys=True,separators=(',',':'))+'\n').encode()
         create(target,payload,0o400);os.chown(target,1000,1000)

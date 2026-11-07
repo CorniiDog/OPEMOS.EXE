@@ -88,7 +88,7 @@ def main():
          type(registry.get('cases')) is dict and len(registry['cases']) == 20,
          'current Main exact20 registry join')
     need(RUNNER.is_dir() and GUARD.is_dir(), "installed dependencies")
-    exchange = Path('/home/connor/.local/share/opemos-ci/github-runner/robot-private/reports')
+    exchange = Path('/media/connor/Games/OPEMOS/CI-artifacts/robot-runtime/reports')
     need(exchange.is_dir() and not exchange.is_symlink() and
          exchange.stat().st_uid == 1000 and exchange.stat().st_mode & 0o077 == 0,
          "fixed private reports exchange missing")
@@ -180,7 +180,13 @@ def main():
             "--bind", str(RUNNER / "_work"), str(RUNNER / "_work"),
             "--bind", str(RUNNER / "_diag"), str(RUNNER / "_diag"),
             "--bind", "/home/connor/.local/share/opemos-ci/robot-private", "/home/connor/.local/share/opemos-ci/robot-private",
-            "--ro-bind", "/home/connor/.local/share/opemos-ci/github-runner/robot-private/reports", "/home/connor/.local/share/opemos-ci/github-runner/robot-private/reports",
+            "--dir", "/media", "--dir", "/media/connor", "--dir", "/media/connor/Games",
+            "--dir", "/media/connor/Games/OPEMOS", "--dir", "/media/connor/Games/OPEMOS/CI-artifacts",
+            "--dir", "/media/connor/Games/OPEMOS/CI-artifacts/robot-runtime",
+            "--ro-bind", "/media/connor/Games/OPEMOS/CI-artifacts/robot-runtime/reports", "/media/connor/Games/OPEMOS/CI-artifacts/robot-runtime/reports",
+            # Keep old04's read-only report spelling as an alias of the new
+            # separate-partition data. No original report directory is moved.
+            "--ro-bind", str(exchange), "/home/connor/.local/share/opemos-ci/github-runner/robot-private/reports",
             "--dir", "/var", "--dir", "/var/lib",
             "--dir", "/var/lib/opemos-robot-control-r1",
             "--ro-bind", "/var/lib/opemos-robot-control-r1/opemos-robot-job-plan", "/var/lib/opemos-robot-control-r1/opemos-robot-job-plan",
@@ -190,6 +196,7 @@ def main():
             "--ro-bind", str(GUARD), str(GUARD),
             "--dir", "/run", "--dir", "/run/opemos-ci",
             "--bind", str(socket_dir), "/run/opemos-ci/control",
+            "--ro-bind", lease["engine_bundle"], "/run/opemos-ci/engine",
             "--chdir", str(RUNNER), "--setenv", "HOME", "/home/connor",
             *source_environment,
             "--setenv", "OPEMOS_ROBOT_CONTROL_SOCKET", "/run/opemos-ci/control/control.sock",
@@ -197,7 +204,7 @@ def main():
             "--setenv", "PYTHONPATH", str(RUNNER / "robot-python"),
             "--setenv", "OPEMOS_ROBOT_PYTHON", "/usr/bin/python3",
             "--setenv", "OPEMOS_ROBOT_PRIVATE_RESULTS", "/home/connor/.local/share/opemos-ci/robot-private",
-            "--setenv", "OPEMOS_ROBOT_REPORT_EXCHANGE", "/home/connor/.local/share/opemos-ci/github-runner/robot-private/reports",
+            "--setenv", "OPEMOS_ROBOT_REPORT_EXCHANGE", "/media/connor/Games/OPEMOS/CI-artifacts/robot-runtime/reports",
             "--", "/usr/bin/setpriv", "--reuid=1000", "--regid=1000",
             "--clear-groups", "--no-new-privs", str(RUNNER / "bin/Runner.Listener"), "run", "--startuptype", "service"]
     print(json.dumps({"stage": "CONFINED_LISTENER_START", "cgroup": cg,

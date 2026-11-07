@@ -191,6 +191,68 @@ def readonly_partition_probe(cow,owner,offset,identity,frames):
             time.sleep(min(.25,remaining))
     finally:os.close(fd)
 
+def source_build_guest_files(config):
+    """Nonce-bound files only in this fresh disposable COW, never the host."""
+    source_build=config['kind']=='ROOT_ADMITTED_UBUNTU_SOURCE_BUILD_V1'
+    if not source_build and 'guest_prerequisites'not in config:return []
+    nonce=config['nonce']
+    if source_build:
+        definition=config['source_input']['descriptor']['input']
+        input_path='/media/opemosgui/OPROBOT/ubuntu-source-inputs.tar'
+        input_sha=definition['archive_sha256']
+    else:
+        definition=config['guest_prerequisites']
+        input_path='/media/opemosgui/OPROBOT/candidate/'+definition['relative_path']
+        input_sha=definition['tar_sha256']
+    need(re.fullmatch('[0-9a-f]{32}',nonce),'same source-build guest identity')
+    program=job.held_source(Path(config['programRoot'])/'ubuntu_guest_build.py',1000,0o500,
+                           config['normalPolicy']['programSHA256']['ubuntu_guest_build.py'])
+    stem='/usr/local/bin/opemos-source-build-'+nonce
+    guest={'nonce':nonce,'input_archive':input_path,
+           'input_sha256':input_sha,'expanded_bytes':definition['expanded_bytes']}
+    sudo=('opemosgui ALL=(root) NOPASSWD: /usr/bin/python3 -I -B '+stem+
+          '.py --install-prerequisites\n').encode()
+    return [(stem+'.py',program,0o755),
+            (stem+'.json',(json.dumps(guest,sort_keys=True)+'\n').encode(),0o600),
+            ('/etc/sudoers.d/opemos-source-build-'+nonce,sudo,0o440)]
+
+
+def write_guest_source_files(config,root):
+    files=source_build_guest_files(config);result=[]
+    for index,(target,raw,mode)in enumerate(files):
+        parent=str(Path(target).parent)
+        meta=debugfs('stat '+parent)
+        match=re.search(r'Type:\s*directory\s+Mode:\s*([0-7]+)',meta['stdout'])
+        need(match and not int(match[1],8)&0o022 and
+             re.search(r'User:\s*0\s+Group:\s*0',meta['stdout']),
+             'protected guest prerequisite/source helper ancestry')
+        absent=cmd(['/usr/bin/sudo','-n','/usr/sbin/debugfs','-R','stat '+target,NODE])
+        need(absent['numeric']==0 and 'File not found by ext2_lookup'in absent['stderr'],
+             'guest source helper target already exists; no overwrite')
+        source=root/('source-build-guest-'+str(index)+'.new')
+        fd=os.open(source,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)
+        try:
+            view=memoryview(raw)
+            while view:
+                n=os.write(fd,view);need(n>0,'guest source helper write stalled');view=view[n:]
+            os.fsync(fd)
+        finally:os.close(fd)
+        written=debugfs('write '+str(source)+' '+target,True)
+        need(re.fullmatch(r'Allocated inode: [0-9]+\n?',written['stdout']),
+             'create-only guest source helper allocation')
+        for field,value in(('uid','0'),('gid','0'),('mode','0'+format(0o100000|mode,'o'))):
+            debugfs('sif '+target+' '+field+' '+value,True)
+        readback=debugfs('cat '+target,cap=262144)
+        need(readback['stdout'].encode()==raw,'whole guest source helper readback')
+        meta=debugfs('stat '+target)
+        need(re.search(r'Type:\s*regular\s+Mode:\s*0?'+format(mode,'o')+r'\b',meta['stdout']) and
+             re.search(r'User:\s*0\s+Group:\s*0',meta['stdout']) and
+             re.search(r'Links:\s*1\b',meta['stdout']), 'guest source helper metadata')
+        result.append({'path':target,'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),
+                       'uid':0,'gid':0,'mode':oct(mode),'readback':True})
+    return result
+
+
 def main():
     resource.setrlimit(resource.RLIMIT_FSIZE,(4_000_000_000,4_000_000_000))
     def deadline(_signal,_frame):
@@ -304,6 +366,8 @@ def main():
              'offline guest udev rule metadata differs')
         out['guest_rule']={'bytes':len(RULE),'sha256':hashlib.sha256(RULE).hexdigest(),
                            'uid':0,'gid':0,'mode':'0644','readback':True}
+        if c['kind']=='ROOT_ADMITTED_UBUNTU_SOURCE_BUILD_V1'or 'guest_prerequisites'in c:
+            out['guest_source_build_files']=write_guest_source_files(c,root)
         out['write_detach']=detach(owner);owner=None
         out['cow_after']={'identity':job.sig(cow.lstat()),'sha256':sha(cow)}
         before=out['cow_before']['identity'];after=out['cow_after']['identity']

@@ -14,7 +14,7 @@ import select
 import urllib.request
 import urllib.error
 from pathlib import Path
-from host_engine import HostEngine, held_bytes
+from host_engine import HostEngine, held_bytes, verified_source_workflow
 
 REPO = "CorniiDog/OPEMOS.EXE"
 MAX_REQUEST = 65536
@@ -216,6 +216,7 @@ def remaining_job_window(lease, peer, now):
             "unit": units[0], "expiresAt": policy["expiresAt"]}
 
 
+
 def attest(request, states, peer, pid, lease):
     fields = {"kind", "repository", "source_commit", "workflow_commit", "run_id", "attempt", "mode",
               "producer", "consumer_started_epoch"}
@@ -236,7 +237,7 @@ def attest(request, states, peer, pid, lease):
          re.fullmatch(r"[0-9a-f]{40}", request["workflow_commit"]) and
          all(type(request[k]) is str and re.fullmatch(r"[1-9][0-9]{0,19}", request[k])
              for k in ("run_id", "attempt")), "attestation identity")
-    need(request["mode"] in ("normal", "report_only") and
+    need(request["mode"] in ("normal", "report_only", "source_build") and
          type(request["consumer_started_epoch"]) is int and
          0 <= time.time() - request["consumer_started_epoch"] <= 30,
          "current attestation birth/mode")
@@ -256,22 +257,29 @@ def attest(request, states, peer, pid, lease):
         need(key not in states and len(states) < 1024, "single current attestation per job")
         remaining_job_window(lease, peer, int(time.time()))
     consumer = github(f"repos/{REPO}/actions/runs/{key[0]}/attempts/{key[1]}", token)
-    branch = github(f"repos/{REPO}/branches/main", token)
-    workflow = github(f"repos/{REPO}/actions/workflows/omen-robot.yml", token)
+    source_producer = request['mode'] == 'source_build'
+    workflow_path = '.github/workflows/ubuntu-executable.yml' if source_producer else '.github/workflows/omen-robot.yml'
+    branch = None if source_producer else github(f"repos/{REPO}/branches/main", token)
+    workflow = github(f"repos/{REPO}/actions/workflows/{workflow_path.rsplit('/',1)[1]}", token)
+    if source_producer:
+        verified_source_workflow(lease,lambda path: github(path,token),request['workflow_commit'])
     need(consumer.get("id") == int(key[0]) and
          consumer.get("run_attempt") == int(key[1]) and
          consumer.get("workflow_id") == workflow.get("id") and
-         workflow.get("path") == consumer.get("path") == ".github/workflows/omen-robot.yml" and
+         workflow.get("path") == consumer.get("path") == workflow_path and
          consumer.get("head_repository", {}).get("full_name") == REPO and
-         consumer.get("head_branch") == "main" and
+         (type(consumer.get("head_branch")) is str and bool(consumer["head_branch"]) if source_producer else
+          consumer.get("head_branch") == "main") and
          consumer.get("head_sha") == request["workflow_commit"] and
-         branch.get("protected") is True and
+         (source_producer or branch.get("protected") is True) and
          consumer.get("status") == "in_progress" and
          consumer.get("conclusion") is None and
-         consumer.get("event") in ("workflow_run", "workflow_dispatch"),
+         consumer.get("event") in (("push","workflow_dispatch") if source_producer else ("workflow_run", "workflow_dispatch")),
          "fresh canonical consumer API identity")
     producer = request["producer"]
-    if consumer["event"] == "workflow_run":
+    if source_producer:
+        need(producer is None, 'source build has no pre-existing package producer')
+    elif consumer["event"] == "workflow_run":
         need(type(producer) is dict and set(producer) ==
              {"id", "attempt", "workflow_id", "conclusion"}, "exact producer attestation")
         observed = github(f"repos/{REPO}/actions/runs/{producer['id']}/attempts/{producer['attempt']}", token)
@@ -310,7 +318,7 @@ def validate_request(request, states, peer):
          {"version", "action", "subject", "repository", "source_commit",
           "run_id", "attempt", "nonce", "consumer_started_epoch"}, "exact request schema")
     need(request["version"] == 2 and request["action"] in
-         ("execute-vm", "execute-platform", "execute-produced-platform", "persist", "connection-proof"),
+         ("execute-vm", "execute-platform", "execute-produced-platform", "build-source-platform", "persist", "connection-proof"),
          "fixed host Engine action")
     subject = request["subject"]
     if request["action"] == "execute-vm":
@@ -327,6 +335,11 @@ def validate_request(request, states, peer):
              type(subject["descriptor_sha256"]) is str and
              re.fullmatch(r"[0-9a-f]{64}", subject["descriptor_sha256"]),
              "typed producer selection; no argv/path/authority")
+    elif request['action'] == 'build-source-platform':
+        need(type(subject) is dict and set(subject) == {'platform','producer_run_id','producer_attempt'} and
+             subject['platform'] == 'ubuntu' and subject['producer_run_id'] == request['run_id'] and
+             subject['producer_attempt'] == request['attempt'],
+             'same current source-input run/attempt; no package, argv or file-path claims')
     elif request["action"] == "connection-proof":
         need(subject == "ubuntu_native_chooser_connection", "exact scoped connection case")
     else:
@@ -337,6 +350,11 @@ def validate_request(request, states, peer):
          type(request["nonce"]) is str and re.fullmatch(r"[0-9a-f]{32}", request["nonce"]),
          "attested job/nonce identity")
     need(states[key]["peer"] == peer["namespace"], "same attested job namespace/cgroup")
+    if states[key]['mode'] == 'source_build':
+        need(request['action'] in ('build-source-platform','persist'),
+             'source producer cannot request unrelated VM/GPU effects')
+    if request['action'] == 'build-source-platform':
+        need(states[key]['mode'] == 'source_build', 'reviewed source-build role required')
     if request["action"] in ("connection-proof", "execute-produced-platform"):
         need(states[key]["mode"] == "normal", "failed producer cannot request scoped VM effect")
     need(type(request["consumer_started_epoch"]) is int and
@@ -348,7 +366,7 @@ def validate_request(request, states, peer):
     need(time.time() <= states[key]["attested_epoch"] + 21600,
          "expired GitHub job attestation")
     subject_key = (request["action"], json.dumps(subject, sort_keys=True, separators=(",", ":"))
-                   if request["action"] == "execute-produced-platform" else subject)
+                   if request["action"] in ("execute-produced-platform","build-source-platform") else subject)
     if request["action"] != "persist":
         need(subject_key not in states[key]["subjects"],
              "current job may attempt each subject only once")
@@ -391,7 +409,7 @@ def serve_once(conn, lease, states, engines):
             proof = engines["connection"].execute(request)
             public = []
             exchange = Path(lease["report_exchange"])
-            need(str(exchange) == "/home/connor/.local/share/opemos-ci/github-runner/robot-private/reports",
+            need(str(exchange) == "/media/connor/Games/OPEMOS/CI-artifacts/robot-runtime/reports",
                  "fixed public report exchange")
             meta = exchange.lstat()
             need(stat.S_ISDIR(meta.st_mode) and meta.st_uid == os.getuid() and
@@ -429,7 +447,7 @@ def serve_once(conn, lease, states, engines):
                         "all20_passed": False, "all_platforms_passed": False,
                         "vms": {}, "platforms": {}, "public_evidence": public}
         else:
-            if request["action"] == "execute-produced-platform":
+            if request["action"] in ("execute-produced-platform","build-source-platform"):
                 need(states[key]["api_token"] is not None, "post-hook job-token binding required")
             if "engine" not in engines:
                 engines["engine"] = HostEngine(lease)

@@ -291,6 +291,63 @@ def current_queue_identity(C):
     need(inherited is None or inherited==value['InvocationID'],'inherited actual queue invocation differs')
     return units[0],value['InvocationID'],group
 
+SOURCE_KIND='ROOT_ADMITTED_UBUNTU_SOURCE_BUILD_V1'
+
+
+def source_build(config):return config['kind']==SOURCE_KIND
+
+
+def operation_input(config):return config['source_input']if source_build(config)else config['candidate']
+
+
+def receive_source_package(channel,config,result):
+    """Receive bounded actual guest bytes over its existing owned QEMU socket."""
+    end=WHOLE_END;channel.settimeout(remaining(7200))
+    header=__import__('connection_control').observer_line(channel,1048576)
+    result['guest_source_event']=header
+    need(header.get('kind')=='GUEST_PACKAGE_BEGIN' and header.get('nonce')==config['nonce'] and
+         header.get('source_commit')==config['source_input']['descriptor']['source_commit'],
+         'actual source-build stage failed; original guest event retained')
+    count=header['bytes'];digest=header['sha256'];proof=header['build_receipt']
+    need(type(count)is int and 0<count<=2147483648 and re.fullmatch('[0-9a-f]{64}',digest) and
+         proof['kind']=='OMEN_UBUNTU_GUEST_SOURCE_BUILD_V1' and proof['nonce']==config['nonce'] and
+         proof['source_commit']==header['source_commit'] and proof['uid']==1000 and
+         proof['first_failure']is None and
+         proof['builder_sha256']==config['normalPolicy']['programSHA256']['ubuntu_guest_build.py'] and
+         len(proof['commands'])==5 and
+         all(command['numeric']==0 for command in proof['commands']) and
+         proof['kvm']['query_kvm']=={'enabled':True,'present':True},
+         'actual compiler/package/nested-KVM proof, not GUI or SteamOS acceptance')
+    parent=Path(config['runtime_storage']['exportsDirectory']);info=parent.lstat()
+    need(parent==Path(config['normalPolicy']['storageBase'])/config['nonce']/'exports' and
+         stat.S_ISDIR(info.st_mode) and info.st_uid==1000 and stat.S_IMODE(info.st_mode)==0o700 and
+         not parent.is_symlink(),'same Root-created source output directory')
+    space=os.statvfs(parent);need(space.f_bavail*space.f_frsize>=count+500_000_000,
+                                'actual output/export space unavailable')
+    target=parent/'guest-produced-package.zip'
+    fd=os.open(target,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)
+    try:
+        actual=hashlib.sha256();received=0
+        while received<count:
+            need(time.monotonic()<end,'original source-build deadline during export')
+            channel.settimeout(remaining(7200))
+            block=channel.recv(min(1048576,count-received));need(block,'guest package EOF before declared length')
+            received+=len(block);actual.update(block);view=memoryview(block)
+            while view:
+                n=os.write(fd,view);need(n>0,'source package write stalled');view=view[n:]
+        ending=__import__('connection_control').observer_line(channel,4096)
+        need(ending=={'kind':'GUEST_PACKAGE_END','nonce':config['nonce'],'bytes':count,'sha256':digest} and
+             time.monotonic()<end and actual.hexdigest()==digest,'whole actual guest output/readback differs')
+        os.fchmod(fd,0o400);os.fsync(fd)
+        epoch=sig(os.fstat(fd));need(epoch==sig(target.lstat()),'source output held/named identity')
+    finally:os.close(fd)
+    directory=os.open(parent,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    try:os.fsync(directory)
+    finally:os.close(directory)
+    result['source_package']={'path':str(target),'bytes':count,'sha256':digest,'identity':epoch}
+    result['guest_build']=proof
+
+
 def authenticated_config(config):
     need(os.getuid()==os.geteuid()==1000 and config.parent==HERE and config.name=='operation.json',
          'same materialized ordinary queue config')
@@ -307,7 +364,7 @@ def authenticated_config(config):
          and policy['network']=='none'and policy['swapBytes']==0
          and type(policy['maxVMBytes'])is int and 0<policy['maxVMBytes']<=59_971_770_624,
          'one actual normal policy graph')
-    need(C['kind']=='ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1'and re.fullmatch('[0-9a-f]{32}',C['nonce'])
+    need(C['kind']in('ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1',SOURCE_KIND)and re.fullmatch('[0-9a-f]{32}',C['nonce'])
          and re.fullmatch('[0-9a-f]{40}',C['source_commit'])and C['programRoot']==str(HERE)
          and HERE.parent.parent==Path(policy['operationRoot'])
          and HERE.parent.name.endswith('-'+C['nonce'])and
@@ -315,6 +372,16 @@ def authenticated_config(config):
          and type(C['cores'])is int and 0<C['cores']<=policy['maxCPU']<=10
          and type(C['memoryBytes'])is int and 0<C['memoryBytes']<=policy['maxMemoryBytes']<=34359738368,
          'current normal operation identity/deadline/resource bounds')
+    if source_build(C):
+        d=C['source_input']['descriptor']
+        need(policy.get('sourceBuildEnabled')is True and d['kind']=='UBUNTU_SOURCE_INPUT_ARTIFACT_V1' and
+             d['repository']=='CorniiDog/OPEMOS.EXE' and re.fullmatch('[0-9a-f]{40}',d['source_commit']) and
+             C['source_commit']==policy['sourceCommit'] and
+             C['source_input']['archive']['sha256']==d['artifact_archive_sha256'],
+             'explicit source input role/current Root policy')
+        need(all(C[k]['sha256']==policy['originalSHA256'][k]for k in('base','code','vars_template','image_carrier')),
+             'same immutable original roles for source-build VM')
+        return C
     d=C['candidate']['descriptor'];guest=C['guest_operation']
     need(all(C[k]['sha256']==policy['originalSHA256'][k]for k in('base','code','vars_template','image_carrier')),
          'Root-pinned original image/firmware roles')
@@ -329,7 +396,7 @@ def authenticated_config(config):
 
 def authenticated_programs(C):
     expected={'run_approved.py','job.py','provision_observer_rule.py','connection_control.py',
-              'observer_guest.py','prepare_observer_iso.py','virtual_usb.py','vm_write_ceiling.py','owned_command.py'}
+              'observer_guest.py','prepare_observer_iso.py','ubuntu_guest_build.py','virtual_usb.py','vm_write_ceiling.py','owned_command.py'}
     policy=C['normalPolicy'];need(set(policy['programSHA256'])==expected,'complete current normal program graph')
     root=Path(C['normalPolicyPin']['path']).parent/'proof-sources';sources={}
     # Authenticate the whole graph before any sibling import or interpretation.
@@ -390,8 +457,8 @@ def main():
     code=input_file(C['code'],8*1024*1024)
     vars_original=input_file(C['vars_template'],8*1024*1024)
     package=input_file(C['image_carrier'],16*1024**3)
-    observer_iso=C['observer_iso'];observer=input_file(observer_iso,3*1024**3)
-    need(observer_iso['nonce']==nonce and observer_iso['source_commit']==C['candidate']['descriptor']['source_commit'],
+    observer_iso=C['observer_iso'];observer=input_file(observer_iso,C['normalPolicy']['sourceBuildInputBytes']+1048576 if source_build(C)else 3*1024**3)
+    need(observer_iso['nonce']==nonce and observer_iso['source_commit']==operation_input(C)['descriptor']['source_commit'],
          'exact produced candidate/observer medium belongs to this operation')
     originals={'base':C['base'],'code':C['code'],'vars_template':C['vars_template'],
                'image_carrier':C['image_carrier'],'observer_iso':observer_iso}
@@ -411,10 +478,11 @@ def main():
                               capture_output=True,text=True,timeout=10)
     need(private_fs.returncode==0 and private_fs.stdout.strip()=='ext4','actual private COW ext4')
     charged=sum(os.stat(v['path']).st_blocks*512 for k,v in originals.items()if k!='observer_iso')
-    retained=C['retained_union_bytes'];usb_bytes=C['guest_operation']['usb_bytes']
-    need(type(retained)is int and retained>=0 and type(usb_bytes)is int and usb_bytes>0 and
+    retained=C['retained_union_bytes'];usb_bytes=0 if source_build(C)else C['guest_operation']['usb_bytes']
+    output_reserve=2147483648 if source_build(C)else usb_bytes
+    need(type(retained)is int and retained>=0 and type(usb_bytes)is int and (source_build(C)or usb_bytes>0) and
          type(C['maxVMBytes'])is int and whole_limit==C['normalPolicy']['maxVMBytes']<=59_971_770_624 and
-         charged+retained+storage['fixedStorageBytes']+usb_bytes+C['vars_template']['bytes']+500_000_000<=whole_limit,
+         charged+retained+storage['fixedStorageBytes']+output_reserve+C['vars_template']['bytes']+500_000_000<=whole_limit,
          'complete immutable originals/retention/COW/USB/vars/metadata exceed admitted whole VM bound')
     root=RUNTIME/'runtime'
     need(not os.path.lexists(root),'fresh private VM directory exists')
@@ -423,7 +491,7 @@ def main():
          'actual inner COW and outer metadata capacity unavailable')
     root.mkdir(mode=0o700)
     def metadata_guard(reserve=0):
-        allocated=0;count=0;archive=Path(C['candidate']['archive']['path'])
+        allocated=0;count=0;archive=Path(operation_input(C)['archive']['path'])
         for directory,dirs,files in os.walk(RUNTIME,followlinks=False):
             parent=Path(directory)
             if parent==RUNTIME:dirs[:]=[n for n in dirs if n!='scratch']
@@ -436,15 +504,16 @@ def main():
         return allocated
     metadata_guard(192*1024**2)  # QEMU stream caps plus one complete Robot action
     first=None;q=None;qemu_pidfd=None;qemu_streams={};qemu_readers=[];qemu_launch_attempted=False;control=None;socket_pins={};usb_scope=None;usb_fd=None;runtime_fd=None
-    result={'kind':'NORMAL_UBUNTU_GUI_BUILD_WRITE_JOB_V1','nonce':nonce,
-            'source_commit':C['source_commit'],'candidate_source_commit':C['candidate']['descriptor']['source_commit'],'package_sha256':C['candidate']['descriptor']['package_sha256'],
+    result={'kind':'NORMAL_UBUNTU_SOURCE_BUILD_JOB_V1'if source_build(C)else'NORMAL_UBUNTU_GUI_BUILD_WRITE_JOB_V1','nonce':nonce,
+            'source_commit':C['source_commit'],'candidate_source_commit':operation_input(C)['descriptor']['source_commit'],'package_sha256':None if source_build(C)else C['candidate']['descriptor']['package_sha256'],
             'fullStackAccepted':False,'SteamOSOrGPUAcceptance':False,'originals':originals,
             'effects':[],'first_failure':None,'closure':'UNKNOWN'}
     try:
-        usb_scope=USB.virtual_usb_backing(storage['usbDirectory'],usb_bytes,
-                    charged+retained+storage['fixedStorageBytes']+C['vars_template']['bytes'])
-        backing,usb_fd=usb_scope.__enter__()
-        result['virtualUSB']=backing;result['effects'].append('new-owned-allocated-regular-file-USB')
+        if not source_build(C):
+            usb_scope=USB.virtual_usb_backing(storage['usbDirectory'],usb_bytes,
+                        charged+retained+storage['fixedStorageBytes']+C['vars_template']['bytes'])
+            backing,usb_fd=usb_scope.__enter__()
+            result['virtualUSB']=backing;result['effects'].append('new-owned-allocated-regular-file-USB')
         vars_out=root/'OVMF_VARS_4M.fd'
         with open(vars_original,'rb')as src,open(vars_out,'xb')as dst:
             shutil.copyfileobj(src,dst,1048576);dst.flush();os.fsync(dst.fileno())
@@ -514,7 +583,7 @@ def main():
              'held original private VM runtime directory')
         qmp=root/'qmp.sock';vnc=root/'vnc.sock';obs=root/'observer.sock'
         argv=['/usr/bin/qemu-system-x86_64','-name',name,'-machine','q35,accel=kvm',
-              '-cpu','host','-smp',str(C['cores']),'-m',str(C['guest_memory_bytes']//1048576),
+              '-cpu','host','-smbios','type=1,product=opemos-robot-ubuntu-'+nonce,'-smp',str(C['cores']),'-m',str(C['guest_memory_bytes']//1048576),
               '-drive',f'if=pflash,format=raw,unit=0,readonly=on,file={code}',
               '-drive',f'if=pflash,format=raw,unit=1,file={vars_out}',
               '-drive',f'if=none,id=osdisk,format=qcow2,file={overlay}',
@@ -532,12 +601,12 @@ def main():
               '-qmp','unix:qmp.sock,server=on,wait=off',
               '-monitor','none','-serial','none','-parallel','none',
               '-sandbox','on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny','-S']
-        argv+=USB.virtual_usb_qemu_arguments(backing,usb_fd,nonce)
+        if not source_build(C):argv+=USB.virtual_usb_qemu_arguments(backing,usb_fd,nonce)
         def limit():
             resource.setrlimit(resource.RLIMIT_FSIZE,(cow_limit,cow_limit))
         qemu_launch_attempted=True
         q=subprocess.Popen(argv,cwd=f'/proc/self/fd/{runtime_fd}',stdin=subprocess.DEVNULL,
-             stdout=subprocess.PIPE,stderr=subprocess.PIPE,preexec_fn=limit,start_new_session=True,pass_fds=(usb_fd,runtime_fd))
+             stdout=subprocess.PIPE,stderr=subprocess.PIPE,preexec_fn=limit,start_new_session=True,pass_fds=tuple(fd for fd in(usb_fd,runtime_fd)if fd is not None))
         qemu_pidfd=os.pidfd_open(q.pid)
         qemu_streams,qemu_readers=qemu_output(q,root)
         raw=(Path('/proc')/str(q.pid)/'stat').read_text();tick=raw[raw.rfind(')')+2:].split()[19]
@@ -547,8 +616,8 @@ def main():
                  'queue_unit':unit,'queue_invocation_id':invocation,
                  'queue_cgroup':Path('/proc/self/cgroup').read_text().strip(),
                  'argv':argv,'qmp_socket':str(qmp),'observer_socket':str(obs),
-                 'vm_name':name,'run_directory':str(root),'artifact_source':C['candidate']['descriptor']['source_commit'],
-                 'package_sha256':C['candidate']['descriptor']['package_sha256']}
+                 'vm_name':name,'run_directory':str(root),'artifact_source':operation_input(C)['descriptor']['source_commit'],
+                 'package_sha256':None if source_build(C)else C['candidate']['descriptor']['package_sha256']}
         write_json(root/'binding.json',binding)
         control=qmp_connect(qmp,q.pid,CONTROL.connect_owned,q)
         need((Path('/proc')/str(q.pid)/'cgroup').read_text().strip()==binding['queue_cgroup'],
@@ -571,7 +640,7 @@ def main():
         need(os.statvfs(scratch).f_bavail*os.statvfs(scratch).f_frsize>=cow_limit+500_000_000,
              'actual bounded COW growth capacity absent before cont')
         write_json(root/'paused-before-cont.json',{'binding':binding,'actual_blocks':blocks,
-                   'USB':backing,'COWGrowthBound':cow_limit,
+                   'USB':None if source_build(C)else backing,'COWGrowthBound':cow_limit,
                    'readonly_original_holders':holders,'socket_pins':socket_pins,
                    'originals_readonly_hashes':{k:v['sha256']for k,v in originals.items()}})
         qmp_call(control,5,'cont');result['effects'].append('one-fresh-disposable-VM-boot')
@@ -601,6 +670,10 @@ def main():
             control.close();control=None  # one actual QMP connection at a time
             native_q=channels.enter_context(CONTROL.owned_qmp(str(qmp),q.pid))
             result['effects'].append('guest-terminal-observer-bootstrap-only')
+            if source_build(C):
+                receive_source_package(obs_sock,C,result)
+                result['effects'].append('actual-guest-compile-package-and-whole-byte-export')
+                return  # existing finally owns the same QEMU/native/original closure
             ready=CONTROL.next_native_event(obs_sock,nonce,result)
             need(ready.get('kind')=='READY'and ready.get('port_custody',{}).get('sudo_numeric')in('0','NOT_NEEDED'),
                  'actual source-bound guest observer READY/port custody')
@@ -691,11 +764,11 @@ def main():
                      'unexpected QEMU socket before VM launch')
                 for pin in originals.values():input_file(pin,60_000_000_000)
                 result['originals_unchanged_after']=True
-                need(usb_fd is not None and 'vars_out' in locals() and
+                need((source_build(C)or usb_fd is not None) and 'vars_out' in locals() and
                      'overlay' in locals() and overlay.exists(),
                      'preboot generated assets incomplete; no complete closure claim')
                 need(hashlib.sha256(vars_out.read_bytes()).hexdigest()==C['vars_template']['sha256'] and
-                     os.fstat(usb_fd).st_blocks*512>=usb_bytes and
+                     (source_build(C)or os.fstat(usb_fd).st_blocks*512>=usb_bytes) and
                      overlay.is_file() and not overlay.is_symlink() and
                      overlay.stat().st_uid==os.getuid() and
                      overlay.stat().st_nlink==1 and overlay.stat().st_size<cow_limit,
@@ -744,7 +817,7 @@ def main():
                     closed.append(path)
                 result['socket_closure']=closed
                 need(overlay.stat().st_size<=cow_limit and
-                     os.fstat(usb_fd).st_blocks*512>=usb_bytes,
+                     (source_build(C)or os.fstat(usb_fd).st_blocks*512>=usb_bytes),
                      'private COW cap/reservation no longer true at closure')
                 result['private_storage_closure_verified']=True
             except BaseException as error:
@@ -777,17 +850,22 @@ def main():
             result.get('qemu_reaped') is True and result.get('originals_unchanged_after') is True and
             result.get('private_storage_closure_verified') is True and
             not secondary)
+        result['SourceBuildAccepted']=(source_build(C) and result.get('first_failure')is None and
+            result.get('source_package')is not None and result.get('qemu_numeric')==0 and result.get('qemu_reaped')is True and
+            result.get('originals_unchanged_after')is True and
+            result.get('private_storage_closure_verified')is True and not secondary)
         write_json(root/'job-result.json',result)
-        suite=ET.Element('testsuite',name='normal-real-ubuntu-GUI-Build-write-readback',tests='1',
-                         failures='0'if result['GUIBuildWriteReadbackAccepted']else'1')
-        case=ET.SubElement(suite,'testcase',name='Actual GUI Build/write and independent whole USB readback')
-        if not result['GUIBuildWriteReadbackAccepted']:
-            failure=ET.SubElement(case,'failure',message='normal GUI Build/write/readback refused')
+        accepted=result['SourceBuildAccepted']if source_build(C)else result['GUIBuildWriteReadbackAccepted']
+        scope='actual-OMEN-Ubuntu-source-build'if source_build(C)else'normal-real-ubuntu-GUI-Build-write-readback'
+        suite=ET.Element('testsuite',name=scope,tests='1',failures='0'if accepted else'1')
+        case=ET.SubElement(suite,'testcase',name=scope)
+        if not accepted:
+            failure=ET.SubElement(case,'failure',message=scope+' refused')
             failure.text=json.dumps({'first':result.get('first_failure'),
                                       'secondary':result.get('secondary_failures'),
                                       'closure':result.get('closure')},sort_keys=True)
         write_blob(root/'proof-junit.xml',ET.tostring(suite,encoding='utf-8',xml_declaration=True))
-        body='<html><body><h1>Normal Ubuntu GUI Build/write/readback</h1><pre>'+html.escape(
+        body='<html><body><h1>'+scope+'</h1><pre>'+html.escape(
              json.dumps(result,sort_keys=True,indent=2))+'</pre></body></html>'
         write_blob(root/'proof.html',body.encode())
 

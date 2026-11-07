@@ -15,11 +15,11 @@ RUNNER = OP / 'github-runner'
 CONFIG = HOME / '.config/opemos-ci'
 QUEUE = HOME / '.local/state/opemos-test-queue-r2'
 PRIVATE = OP / 'robot-private'
-EXCHANGE = RUNNER / 'robot-private/reports'
+EXCHANGE = Path('/media/connor/Games/OPEMOS/CI-artifacts/robot-runtime/reports')
 PROGRAMS = ('control.py','connection_host.py','host_engine.py','launch.py')
 PROOF_LEGACY = ('run_approved.py','job.py','provision_observer_rule.py',
                 'connection_control.py','observer_guest.py','prepare_observer_iso.py')
-PROOF = PROOF_LEGACY + ('virtual_usb.py','vm_write_ceiling.py','owned_command.py')
+PROOF = PROOF_LEGACY + ('ubuntu_guest_build.py','virtual_usb.py','vm_write_ceiling.py','owned_command.py')
 ENGINE = ('scripts/omen_robot.py','scripts/omen_ci_reader.py',
           'scripts/omen_ci_stage.py','scripts/omen_ci_inventory.py',
           'scripts/omen_ci_executables.py','scripts/omen_ci_result.py',
@@ -30,7 +30,7 @@ ENGINE = ('scripts/omen_robot.py','scripts/omen_ci_reader.py',
           'scripts/check_full_stack_acceptance.py')
 SOURCE = PROGRAMS + PROOF + ('planner.py','job_guard.py','job-started.sh',
                              'install_remote.py','rollback_before_submit.py')
-OPERATION_DATA = ('ubuntu-operation.json',)
+OPERATION_DATA = ('ubuntu-operation.json','ubuntu-source-operation.json')
 SCOPE='CONNECTION_ONLY_OLD_ARTIFACT_NO_FULLSTACK_ACCEPTANCE'
 OLD_SOURCE='01ae39dbe07ae3e5a2f45c6e4c4b354f735156b3'
 OLD_APP='b252781da4a8af77c1439e0197208fc5c607d29bbc7ef18595ed550029ee9580'
@@ -218,7 +218,7 @@ def original_custody(before,installed,outcomes,txdir):
     need(set(before)==set(installed)==set(outcomes)==set(targets()),
          'complete target outcome membership')
     result={}
-    for label,path in targets().items():
+    for label,path in targets(payload).items():
         backup=txdir/('backup-'+label);old=before[label]
         need(full(path)==installed[label],'installed target drift '+label)
         outcome=outcomes[label]
@@ -271,7 +271,7 @@ def require_source(payload):
     if type(policy)is dict and policy.get('kind')=='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1':
         need(set(payload['sources'])==set(SOURCE)|set(OPERATION_DATA)and policy.get('runtimeAuthorized')is True
              and policy.get('sourceAccepted')is True and policy.get('sourceCommit')==payload['mainCommit']
-             and policy.get('scope')=='NORMAL_UBUNTU_GUI_BUILD_WRITE_VIRTUAL_USB_ONLY'
+             and policy.get('scope')==('NORMAL_UBUNTU_SOURCE_BUILD_AND_GUI_VIRTUAL_USB_ONLY'if policy.get('sourceBuildEnabled')is True else'NORMAL_UBUNTU_GUI_BUILD_WRITE_VIRTUAL_USB_ONLY')
              and policy.get('programSHA256')=={k:payload['sources'][k]['sha256']for k in PROOF}
              and policy.get('engineSHA256')=={k:payload['engine'][k]['sha256']for k in ENGINE}
              and policy.get('queueSourceSHA256')==payload['queueSourceSHA256']
@@ -325,6 +325,25 @@ def require_source(payload):
         need(ubuntu['automatic_operation']=={'path':str(ROOT/'normal-operations'/
              (recipe_source['sha256']+'.json')),'sha256':recipe_source['sha256']},
              'single existing registry recipe pin and trusted immutable data placement')
+        if policy.get('sourceBuildEnabled')is True:
+            source_recipe=payload['sources']['ubuntu-source-operation.json']
+            need(ubuntu.get('native_producer')=={'path':str(ROOT/'normal-operations'/
+                 (source_recipe['sha256']+'.json')),'sha256':source_recipe['sha256']}and
+                 type(policy.get('sourceBuildInputBytes'))is int and
+                 0<policy['sourceBuildInputBytes']<=policy['maxVMBytes']and
+                 profile.get('max_source_input_archive_bytes')==policy['sourceBuildInputBytes']and
+                 policy.get('guestPrerequisitesRequired')is True,
+                 'actual source producer/whole input bound/prerequisites operation joins')
+            selected=policy.get('producerWorkflowPolicy')
+            need(type(selected)is dict and set(selected)=={'kind','repository','workflow','bodySHA256','inputPrograms'}and
+                 selected['kind']=='REVIEWED_UBUNTU_SOURCE_PRODUCER_WORKFLOW_V1'and
+                 selected['repository']=='CorniiDog/OPEMOS.EXE'and
+                 selected['workflow']=='.github/workflows/ubuntu-executable.yml'and
+                 re.fullmatch('[0-9a-f]{64}',selected['bodySHA256'])and
+                 set(selected['inputPrograms'])=={'scripts/prepare_ubuntu_source_inputs.py',
+                                                 'scripts/acquire_appliance_windows.py'}and
+                 all(re.fullmatch('[0-9a-f]{64}',value)for value in selected['inputPrograms'].values()),
+                 'exact reviewed producer workflow/input-program grant, never candidate control code')
         recipe=strict(bytes.fromhex(recipe_source['hex']))
         need(type(recipe)is dict and set(recipe)=={'schema','documents','prepare','collect'}
              and recipe['schema']==1 and type(recipe['documents'])is list,
@@ -419,16 +438,19 @@ def preflight(payload):
          fields.get('ActiveState') in ('inactive','failed') and
          fields.get('LoadState') in ('loaded','not-found'),
          'old control currently owns no process/cgroup')
-    for label,path in targets().items():
+    for label,path in targets(payload).items():
         exact_previous(path,payload['prior'][label])
     return True
 
 
-def targets():
-    return {'planner':ROOT/'opemos-robot-job-plan',
+def targets(payload=None):
+    result={'planner':ROOT/'opemos-robot-job-plan',
       'guardScript':ROOT/'guard/job-started.sh','guardCode':ROOT/'guard/job_guard.py',
       'profile':CONFIG/'robot.json','registry':CONFIG/'robot-jobs.json',
       'runnerEnv':RUNNER/'.env'}
+    if payload is not None and payload['policy'].get('sourceBuildEnabled')is True:
+        result['producerWorkflow']=ROOT/'guard/ubuntu-producer-workflow.json'
+    return result
 
 
 def configure_env(old):
@@ -451,8 +473,8 @@ def _install_locked(payload,payload_sha,source,engine):
     directory(ROOT,0,0o755)
     directory(ROOT/'transactions',0,0o700)
     directory(txdir,0,0o700)
-    before={label:full(path) for label,path in targets().items()}
-    backup={label:(None if item['absent'] else read_exact(targets()[label],16*1024*1024)[0].hex())
+    before={label:full(path) for label,path in targets(payload).items()}
+    backup={label:(None if item['absent'] else read_exact(targets(payload)[label],16*1024*1024)[0].hex())
             for label,item in before.items()}
     pre={'kind':'ROBOT_INSTALL_PRE_EFFECT_FULL_PRESTATE','transaction':tx,
          'payloadSHA256':payload_sha,'before':before,'backupHex':backup,
@@ -487,10 +509,11 @@ def _install_locked(payload,payload_sha,source,engine):
             directory(PRIVATE/'operations',1000,0o700)
             directory(Path(payload['policy']['storageBase']),1000,0o700)
             recipes=ROOT/'normal-operations';directory(recipes,0,0o755)
-            recipe=source['ubuntu-operation.json'];target=recipes/(sha(recipe)+'.json')
-            if os.path.lexists(target):
-                need(full(target)['sha256']==sha(recipe),'immutable normal recipe collision')
-            else:new_file(target,recipe,0,0o444)
+            for name in OPERATION_DATA:
+                recipe=source[name];target=recipes/(sha(recipe)+'.json')
+                if os.path.lexists(target):
+                    need(full(target)['sha256']==sha(recipe),'immutable normal recipe collision')
+                else:new_file(target,recipe,0,0o444)
         new_file(release/'control-approval.json',enc(payload['approval']),0,0o444)
         # Pre-build all user and root replacement bytes before first swap.
         prior_env=bytes.fromhex(backup['runnerEnv'])
@@ -502,8 +525,10 @@ def _install_locked(payload,payload_sha,source,engine):
             'registry':(enc(payload['registry']),1000,0o400),
             'runnerEnv':(configure_env(prior_env),1000,0o600),
         }
+        if payload['policy'].get('sourceBuildEnabled')is True:
+            replacements['producerWorkflow']=(enc(payload['policy']['producerWorkflowPolicy']),0,0o444)
         for label,(data,uid,mode) in replacements.items():
-            post,outcome=replacement(targets()[label],data,uid,mode,before[label],tx,
+            post,outcome=replacement(targets(payload)[label],data,uid,mode,before[label],tx,
                              txdir/('backup-'+label))
             outcomes[label]=outcome
             if outcome!='unchanged':installed.append((label,post))
@@ -531,6 +556,9 @@ def _install_locked(payload,payload_sha,source,engine):
           'connection_login':payload['login']['path'],
           'connection_queue_sha256':payload['queueSourceSHA256'],
           'connection_queue_logger_sha256':payload['queueLoggerSHA256']}
+        if payload['policy'].get('sourceBuildEnabled')is True:
+            lease['producer_workflow_policy']={'path':str(targets(payload)['producerWorkflow']),
+                'sha256':sha(replacements['producerWorkflow'][0])}
         lease_dir=OP/('robot-control-'+tx);directory(lease_dir,1000,0o700)
         new_file(release/'lease.json',enc(lease),0,0o444)
         approval_path=release/'control-approval.json'
@@ -554,7 +582,7 @@ def _install_locked(payload,payload_sha,source,engine):
                              'controlApproval':approval_path,
                              'lease':release/'lease.json',
                              'job':lease_dir/'job.json'})
-        current={k:full(v) for k,v in targets().items()}
+        current={k:full(v) for k,v in targets(payload).items()}
         originals=original_custody(before,current,outcomes,txdir)
         new_file(txdir/'postflight.json',enc({'kind':'ROBOT_INSTALL_VERIFIED_NO_QUEUE_EFFECT',
           'transaction':tx,'installed':current,'targetOutcomes':outcomes,
@@ -578,11 +606,11 @@ def _install_locked(payload,payload_sha,source,engine):
         errors=[]
         for label,outcome in outcomes.items():
             if outcome!='unchanged':continue
-            try:exact_previous(targets()[label],before[label])
+            try:exact_previous(targets(payload)[label],before[label])
             except BaseException as error:errors.append((label+'-unchanged',str(error)))
         for label,post in reversed(installed):
             try:
-                path=targets()[label];need(full(path)==post,'rollback target drift')
+                path=targets(payload)[label];need(full(path)==post,'rollback target drift')
                 if before[label]['absent']:
                     path.unlink();fsync_parent(path)
                 else:

@@ -68,7 +68,7 @@ def request():
     fields = {
         'version','action','kind','subject','repository','source_commit',
         'run_id','attempt','nonce','consumer_started_epoch'}
-    need(type(r) is dict and set(r) in (fields, fields | {'candidate'}),
+    need(type(r) is dict and set(r) in (fields, fields | {'candidate'}, fields | {'source_input'}),
         'exact Robot request schema required')
     need(r['version'] == 1 and r['repository'] == REPO and
          COMMIT.fullmatch(r['source_commit']) and
@@ -78,7 +78,7 @@ def request():
          r['consumer_started_epoch'] > 0,
          'exact protected consumer identity required')
     need(r['action'] in ('prepare','collect') and
-         r['kind'] in ('inventory','artifacts','artifact'),
+         r['kind'] in ('inventory','artifacts','artifact','source'),
          'unsupported fixed action/kind')
     return r
 
@@ -132,6 +132,25 @@ def candidate(r):
          SHA.fullmatch(archive['sha256']) and type(archive['bytes']) is int and
          0 < archive['bytes'] <= 60000000000,
          'candidate descriptor/archive/subject identity')
+    return input_custody(item)
+
+
+def source_input(r):
+    item=r.get('source_input')
+    need(type(item)is dict and set(item)=={'descriptor','archive'},'explicit source-only input')
+    value,archive=item['descriptor'],item['archive']
+    need(value['kind']=='UBUNTU_SOURCE_INPUT_ARTIFACT_V1'and value['repository']==REPO and
+         COMMIT.fullmatch(value['source_commit'])and value['producer_run_id']==r['run_id']and
+         value['producer_attempt']==r['attempt']and value['input']['compiled_or_packaged']is False and
+         set(archive)=={'path','bytes','sha256'}and SHA.fullmatch(archive['sha256'])and
+         archive['sha256']==value['artifact_archive_sha256']and
+         type(archive['bytes'])is int and 0<archive['bytes']<=60000000000,
+         'source input cannot claim a completed package')
+    return input_custody(item)
+
+
+def input_custody(item):
+    archive=item['archive']
     path = Path(archive['path'])
     need(path.is_absolute() and path.resolve() == path, 'real candidate data path')
     fd = os.open(path, os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
@@ -186,7 +205,7 @@ def automatic_operation(pin, r, operation_root, normal_policy_pin=None):
     need(type(recipe) is dict and set(recipe) == {'schema','documents','prepare','collect'} and
          type(recipe['schema']) is int and recipe['schema'] == 1 and
          type(recipe['documents']) is list, 'normal operation data schema')
-    c = candidate(r)
+    c = source_input(r)if r['kind']=='source'else candidate(r)
     base = directory(operation_root)
     root = base / ('run-'+r['run_id']+'-'+r['attempt']+'-'+r['nonce'])
     if r['action'] == 'prepare':root.mkdir(mode=0o700)  # create-only identity
@@ -209,7 +228,11 @@ def automatic_operation(pin, r, operation_root, normal_policy_pin=None):
         if tag == '$request':
             need(name == 'prepare', 'original preparation identity only')
             return dict(r, action='prepare')
+        if tag == '$source_input':
+            need(r['kind']=='source'and name=='*','explicit source-only definition data')
+            return c['descriptor']
         if tag == '$candidate':
+            need(r['kind']=='artifact','candidate package identity only after a producer exists')
             if name == '*':return c['descriptor']
             need(name in c['descriptor'], 'declared candidate field only')
             return c['descriptor'][name]
@@ -219,7 +242,8 @@ def automatic_operation(pin, r, operation_root, normal_policy_pin=None):
             return c['archive'][name]
         if tag == '$path':return str(path(name))
         if tag=='$normal_ubuntu_command':
-            need(policy is not None and name=='guest-gui'and
+            need(policy is not None and (name=='guest-gui'and r['kind']=='artifact'or
+                 name=='source-build'and r['kind']=='source'and policy.get('sourceBuildEnabled')is True)and
                  {'normal-job.json','identity.json'}<=set(pins),'complete current normal job operands')
             entry=Path(__file__).parent/'scripts/run_omen_robot_guest.py'
             held(entry,8388608,policy['engineSHA256']['scripts/run_omen_robot_guest.py'])
@@ -320,10 +344,16 @@ def automatic_operation(pin, r, operation_root, normal_policy_pin=None):
     need(type(response) is dict and not {'identity','available'} & response.keys(),
          'planner supplies identity, not template claims')
     if r['action'] == 'prepare':
-        need(response.get('expected') == c['descriptor'] and
-             all(k in response for k in ('config','operand','plan','staging_path','robot_job',
-                  'executable_entry','additional_operations','executable_transaction_path')),
-             'complete normal candidate operation required')
+        if r['kind']=='source':
+            need(response.get('expected_source_input')==c['descriptor']and
+                 response.get('operation_scope')=='NORMAL_UBUNTU_SOURCE_BUILD_ONLY'and
+                 all(k in response for k in('config','operand','plan','staging_path')),
+                 'complete separately typed normal source-build operation')
+        else:
+            need(response.get('expected') == c['descriptor'] and
+                 all(k in response for k in ('config','operand','plan','staging_path','robot_job',
+                      'executable_entry','additional_operations','executable_transaction_path')),
+                 'complete normal candidate operation required')
     else:need(response.get('effect') == 'READ_ONLY_CURRENT_OPERATION', 'read-only current collection')
     return dict(response, identity=key(r), available=True)
 
@@ -352,6 +382,8 @@ def main():
     if r['kind'] == 'inventory':
         need(type(r['subject']) is str and r['subject'] in cases,
              'inventory subject outside exact20')
+    elif r['kind']=='source':
+        need(r['subject']=={'platform':'ubuntu'},'one Ubuntu source-producer role')
     elif r['kind'] == 'artifacts':
         need(type(r['subject']) is str and
              r['subject'] in registry['artifacts'],
@@ -367,6 +399,9 @@ def main():
     if r['source_commit'] != source:
         result = {'identity':identity,'available':False,
                   'reason':'Root registry source differs from current protected consumer; fresh source and producer reconciliation required'}
+    elif r['kind']=='source':
+        row=registry['artifacts']['ubuntu']
+        result=automatic_operation(row['native_producer'],r,p['operation_root'],row['operation_policy'])
     elif r['kind'] == 'artifact' and 'candidate' in r:
         row = registry['artifacts'][r['subject']['platform']]
         result = automatic_operation(row['automatic_operation'], r, p['operation_root'],row.get('operation_policy'))

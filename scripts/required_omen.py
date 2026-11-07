@@ -14,6 +14,8 @@ import stat
 from datetime import datetime,timezone
 import re
 import secrets
+import socket
+import struct
 import sys
 import time
 from urllib import request,error,parse
@@ -73,7 +75,10 @@ def download_candidate(expected, destination, cap, token):
  No package member is extracted, imported or executed on the controller. The
  existing guest consumer independently checks package/executable hashes.
  """
- descriptor(expected);require(type(cap)is int and 0<cap<=60_000_000_000,'existing whole-VM candidate bound')
+ descriptor(expected);return download_bound_archive(expected,destination,cap,token)
+
+def download_bound_archive(expected,destination,cap,token):
+ require(type(cap)is int and 0<cap<=60_000_000_000,'existing whole-VM candidate bound')
  path=f"actions/artifacts/{expected['artifact_id']}/zip"
  opener=request.build_opener(NoArtifactRedirect)
  response=None
@@ -112,6 +117,70 @@ def items(read,path,key):
  value=read(path+('&'if'?'in path else'?')+'per_page=100')
  require(type(value['total_count'])is int and value['total_count']==len(value[key])<=100,'complete finite '+key+' inventory')
  return value[key]
+def source_input_ready(run_id,attempt,read,download):
+ """Authenticate source downloads BEFORE any package exists or guest starts."""
+ require(all(re.fullmatch('[1-9][0-9]{0,19}',v or '')for v in(run_id,attempt)),
+         'exact source-input run/attempt')
+ path=f'actions/runs/{run_id}/attempts/{attempt}'
+ run=read(path);current=read(f'actions/runs/{run_id}')
+ require(str(run['id'])==run_id and str(run['run_attempt'])==attempt and
+         str(current['run_attempt'])==attempt and current['head_sha']==run['head_sha'] and
+         run['repository']['full_name']==REPO and
+         run['head_repository']['id']==run['repository']['id'] and
+         run['path']==PRODUCER_PATH['ubuntu'] and run['event']in('push','pull_request','workflow_dispatch') and
+         re.fullmatch('[0-9a-f]{40}',run['head_sha']) and
+         run['status']=='in_progress','actual same-repository source producer')
+ jobs=items(read,path+'/jobs','jobs')
+ selected=[j for j in jobs if j['name']=='source-inputs']
+ require(len(selected)==1 and selected[0]['status']=='completed' and
+         selected[0]['conclusion']=='success' and selected[0]['head_sha']==run['head_sha'],
+         'actual download-only input JOB must pass')
+ artifacts=items(read,f'actions/runs/{run_id}/artifacts','artifacts')
+ metadata=[a for a in artifacts if a['name']==f'source-input-ubuntu-{run_id}-{attempt}' and not a['expired']]
+ require(len(metadata)==1,'exact source-input metadata artifact')
+ value=archive_json(download(f"actions/artifacts/{metadata[0]['id']}/zip"),metadata[0],'source-input-artifact.json')
+ fields={'kind','repository','source_commit','producer_run_id','producer_attempt',
+         'artifact_id','artifact_name','artifact_archive_sha256','input'}
+ require(type(value)is dict and set(value)==fields and value['kind']=='UBUNTU_SOURCE_INPUT_ARTIFACT_V1' and
+         value['repository']==REPO and value['source_commit']==run['head_sha'] and
+         value['producer_run_id']==run_id and value['producer_attempt']==attempt,
+         'source input is not a compiled executable descriptor')
+ definition=value['input']
+ require(type(definition)is dict and definition['kind']=='UBUNTU_GUEST_SOURCE_INPUT_V1' and
+         definition['repository']==REPO and definition['source_commit']==run['head_sha'] and
+         definition['producer_run_id']==run_id and definition['producer_attempt']==attempt and
+         definition['compiled_or_packaged']is False and definition['archive_name']=='ubuntu-source-inputs.tar' and
+         type(definition['archive_bytes'])is int and 0<definition['archive_bytes']<=60_000_000_000 and
+         type(definition['expanded_bytes'])is int and 0<definition['expanded_bytes']<=60_000_000_000 and
+         re.fullmatch('[0-9a-f]{64}',definition['archive_sha256']) and
+         definition['node']=='22.23.2' and definition['rust']=='1.98.1',
+         'finite locked source/toolchain input definition')
+ selected_artifacts=[a for a in artifacts if str(a['id'])==value['artifact_id']]
+ require(len(selected_artifacts)==1,'source-input archive membership')
+ actual=selected_artifacts[0]
+ require(not actual['expired'] and actual['name']==value['artifact_name'] and
+         actual['digest']=='sha256:'+value['artifact_archive_sha256'] and
+         actual['workflow_run']['id']==int(run_id) and
+         actual['workflow_run']['head_sha']==run['head_sha'] and
+         actual['workflow_run']['repository_id']==run['repository']['id'] and
+         actual['workflow_run']['head_repository_id']==run['repository']['id'],
+         'exact API-bound source-input ZIP')
+ start=datetime.fromisoformat(run['run_started_at'].replace('Z','+00:00'))
+ finish=datetime.fromisoformat(selected[0]['completed_at'].replace('Z','+00:00'))
+ require(all(start<=datetime.fromisoformat(a['created_at'].replace('Z','+00:00'))<=finish
+             for a in(actual,metadata[0])),'source inputs belong to the actual download job')
+ after=read(path);jobs_after=items(read,path+'/jobs','jobs')
+ artifacts_after=items(read,f'actions/runs/{run_id}/artifacts','artifacts')
+ keys=('id','run_attempt','head_sha','head_branch','path','event','status','conclusion')
+ require(all(after[k]==run[k]for k in keys) and
+         read(f'actions/runs/{run_id}')['run_attempt']==int(attempt) and
+         [j for j in jobs_after if j['name']=='source-inputs']==selected and
+         [a for a in artifacts_after if a['id']in(actual['id'],metadata[0]['id'])]==
+         [a for a in artifacts if a['id']in(actual['id'],metadata[0]['id'])],
+         'selected source-input identities changed during authentication')
+ return value
+
+
 def producer_ready(source,platform,run_id,attempt,read,download):
  require(platform in NATIVE and (source is None or re.fullmatch('[0-9a-f]{40}',source or ''))and all(re.fullmatch('[1-9][0-9]{0,19}',x or '')for x in(run_id,attempt)),'exact platform/source/producer identity')
  path=f'actions/runs/{run_id}/attempts/{attempt}';run=read(path)
@@ -448,12 +517,105 @@ def finalize_scope():
  require(len(canonical(result))+1<=65536,'small result contract; no cap expansion')
  save('required-result/required-result.json',result)
 
+def source_package_pin(path,expected):
+ path=Path(path);fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+ fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+ try:
+  before=os.fstat(fd)
+  require(stat.S_ISREG(before.st_mode)and before.st_uid==1000 and before.st_nlink==1 and
+          stat.S_IMODE(before.st_mode)==0o400 and before.st_size==expected['bytes']<=2147483648,
+          'actual readonly guest-produced file custody')
+  digest=hashlib.sha256();size=0
+  while block:=os.read(fd,1048576):size+=len(block);digest.update(block)
+  require(size==expected['bytes']and digest.hexdigest()==expected['sha256']and
+          all(getattr(before,k)==getattr(os.fstat(fd),k)==getattr(path.lstat(),k)for k in fields),
+          'actual package readback changed')
+ finally:os.close(fd)
+
+
+def build_source_on_omen():
+ require(os.getuid()==os.geteuid()==1000 and os.environ.get('GITHUB_JOB')=='appimage-package',
+         'trusted source-producer Actions job')
+ context={k:os.environ[v]for k,v in [('repository','GITHUB_REPOSITORY'),('source_commit','OPEMOS_SOURCE_SHA'),
+          ('run_id','GITHUB_RUN_ID'),('attempt','GITHUB_RUN_ATTEMPT')]}
+ require(context['repository']==REPO and re.fullmatch('[0-9a-f]{40}',context['source_commit'])and
+         all(re.fullmatch('[1-9][0-9]{0,19}',context[k])for k in('run_id','attempt')),
+         'installed controller is distinct from candidate data')
+ req=dict(context,version=2,action='build-source-platform',
+          subject={'platform':'ubuntu','producer_run_id':context['run_id'],'producer_attempt':context['attempt']},
+          nonce=secrets.token_hex(16),consumer_started_epoch=int(time.time()))
+ path=os.environ['OPEMOS_ROBOT_CONTROL_SOCKET']
+ require(path=='/run/opemos-ci/control/control.sock','fixed current broker socket')
+ with socket.socket(socket.AF_UNIX)as connection:
+  connection.settimeout(9000);connection.connect(path)
+  pid,uid,gid=struct.unpack('3i',connection.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
+  require(pid==0 and uid==gid==1000,'actual outside-namespace fixed broker')
+  connection.sendall(canonical(req)+b'\n');raw=bytearray()
+  while len(raw)<=1048576 and not raw.endswith(b'\n'):
+   block=connection.recv(min(65536,1048577-len(raw)));require(block,'source build reply EOF');raw.extend(block)
+  require(len(raw)<=1048576 and raw.endswith(b'\n'),'bounded complete source-build reply')
+ reply=strict(raw)
+ save('source-build-results/actual-source-build.json',reply)
+ require(reply['identity']=={k:req[k]for k in('repository','source_commit','run_id','attempt','nonce')}and
+         reply['action']==req['action']and reply['subject']==req['subject'],'actual source-build correlation')
+ require(reply['status']=='passed','actual source build failed; correlated original stage retained')
+ result=reply['source_build']
+ require(result['kind']=='OMEN_GUEST_PACKAGE_EXPORT_V1'and
+         result['candidate_source_commit']==os.environ['GITHUB_SHA']and
+         result['controller_source_commit']==context['source_commit']and
+         result['source_input']['producer_run_id']==context['run_id']and
+         result['source_input']['producer_attempt']==context['attempt']and
+         result['GUIOrSteamOSAcceptance']is False,'actual guest output, never a full-stack pass')
+ exchange=Path(os.environ['OPEMOS_ROBOT_REPORT_EXCHANGE'])
+ require(str(exchange)=='/media/connor/Games/OPEMOS/CI-artifacts/robot-runtime/reports',
+         'separate-partition current report/package exchange')
+ name=result['directory'];require(type(name)is str and Path(name).name==name and
+         re.fullmatch(context['run_id']+'-'+context['attempt']+'-[0-9a-f]{32}-packages',name),
+         'current operation package directory only')
+ directory=exchange/name;require(directory.resolve()==directory and directory.is_dir(),
+                                'actual exposed package directory')
+ for file in result['files']:
+  relative=Path(file['name']);require(not relative.is_absolute()and '..'not in relative.parts,
+                                    'bounded current package member')
+  source_package_pin(directory/relative,file)
+ # Only the trusted Root driver sets this path, after actual bytes/closure.
+ with open(os.environ['GITHUB_ENV'],'a')as env:
+  env.write('OPEMOS_GUEST_PRODUCED_PACKAGE_DIRECTORY='+str(directory)+'\n')
+ return 0
+
+
+def record_guest_package():
+ reply=strict(Path('source-build-results/actual-source-build.json').read_bytes())
+ require(reply['status']=='passed'and reply['action']=='build-source-platform',
+         'actual guest build must finish before producer binding')
+ result=reply['source_build'];source=os.environ['GITHUB_SHA']
+ require(result['candidate_source_commit']==source and
+         result['source_input']['producer_run_id']==os.environ['GITHUB_RUN_ID']and
+         result['source_input']['producer_attempt']==os.environ['GITHUB_RUN_ATTEMPT'],
+         'same actual source-build attempt')
+ package=result['package'];native=result['executable']
+ directory=Path(os.environ['OPEMOS_GUEST_PRODUCED_PACKAGE_DIRECTORY'])
+ for file in(package,native):source_package_pin(directory/file['name'],file)
+ value={'schema':1,'repository':REPO,'source_commit':source,'platform':'ubuntu',
+        'workflow':PRODUCER_PATH['ubuntu'],'producer_run_id':os.environ['GITHUB_RUN_ID'],
+        'producer_attempt':os.environ['GITHUB_RUN_ATTEMPT'],'event':os.environ['GITHUB_EVENT_NAME'],
+        'ref':os.environ['GITHUB_REF'],'artifact_id':os.environ['PRODUCER_ARTIFACT_ID'],
+        'artifact_name':'OPEMOS-Ubuntu-AppImage-'+source+'-'+os.environ['GITHUB_RUN_ATTEMPT'],
+        'artifact_archive_sha256':os.environ['PRODUCER_ARTIFACT_SHA256'],
+        'package_name':package['name'],'package_sha256':package['sha256'],'package_bytes':package['bytes'],
+        'executable_name':native['name'],'executable_sha256':native['sha256'],'executable_bytes':native['bytes']}
+ descriptor(value,source);save('executable-producer.json',value)
+ return 0
+
+
 if __name__=='__main__':
- parser=argparse.ArgumentParser();parser.add_argument('mode',choices=['dispatch-and-wait','scope-guard','finalize-scope','diagnostics']);parser.add_argument('--platform',choices=tuple(NATIVE));parser.add_argument('--directory',default='robot-results');parser.add_argument('--reason',default='Actual OMEN route/result unavailable; no guest pass')
+ parser=argparse.ArgumentParser();parser.add_argument('mode',choices=['dispatch-and-wait','scope-guard','finalize-scope','diagnostics','build-source-on-omen','record-guest-package']);parser.add_argument('--platform',choices=tuple(NATIVE));parser.add_argument('--directory',default='robot-results');parser.add_argument('--reason',default='Actual OMEN route/result unavailable; no guest pass')
  args=parser.parse_args()
  if args.mode=='dispatch-and-wait':raise SystemExit(main_dispatch(args.platform))
  try:
-  if args.mode=='scope-guard':scope_guard()
+  if args.mode=='build-source-on-omen':raise SystemExit(build_source_on_omen())
+  elif args.mode=='record-guest-package':raise SystemExit(record_guest_package())
+  elif args.mode=='scope-guard':scope_guard()
   elif args.mode=='finalize-scope':finalize_scope()
   else:emit_diagnostics(args.directory,args.reason)
  except Exception as exc:

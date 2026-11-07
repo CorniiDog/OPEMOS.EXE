@@ -19,6 +19,7 @@ def normal_ubuntu_job(config_ref,request_ref):
     import time,types,stat,re
     cfg=strict(raw_file(config_ref['path'],1048576,config_ref['sha256'],os.getuid()))
     request=strict(raw_file(request_ref['path'],1048576,request_ref['sha256'],os.getuid()))
+    source_build=cfg['kind']=='ROOT_ADMITTED_UBUNTU_SOURCE_BUILD_V1'
     current={k:request[k]for k in('source_commit','run_id','attempt')}
     require(all(identity()[k]==v for k,v in current.items())and
         request['nonce']==os.environ['OPEMOS_TRANSACTION_NONCE']==cfg['nonce']and
@@ -40,7 +41,7 @@ def normal_ubuntu_job(config_ref,request_ref):
         require(name.endswith('.py')and Path(name).name==name,'fixed Root normal program member')
         programs[name]=raw_file(bundle/name,1048576,digest,0)
     require(set(programs)=={'run_approved.py','job.py','provision_observer_rule.py','connection_control.py',
-        'observer_guest.py','prepare_observer_iso.py','virtual_usb.py','vm_write_ceiling.py','owned_command.py'},
+        'observer_guest.py','prepare_observer_iso.py','ubuntu_guest_build.py','virtual_usb.py','vm_write_ceiling.py','owned_command.py'},
         'complete authenticated normal job source graph')
     source=programs['owned_command.py'];owned=types.ModuleType('actual_normal_owned')
     owned.__file__=str(bundle/'owned_command.py');exec(compile(source,owned.__file__,'exec'),owned.__dict__)
@@ -63,6 +64,17 @@ def normal_ubuntu_job(config_ref,request_ref):
         require(storage['first']is None and storage['closure']['unmountedNormally']is True and
             storage['closure']['loopDetachedNormally']is True and storage['closure']['errors']==[],
             'actual independent Root storage/loop/namespace closure required')
+        if source_build:
+            require(policy.get('sourceBuildEnabled')is True and
+                actual['kind']=='NORMAL_UBUNTU_SOURCE_BUILD_JOB_V1' and
+                actual['nonce']==cfg['nonce']and actual['source_commit']==cfg['source_commit']and
+                actual['candidate_source_commit']==cfg['source_input']['descriptor']['source_commit']and
+                actual['SourceBuildAccepted']is True,'actual normal source build and complete closure required')
+            dump(root/'runtime-observed.json',actual)
+            dump(target,{'kind':'NORMAL_SOURCE_BUILD_RESULT_V1','identity':request,'numeric_exit':0,
+                'source_build_accepted':True,'actual_normal_job_path':str(runtime/'job-result.json'),
+                'GUIOrSteamOSAcceptance':False})
+            return 0
         require(actual['nonce']==cfg['nonce']and actual['source_commit']==cfg['source_commit']and
             actual['candidate_source_commit']==cfg['candidate']['descriptor']['source_commit']and
             actual['GUIBuildWriteReadbackAccepted']is True,'actual same normal Build/write/readback and closure required')

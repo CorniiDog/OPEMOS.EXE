@@ -1,6 +1,8 @@
 #!/usr/bin/python3
 """Fixed GitHub pre-job hook; authentication only, never VM admission."""
 import json
+import base64
+import hashlib
 import os
 import re
 import socket
@@ -69,17 +71,70 @@ def api(path, token=None):
     return json.loads(raw)
 
 
+def source_workflow_policy(expected_sha=None):
+    path = Path(__file__).with_name('ubuntu-producer-workflow.json')
+    fd = os.open(path,os.O_RDONLY|os.O_CLOEXEC|os.O_NOFOLLOW)
+    try:
+        before = os.fstat(fd)
+        need(stat.S_ISREG(before.st_mode) and before.st_uid == before.st_gid == 0 and
+             stat.S_IMODE(before.st_mode) == 0o444 and before.st_nlink == 1 and
+             before.st_size <= 65536,'Root-owned source-producer workflow selection')
+        raw = os.read(fd,65537)
+        fields = ('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink',
+                  'st_size','st_mtime_ns','st_ctime_ns')
+        need(len(raw) == before.st_size and all(getattr(before,k) ==
+             getattr(os.fstat(fd),k) == getattr(path.lstat(),k) for k in fields),
+             'source workflow policy changed')
+        need(expected_sha is None or hashlib.sha256(raw).hexdigest() == expected_sha,
+             'source workflow policy differs from current controller lease')
+    finally: os.close(fd)
+    value = json.loads(raw)
+    need(set(value) == {'kind','repository','workflow','bodySHA256','inputPrograms'} and
+         value['kind'] == 'REVIEWED_UBUNTU_SOURCE_PRODUCER_WORKFLOW_V1' and
+         value['repository'] == REPO and
+         value['workflow'] == '.github/workflows/ubuntu-executable.yml' and
+         re.fullmatch('[0-9a-f]{64}',value['bodySHA256']) and
+         set(value['inputPrograms']) == {'scripts/prepare_ubuntu_source_inputs.py',
+                                          'scripts/acquire_appliance_windows.py'},
+         'exact source-producer role, not arbitrary candidate host execution')
+    return value
+
+
+def verify_source_workflow(read, workflow_commit, expected_policy_sha=None):
+    policy = source_workflow_policy(expected_policy_sha)
+    need(re.fullmatch('[0-9a-f]{40}',workflow_commit),'actual workflow source commit')
+    for path,digest in {policy['workflow']:policy['bodySHA256'],**policy['inputPrograms']}.items():
+        need(re.fullmatch('[0-9a-f]{64}',digest),'reviewed producer code body hash')
+        item = read(f'repos/{REPO}/contents/{path}?ref={workflow_commit}')
+        need(item.get('encoding') == 'base64' and item.get('path') == path and
+             type(item.get('size')) is int and 0<item['size']<=262144,
+             'actual bounded source workflow/input-helper body')
+        raw = base64.b64decode(item['content'].encode(),validate=False)
+        need(len(raw) == item['size'] and hashlib.sha256(raw).hexdigest() == digest,
+             'unreviewed producer workflow or hosted input-preparation code')
+    return policy
+
+
 def main():
     need(sys.argv[1:] in ([], ["--bind-job-token"]), "fixed guard invocation")
     bind_token = sys.argv[1:] == ["--bind-job-token"]
     env = os.environ
     need(os.getuid() == 1000 and os.geteuid() == 1000, "runner UID")
-    need(env.get("GITHUB_REPOSITORY") == REPO and env.get("GITHUB_REF") == "refs/heads/main",
-         "canonical protected main only")
-    need(env.get("GITHUB_WORKFLOW_REF") == f"{REPO}/{WORKFLOW_PATH}@refs/heads/main",
-         "canonical consumer workflow only")
-    event_name = env.get("GITHUB_EVENT_NAME")
-    need(event_name in ("workflow_dispatch", "workflow_run"), "event refused")
+    need(env.get("GITHUB_REPOSITORY") == REPO, "canonical repository only")
+    ref = env.get('GITHUB_REF','')
+    source_producer = env.get('GITHUB_WORKFLOW_REF') == (
+        f'{REPO}/.github/workflows/ubuntu-executable.yml@'+ref)
+    if source_producer:
+        need(ref.startswith('refs/heads/') and len(ref)>11 and
+             env.get('GITHUB_EVENT_NAME') in ('push','workflow_dispatch') and
+             env.get('GITHUB_JOB') == 'appimage-package',
+             'same-repository automatic source-build job; no candidate checkout on host')
+    else:
+        need(ref == 'refs/heads/main' and env.get('GITHUB_WORKFLOW_REF') ==
+             f'{REPO}/{WORKFLOW_PATH}@refs/heads/main', 'canonical consumer workflow only')
+    event_name = env.get('GITHUB_EVENT_NAME')
+    need(event_name in (('push','workflow_dispatch') if source_producer else
+                       ('workflow_dispatch','workflow_run')), 'event refused')
     workflow_sha = env.get("GITHUB_SHA", "")
     sha = env.get("OPEMOS_SOURCE_SHA", "")
     need(re.fullmatch("[0-9a-f]{40}", sha) and
@@ -98,22 +153,26 @@ def main():
         need(type(token) is str and token.startswith(("ghs_", "ghr_")) and
              20 <= len(token) <= 4096, "existing ephemeral Actions token required")
     read = lambda path: api(path, token)
-    branch = read(f"repos/{REPO}/branches/main")
-    need(branch.get("protected") is True, "protected controller workflow branch")
-    workflow = read(f"repos/{REPO}/actions/workflows/{WORKFLOW_PATH.rsplit('/', 1)[1]}")
-    need(workflow.get("path") == WORKFLOW_PATH and workflow.get("state") == "active",
+    if source_producer:
+        verify_source_workflow(read, workflow_sha)
+    else:
+        branch = read(f"repos/{REPO}/branches/main")
+        need(branch.get("protected") is True, "protected controller workflow branch")
+    workflow_path = '.github/workflows/ubuntu-executable.yml' if source_producer else WORKFLOW_PATH
+    workflow = read(f"repos/{REPO}/actions/workflows/{workflow_path.rsplit('/', 1)[1]}")
+    need(workflow.get("path") == workflow_path and workflow.get("state") == "active",
          "current consumer workflow path/state")
     consumer = read(f"repos/{REPO}/actions/runs/{run_id}/attempts/{attempt}")
     need(consumer.get("id") == int(run_id) and
          consumer.get("run_attempt") == int(attempt) and
          consumer.get("workflow_id") == workflow.get("id") and
-         consumer.get("path") == WORKFLOW_PATH and
+         consumer.get("path") == workflow_path and
          consumer.get("head_repository", {}).get("full_name") == REPO and
-         consumer.get("head_branch") == "main" and
+         consumer.get("head_branch") == (ref[len("refs/heads/"):] if source_producer else "main") and
          consumer.get("head_sha") == workflow_sha and
          consumer.get("event") == event_name,
          "consumer API identity/path/attempt")
-    mode = "normal"
+    mode = "source_build" if source_producer else "normal"
     producer_identity = None
     if event_name == "workflow_run":
         producer = event.get("workflow_run", {})

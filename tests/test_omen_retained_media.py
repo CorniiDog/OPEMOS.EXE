@@ -91,6 +91,119 @@ class UbuntuCandidateDiscLayout(unittest.TestCase):
                 self.assertEqual(operation['display'], [1600, 900])
                 self.assertFalse(result['VMOrGUIAcceptance'])
 
+@unittest.skipUnless(getattr(os, 'geteuid', lambda: -1)() == 0,
+                     'actual protected Root filesystem/ISO regression')
+class UbuntuSourceProducerInputs(unittest.TestCase):
+    def load(self, name):
+        spec=importlib.util.spec_from_file_location('source_producer_'+name,SOURCE/(name+'.py'))
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        return module
+
+    def test_source_medium_roundtrip_without_a_fake_package_descriptor(self):
+        import tarfile,zipfile
+        module=self.load('prepare_observer_iso')
+        with tempfile.TemporaryDirectory()as temp:
+            root=Path(temp);payload=root/'inputs.tar'
+            with tarfile.open(payload,'x')as archive:
+                item=tarfile.TarInfo('source/package.json');raw=b'{"private":true}'
+                item.size=len(raw);archive.addfile(item,io.BytesIO(raw))
+            definition={'kind':'UBUNTU_GUEST_SOURCE_INPUT_V1','compiled_or_packaged':False,
+                'archive_bytes':payload.stat().st_size,'archive_sha256':hashlib.sha256(payload.read_bytes()).hexdigest(),
+                'expanded_bytes':1024}
+            candidate=root/'source-input.zip'
+            with zipfile.ZipFile(candidate,'x')as archive:
+                archive.write(payload,'ubuntu-source-inputs.tar')
+                archive.writestr('source-input.json',json.dumps(definition))
+            candidate.chmod(0o400)
+            full9=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+            ref={'path':str(candidate),'bytes':candidate.stat().st_size,
+                 'sha256':hashlib.sha256(candidate.read_bytes()).hexdigest(),
+                 'identity':{k:getattr(candidate.stat(),k)for k in full9}}
+            programs={}
+            for name in('ubuntu_guest_build.py','owned_command.py'):
+                path=root/name;path.write_bytes((SOURCE/name).read_bytes());path.chmod(0o444)
+                programs[name]={'path':str(path),'bytes':path.stat().st_size,
+                    'sha256':hashlib.sha256(path.read_bytes()).hexdigest(),
+                    'identity':{k:getattr(path.stat(),k)for k in full9}}
+            descriptor={'kind':'UBUNTU_SOURCE_INPUT_ARTIFACT_V1','source_commit':'c'*40,
+                        'producer_run_id':'12','producer_attempt':'2','input':definition}
+            config={'kind':'ROOT_ADMITTED_UBUNTU_SOURCE_BUILD_V1','nonce':'a'*32,
+                'candidate_source_commit':'c'*40,'source_input':{'descriptor':descriptor,'archive':ref},
+                'source_input_cap_bytes':1048576,'prepared_directory':str(root/'prepared'),
+                'guest_builder_source':programs['ubuntu_guest_build.py'],
+                'owned_command_source':programs['owned_command.py'],'remaining_seconds':120}
+            result=module.source_medium(config)
+            actual=subprocess.run(['isoinfo','-R','-i',result['path'],'-x','/ubuntu-source-inputs.tar'],
+                                  capture_output=True,check=True).stdout
+            self.assertEqual(actual,payload.read_bytes())
+            self.assertTrue(result['source_payload_readback'])
+            self.assertFalse((root/'prepared/ubuntu-source-inputs.tar').exists())
+            self.assertTrue(candidate.exists())
+            self.assertFalse(result['VMOrGUIAcceptance'])
+            subprocess.run(['bash','-n',str(root/'prepared/start.sh')],check=True)
+            script=(root/'prepared/start.sh').read_text()
+            self.assertIn('--admitted-source-build',script)
+            self.assertNotIn('appimage-extract-and-run',script)
+
+    def test_real_ext4_guest_prerequisite_helper_custody_and_no_overwrite(self):
+        module=self.load('provision_observer_rule')
+        with tempfile.TemporaryDirectory()as temp:
+            root=Path(temp);image=root/'fresh.raw'
+            with image.open('xb')as output:output.truncate(64*1024**2)
+            subprocess.run(['/usr/sbin/mkfs.ext4','-F','-q',str(image)],check=True)
+            module.NODE=str(image)
+            for directory in('/usr','/usr/local','/usr/local/bin','/etc','/etc/sudoers.d'):
+                module.debugfs('mkdir '+directory,True)
+                module.debugfs('sif '+directory+' mode 040755',True)
+            programs=root/'programs';programs.mkdir(mode=0o700)
+            builder=programs/'ubuntu_guest_build.py';body=(SOURCE/'ubuntu_guest_build.py').read_bytes()
+            builder.write_bytes(body);builder.chmod(0o500);os.chown(builder,1000,1000)
+            config={'kind':'ROOT_ADMITTED_UBUNTU_SOURCE_BUILD_V1','nonce':'b'*32,
+                'programRoot':str(programs),
+                'normalPolicy':{'programSHA256':{'ubuntu_guest_build.py':hashlib.sha256(body).hexdigest()}},
+                'source_input':{'descriptor':{'input':{'archive_sha256':'d'*64,'expanded_bytes':4096}}}}
+            work=root/'new';work.mkdir(mode=0o700)
+            result=module.write_guest_source_files(config,work)
+            self.assertEqual(len(result),3)
+            self.assertTrue(all(item['readback']and item['uid']==0 for item in result))
+            sudo=[r for r in result if r['path'].startswith('/etc/sudoers.d/')][0]
+            text=module.debugfs('cat '+sudo['path'])['stdout']
+            self.assertIn('--install-prerequisites',text)
+            self.assertNotIn('NOPASSWD: ALL',text)
+            with self.assertRaisesRegex(RuntimeError,'target already exists'):
+                module.write_guest_source_files(config,work)
+            second=dict(config,nonce='e'*32)
+            module.debugfs('sif /usr/local/bin mode 040777',True)
+            with self.assertRaisesRegex(RuntimeError,'ancestry'):
+                module.write_guest_source_files(second,work)
+
+    def test_workflow_grant_authenticates_body_and_input_programs(self):
+        import base64
+        module=self.load('job_guard')
+        with tempfile.TemporaryDirectory()as temp:
+            root=Path(temp);module.__file__=str(root/'job_guard.py')
+            files={'.github/workflows/ubuntu-executable.yml':b'name: reviewed source producer\n',
+                   'scripts/prepare_ubuntu_source_inputs.py':b'# fixed input-only helper\n',
+                   'scripts/acquire_appliance_windows.py':b'# fixed download-only helper\n'}
+            value={'kind':'REVIEWED_UBUNTU_SOURCE_PRODUCER_WORKFLOW_V1',
+                'repository':'CorniiDog/OPEMOS.EXE','workflow':'.github/workflows/ubuntu-executable.yml',
+                'bodySHA256':hashlib.sha256(files['.github/workflows/ubuntu-executable.yml']).hexdigest(),
+                'inputPrograms':{k:hashlib.sha256(v).hexdigest()for k,v in files.items()if k.startswith('scripts/')}}
+            policy=root/'ubuntu-producer-workflow.json';policy.write_text(json.dumps(value));policy.chmod(0o444)
+            digest=hashlib.sha256(policy.read_bytes()).hexdigest()
+            def read(path):
+                prefix='repos/CorniiDog/OPEMOS.EXE/contents/';self.assertTrue(path.startswith(prefix))
+                name,ref=path[len(prefix):].split('?ref=');self.assertEqual(ref,'f'*40)
+                body=files[name]
+                return {'path':name,'size':len(body),'encoding':'base64',
+                        'content':base64.b64encode(body).decode()}
+            self.assertEqual(module.verify_source_workflow(read,'f'*40,digest),value)
+            files['scripts/prepare_ubuntu_source_inputs.py']+=b'# altered\n'
+            with self.assertRaisesRegex(ValueError,'unreviewed producer'):
+                module.verify_source_workflow(read,'f'*40,digest)
+            with self.assertRaisesRegex(ValueError,'differs from current controller lease'):
+                module.source_workflow_policy('0'*64)
+
 
 # Immutable public prior-version subject DATA from91e9e06e; never selected as
 # an OMEN controller. CI uses genuine body hashes, not substituted digest fields.

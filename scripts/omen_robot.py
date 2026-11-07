@@ -157,7 +157,15 @@ class Engine:
         """Opaque data custody only; candidates never become controller code."""
         if self.profile is None:self.profile=installed();self.stage=modules()
         self.stage['_EXECUTABLES']['descriptor'](expected)
-        limit=self.profile['max_candidate_archive_bytes']
+        return self._stage_archive(expected,download,self.profile['max_candidate_archive_bytes'],'candidate')
+
+    def stage_source_input(self,expected,download):
+        if self.profile is None:self.profile=installed();self.stage=modules()
+        require(expected['kind']=='UBUNTU_SOURCE_INPUT_ARTIFACT_V1' and
+                expected['repository']==self.context['repository'], 'authenticated source-only input')
+        return self._stage_archive(expected,download,self.profile['max_source_input_archive_bytes'],'source-input')
+
+    def _stage_archive(self,expected,download,limit,role):
         require(type(limit)is int and 0<limit<=60000000000,'Existing whole-VM candidate bound')
         root=Path(self.profile['candidate_storage_root'])
         require(root==self.stage['ROOT'],'Existing dedicated CI candidate storage required')
@@ -171,14 +179,14 @@ class Engine:
             require(space.f_bavail*space.f_frsize>=required,'Candidate/control volume lacks bounded acquisition/result reserve')
         require(all(re.fullmatch(r'[1-9][0-9]{0,19}',self.context[k])for k in ('run_id','attempt')),
                 'Exact current consumer run/attempt required')
-        folder=root/('candidate-'+self.context['run_id']+'-'+self.context['attempt']+'-'+
+        folder=root/(role+'-'+self.context['run_id']+'-'+self.context['attempt']+'-'+
                      expected['artifact_id']+'-'+expected['artifact_archive_sha256'])
         folder.mkdir(mode=0o700)
         os.chmod(folder,0o700);self.stage['real_dir'](folder)
         # This prefix is outside ordinary run expiry. Preserve failed partials
         # with provenance; never classify interrupted acquisition as VM closure.
         dump(folder/'.owned.json',{'schema':1,'uid':os.getuid(),'identity':self.context,
-             'descriptor':expected,'max_bytes':limit,'role':'opaque candidate acquisition; not controller code'})
+             'descriptor':expected,'max_bytes':limit,'role':'opaque '+role+' acquisition; not controller code'})
         path=folder/'archive.zip'
         fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)
         try:
@@ -189,7 +197,7 @@ class Engine:
         self.stage['artifact_read']({'path':str(path),'sha256':expected['artifact_archive_sha256'],'size':size},limit)
         return {'path':str(path),'sha256':expected['artifact_archive_sha256'],'bytes':size}
 
-    def request(self,kind,subject,candidate=None):
+    def request(self,kind,subject,candidate=None,source_input=None):
         if self.profile is None:self.profile=installed();self.stage=modules()
         self.counter+=1
         nonce=os.urandom(16).hex()
@@ -197,8 +205,109 @@ class Engine:
         request=dict(self.context,version=1,action='prepare',kind=kind,subject=subject,nonce=nonce,
                      consumer_started_epoch=int(os.environ['OPEMOS_CONSUMER_STARTED_EPOCH']))
         if candidate is not None:request['candidate']=candidate
+        if source_input is not None:request['source_input']=source_input
         dump(folder/'request.json',request)
         return request,hook(self.profile,request,folder),folder
+
+    def build_source(self,expected,archive):
+        """One source-build operation through the existing planner/normal queue.
+
+        Compilation is a separately typed stage. It cannot assert a graphical
+        Build, USB write, SteamOS boot, NVIDIA or full-stack acceptance.
+        """
+        request,prepared,folder=self.request('source',{'platform':'ubuntu'},
+            source_input={'descriptor':expected,'archive':archive})
+        require(prepared.get('available')is True,prepared.get('reason','Source producer unavailable'))
+        require(prepared.get('operation_scope')=='NORMAL_UBUNTU_SOURCE_BUILD_ONLY' and
+                prepared['expected_source_input']==expected,'exact source-input operation required')
+        cfg=self.stage['load_pinned'](prepared['config']);operand=prepared['operand'];plan=prepared['plan']
+        self.current=(request,prepared,folder,cfg)
+        require(plan['source_commit']==request['source_commit'] and plan['nonce']==request['nonce'] and
+                operand['hardware_scope']=='virtual-only' and
+                operand['inventory_vm_id']=='OPEMOS-Ubuntu-Agent-UI',
+                'actual Ubuntu original/virtual-only source stage')
+        require(cfg.get('enabled')is True and cfg['version']==1 and
+                cfg['artifact_root']==str(self.stage['ROOT']) and cfg['dispatcher_mode']=='join-existing' and
+                cfg['vm_admission_limits']=={'max_vm_bytes':60000000000,'max_cpu':10,'max_memory_bytes':34359738368} and
+                type(cfg['wait_seconds'])is int and 1<=cfg['wait_seconds']<=10800,
+                'same normal queue/resource/wait contract')
+        admission=self.stage['load_pinned'](operand['runtime_admission'])
+        require(admission.get('sourceBuildEnabled')is True,'reviewed source-build policy required')
+        self.stage['verify_original_operand'](operand,cfg['max_input_bytes'])
+        for pin in operand['inputs']:self.stage['artifact_read'](pin,cfg['max_input_bytes'])
+        manifest=self.stage['absolute_manifest'](self.stage['load_pinned'](operand['manifest']))
+        require(len(manifest['jobs'])==1 and [j['id']for j in manifest['jobs']]==operand['job_ids'],
+                'one exact normal compiler job')
+        job=manifest['jobs'][0]
+        require(job['owner']=='exe' and job['platform']=='ubuntu' and
+                job['resources']==['opemos-ubuntu-gui-virtual-usb'] and
+                0<job['cores']<=4 and 0<job['memory']<=25769803776 and
+                all(job['approval'][k]==operand['runtime_admission'][k]for k in('path','sha256')),
+                'unchanged exclusive Ubuntu/resource/source admission')
+        rows=self.stage['queue_status'](cfg)
+        require(job['id']not in rows,'source-build job cannot be replayed')
+        staging=Path(prepared['staging_path']);self.stage['root_guard']()
+        require(staging.parent==self.stage['ROOT'] and self.stage['RUN'].fullmatch(staging.name) and
+                staging.name.endswith(request['nonce']) and not staging.exists(),'fresh source-build stage')
+        staging.mkdir(mode=0o700);self.stage['create_json'](staging/'.lock',{})
+        lock=self.stage['owned_lock'](staging/'.lock')
+        import fcntl
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        self.stage['create_json'](staging/'.owned.json',{'schema':1,'name':staging.name,
+            'uid':os.getuid(),'created':int(time.time()),'expires':int(time.time())+14400,
+            'result_max_bytes':cfg['result_contract']['max_bytes'],'job_ids':[job['id']],
+            'source_commit':request['source_commit'],'nonce':request['nonce']})
+        progress={}
+        try:
+            submitted=self.stage['queue_call'](cfg,'submit',[operand['manifest']])
+            self.stage['create_json'](staging/'submitted.json',submitted)
+            try:rows=self.stage['wait_jobs'](cfg,[job['id']],[operand['manifest']],
+                    min(self.deadline,time.monotonic()+cfg['wait_seconds']),progress)
+            finally:self.stage['create_json'](staging/'queue-wait.json',progress)
+            row=rows[job['id']]
+            lifecycle=(row.get('result')or{}).get('terminalLifecycle',{})
+            require(row['state']=='passed' and lifecycle.get('phase')=='CLOSED' and
+                    lifecycle.get('reservationRetained')is False,'actual source job must finish normally')
+            collected=hook(self.profile,dict(request,action='collect'),folder/'post-terminal')
+            raw=raw_file(collected['source_result_path'],cfg['result_contract']['max_bytes'])
+            actual=strict(raw)
+            require(actual['kind']=='NORMAL_UBUNTU_SOURCE_BUILD_JOB_V1' and
+                    actual['nonce']==request['nonce'] and actual['source_commit']==request['source_commit'] and
+                    actual['candidate_source_commit']==expected['source_commit'] and
+                    actual['first_failure']is None and actual['qemu_reaped']is True and
+                    actual['private_storage_closure_verified']is True and
+                    actual['originals_unchanged_after']is True and actual['SourceBuildAccepted']is True and
+                    not actual.get('secondary_failures'),
+                    'actual guest compiler, native closure and original preservation proof')
+            binding=strict(raw_file(Path(collected['source_result_path']).with_name('binding.json'),1048576,owner=os.getuid()))
+            require(binding['nonce']==request['nonce']and binding['pid']==actual['qemu_pid']and
+                    binding['queue_unit']==row['unit']and
+                    binding['artifact_source']==expected['source_commit']and
+                    binding['vm_name']=='opemos-robot-ubuntu-'+request['nonce'],
+                    'actual original admitted QEMU/queue/source identity')
+            package=actual['source_package']
+            self.stage['artifact_read']({'path':package['path'],'sha256':package['sha256'],
+                                         'size':package['bytes']},2147483648)
+            return {'status':'passed','identity':request,'source_input':expected,
+                    'queue_job_id':job['id'],'canonical':row,'package':package,
+                    'guest_build':actual['guest_build'],'normal_job_result':actual,
+                    'qemu':{k:binding[k]for k in('pid','start_ticks','host_boot_id','queue_unit','queue_invocation_id','vm_name')},
+                    'GUIOrSteamOSAcceptance':False}
+        except Exception:
+            # Correlated current results only; never substitute a historical
+            # success or release an unknown reservation while collecting FIRST.
+            self.source_failure={'queue_job_id':job['id'],'closure':'UNKNOWN'}
+            try:
+                current=hook(self.profile,dict(request,action='collect'),folder/'failed-source-collection')
+                observed=strict(raw_file(current['source_result_path'],cfg['result_contract']['max_bytes']))
+                if observed.get('nonce')==request['nonce']:
+                    self.source_failure.update(first=observed.get('first_failure'),
+                        guest_event=observed.get('guest_source_event'),qemu_pid=observed.get('qemu_pid'),
+                        qemu_reaped=observed.get('qemu_reaped'),closure=observed.get('closure','UNKNOWN'))
+            except Exception as secondary:self.source_failure['collection_error']=type(secondary).__name__
+            raise
+        finally:
+            fcntl.flock(lock,fcntl.LOCK_UN);os.close(lock)
 
     def transaction(self,kind,subject,expected_producer=None,candidate_archive=None):
         candidate=None if expected_producer is None else {'descriptor':expected_producer,'archive':candidate_archive}
