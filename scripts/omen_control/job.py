@@ -5,6 +5,7 @@ Requires a separately issued exact queue approval and Root-installed broker.
 No direct invocation from a GitHub checkout is authorized.
 """
 import hashlib
+import contextlib
 import html
 import json
 import errno
@@ -593,35 +594,35 @@ def main():
         # The independent observer must own the virtio socket before the
         # bootstrap can fail and emit a typed refusal. It never activates the
         # chooser; its QMP pointer comes only after verified native READY.
-        obs_sock=CONTROL.connect_owned(str(obs),q.pid,200)
-        boot_text(control,'bash /media/opemosgui/OPROBOT/start.sh\n')
-        result['post_bootstrap_frame']=capture_bootstrap(control,300,root/'post-bootstrap.png')
-        control.close();control=None  # one actual QMP connection at a time
-        native_q=CONTROL.QMP(CONTROL.connect_owned(str(qmp),q.pid))
-        result['effects'].append('guest-terminal-observer-bootstrap-only')
-        ready=CONTROL.next_native_event(obs_sock,nonce,result)
-        need(ready.get('kind')=='READY'and ready.get('port_custody',{}).get('sudo_numeric')in('0','NOT_NEEDED'),
-             'actual source-bound guest observer READY/port custody')
-        guest=dict(C['guest_operation']);guest['input_path']=ready['input_path']
-        need(ready['input_carrier']['serial']==C['guest_operation']['input_carrier_serial']==nonce[:20] and
-             ready['input_carrier']['relativePath']==guest['input_relative_path'],
-             'actual original guest carrier/path belongs to this admitted operation')
-        pipeline=CONTROL.Pipeline(binding,guest,native_q,obs_sock,ready,root)
-        pipeline.end=WHOLE_END  # original job clock; never restart it for the GUI
-        def current_output_and_metadata():
-            check_qemu_output(qemu_streams);metadata_guard(192*1024**2)
-        pipeline.check=current_output_and_metadata
-        C['virtualUSBIdentity']=backing['identity']
-        robot=CONTROL.RobotPipeline(pipeline,C,C['engineRoot'],OWNED)
-        pipeline.robot_click=robot.click
-        try:
-            result['GUI']=pipeline.build_write()
-            result['GUI']['normalRobotEvidence']=robot.complete()
-        finally:
-            if 'GUI'not in result:
-                result['partialGUIActions']=pipeline.actions
-                result['partialNativeObservations']=pipeline.observations
-            obs_sock.close();pipeline.q.close()
+        with contextlib.ExitStack() as channels:
+            obs_sock=channels.enter_context(CONTROL.connect_owned(str(obs),q.pid,200))
+            boot_text(control,'bash /media/opemosgui/OPROBOT/start.sh\n')
+            result['post_bootstrap_frame']=capture_bootstrap(control,300,root/'post-bootstrap.png')
+            control.close();control=None  # one actual QMP connection at a time
+            native_q=channels.enter_context(CONTROL.owned_qmp(str(qmp),q.pid))
+            result['effects'].append('guest-terminal-observer-bootstrap-only')
+            ready=CONTROL.next_native_event(obs_sock,nonce,result)
+            need(ready.get('kind')=='READY'and ready.get('port_custody',{}).get('sudo_numeric')in('0','NOT_NEEDED'),
+                 'actual source-bound guest observer READY/port custody')
+            guest=dict(C['guest_operation']);guest['input_path']=ready['input_path']
+            need(ready['input_carrier']['serial']==C['guest_operation']['input_carrier_serial']==nonce[:20] and
+                 ready['input_carrier']['relativePath']==guest['input_relative_path'],
+                 'actual original guest carrier/path belongs to this admitted operation')
+            pipeline=CONTROL.Pipeline(binding,guest,native_q,obs_sock,ready,root)
+            pipeline.end=WHOLE_END  # original job clock; never restart it for the GUI
+            def current_output_and_metadata():
+                check_qemu_output(qemu_streams);metadata_guard(192*1024**2)
+            pipeline.check=current_output_and_metadata
+            C['virtualUSBIdentity']=backing['identity']
+            robot=CONTROL.RobotPipeline(pipeline,C,C['engineRoot'],OWNED)
+            pipeline.robot_click=robot.click
+            try:
+                result['GUI']=pipeline.build_write()
+                result['GUI']['normalRobotEvidence']=robot.complete()
+            finally:
+                if 'GUI'not in result:
+                    result['partialGUIActions']=pipeline.actions
+                    result['partialNativeObservations']=pipeline.observations
         need(result['GUI']['output']['value']['bytes']>0,'actual completed guest output required')
         result['effects'].append('actual-visible-GUI-Build-and-virtual-USB-write')
         # The complete owned-VM finalizer below runs on both success and fault.
@@ -646,6 +647,9 @@ def main():
                 control=qmp_connect(qmp,q.pid,CONTROL.connect_owned,q)
                 need(qmp_call(control,9,'query-name')['name']==name,
                      'finalizer VM name differs')
+                if first is not None:
+                    try:result['failure_frame']=capture_bootstrap(control,301,root/'failure.png')
+                    except Exception as error:secondary.append('failure screenshot: '+type(error).__name__+': '+str(error))
                 try:qmp_call(control,10,'system_powerdown')
                 except (BrokenPipeError,ConnectionResetError,EOFError):
                     secondary.append('graceful QMP ACK UNKNOWN; exact process closure still required')

@@ -80,6 +80,84 @@ sel.close()
                 child.communicate(timeout=5)
             os.close(directory)
 
+    def test_ready_failure_and_bad_greeting_release_qmp_before_normal_finalizer(self):
+        import subprocess,sys
+        program="""import os,socket,json
+os.umask(0o077)
+s=socket.socket(socket.AF_UNIX);s.bind('qmp.sock');s.listen(1);s.settimeout(5)
+print('READY',flush=True)
+for attempt in range(3):
+ c,_=s.accept();c.settimeout(3)
+ with c:
+  with c.makefile('rb')as f:
+   c.sendall((b'{}\\n'if attempt==0 else b'{"QMP":{}}\\n'))
+   if attempt:
+    request=json.loads(f.readline());c.sendall((json.dumps({'return':{},'id':request['id']})+'\\n').encode())
+   if attempt==2:
+    request=json.loads(f.readline());c.sendall((json.dumps({'return':{'name':'original-owned-VM'},'id':request['id']})+'\\n').encode())
+   assert f.read(1)==b'', 'previous QMP client must close before next finalizer client'
+s.close()
+"""
+        directory=os.open(self.root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+        child=None
+        try:
+            child=subprocess.Popen([sys.executable,'-I','-B','-c',program],
+                cwd=f'/proc/self/fd/{directory}',pass_fds=(directory,),
+                stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            self.assertEqual(child.stdout.readline(),b'READY\n')
+            with self.assertRaisesRegex(RuntimeError,'QMP greeting absent'):
+                with self.connection_control.owned_qmp(self.root/'qmp.sock',child.pid):
+                    self.fail('bad greeting must refuse')
+            with self.assertRaisesRegex(TimeoutError,'original observer READY failure'):
+                with self.connection_control.owned_qmp(self.root/'qmp.sock',child.pid):
+                    raise TimeoutError('original observer READY failure')
+            with self.connection_control.owned_qmp(self.root/'qmp.sock',child.pid)as finalizer:
+                self.assertEqual(finalizer.call('query-name'),{'name':'original-owned-VM'})
+            out,err=child.communicate(timeout=5)
+            self.assertEqual((child.returncode,out,err),(0,b'',b''))
+        finally:
+            if child is not None:
+                if child.poll()is None:child.kill()
+                child.communicate(timeout=5)
+            os.close(directory)
+
+    def test_generated_pipeline_bootstrap_preserves_real_failure_and_bounded_guest_logs(self):
+        import base64,subprocess
+        source=Path(__file__).resolve().parents[1]/'scripts/omen_control/prepare_observer_iso.py'
+        spec=importlib.util.spec_from_file_location('generated_bootstrap',source)
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        nonce='a'*32;digest='b'*64;commit='c'*40
+        operation={'nonce':nonce,'source_commit':commit,'package_sha256':digest,
+                   'usb_serial':'opemos-'+nonce,'native_executable_sha256':'d'*64}
+        descriptor={'source_commit':commit,'package_sha256':digest,'executable_sha256':'d'*64}
+        config={'nonce':nonce,'source_commit':commit,'candidate':{'descriptor':descriptor,'archive':{}},
+                'prepared_directory':str(self.root/'prepared'),'guest_operation':operation,
+                'observer_source':{},'expanded_limit':4096}
+        def iso(argv,**kwargs):
+            Path(argv[argv.index('-o')+1]).write_bytes(b'unit-medium-only')
+            return subprocess.CompletedProcess(argv,0,b'',b'')
+        with mock.patch.object(module,'extract_candidate',return_value={'package':{'name':'app.AppImage'}}),\
+             mock.patch.object(module,'held_input',return_value=b'# exact observer fixture'),\
+             mock.patch.object(module.subprocess,'run',side_effect=iso):
+            module.pipeline_medium(config)
+        script=(self.root/'prepared/start.sh').read_text()
+        trap=script[script.index('on_exit() {'):script.index('node=$(readlink')]
+        logs=self.root/'guest-logs';logs.mkdir(mode=0o700)
+        app=b'original app failure with quotes \" and newline\n'*300
+        observer=b'actual native window absent\n'
+        (logs/'app.log').write_bytes(app);(logs/'observer.log').write_bytes(observer)
+        port=self.root/'typed-port';port.write_bytes(b'')
+        run=subprocess.run(['/bin/bash','-c',
+             'set -euo pipefail\nowned=$1;node=$2;nonce=$3;phase=native_app_and_observer;port_ready=1\n'+trap+'exit 7\n',
+             'generated-bootstrap',str(logs),str(port),nonce],capture_output=True,timeout=5)
+        self.assertEqual(run.returncode,7)
+        actual=json.loads(port.read_bytes())
+        self.assertEqual((actual['kind'],actual['nonce'],actual['phase'],actual['numeric']),
+                         ('BOOTSTRAP_REFUSED',nonce,'native_app_and_observer',7))
+        self.assertEqual(base64.b64decode(actual['app_log_base64']),app[-8192:])
+        self.assertEqual(base64.b64decode(actual['observer_log_base64']),observer)
+        self.assertLess(port.stat().st_size,65536)
+
     def test_private_socket_custody_and_exact_peer_remain_required(self):
         import socket
         path=self.root/'qmp.sock';server=socket.socket(socket.AF_UNIX)
