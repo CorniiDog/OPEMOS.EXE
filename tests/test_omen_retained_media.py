@@ -4297,6 +4297,55 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                     self.assertEqual(saved.call_count,2)
                     self.assertEqual(len(list(Path(directory).glob('resumed-control-*.json'))),1)
 
+    def test_actual_delayed_create_ack_uses_native_finite_lease_without_ready_publication(self):
+        """Real run_cycle and heartbeat consumer; external native facts MODELED."""
+        from unittest import mock
+        import time
+        heartbeat=(SOURCE/'normal_heartbeat.py').read_bytes()
+        for fault in(None,'expired','source','job','native','listener','unknown'):
+            _,r=self.modules();policy,state,probe,_,_=self.pending(r);now=int(time.time())
+            policy.update(renewLeadSeconds=19000,controlBrokerSHA256='f'*64,
+                          heartbeatProducerSHA256=hashlib.sha256(heartbeat).hexdigest())
+            state['lastOutcome']['action']='CREATE';original=copy.deepcopy(state['lastOutcome'])
+            probe.update(runnerOnline=True,atUnix=now,controlBrokerSHA256=policy['controlBrokerSHA256'],
+                queueSourceSHA256=policy['queueSourceSHA256'],runnerManifestSHA256='9'*64,
+                runnerId=21,registeredRunnerId=21)
+            probe['control'].update(state='running',terminalLifecycle=None,reservationRetained=True,
+                leaseExpiresUnix=now+1000,**{k:True for k in
+                ('listenerAlive','controllerAlive','workerAlive','ownUnitBound')})
+            connected=copy.deepcopy(probe);connected.update(kind='ROOT_RUNNER21_CONNECTIVITY_PROBE_V1',
+                sourceWritersBusy=False,unclassifiedRuntimeActors=[],connectivityProof=dict(
+                    kind='CONTROL_CONNECTIVITY_NATIVE_UNITS_R1',operationOrReleaseAuthorized=False,
+                    ownJobId=probe['control']['jobId'],VMReadiness='NOT_OBSERVED'))
+            if fault=='expired':probe['control']['leaseExpiresUnix']=connected['control']['leaseExpiresUnix']=now-1
+            elif fault=='source':connected['queueSourceSHA256']='0'*64
+            elif fault=='job':connected['control']['jobId']='root-github-robot-control-'+'0'*32
+            elif fault=='native':connected['connectivityProof']['ownJobId']='foreign'
+            elif fault=='listener':connected['control']['listenerAlive']=False
+            elif fault=='unknown':connected['unclassifiedRuntimeActors']=['unproven actor']
+            frame={'reaped':True,'numeric':0,'eof':{'stdout':True,'stderr':True},
+                   'first':None,'stdout':r.canonical(probe),'stderr':b''}
+            with self.subTest(fault=fault),tempfile.TemporaryDirectory()as directory, \
+                 mock.patch.object(r,'ROOT',Path(directory)), \
+                 mock.patch.object(r,'load_code',side_effect=lambda p,s:heartbeat if Path(p).name=='normal_heartbeat.py'else b'modeled authenticated probe'), \
+                 mock.patch.object(r,'start_held_python',return_value=object())as children, \
+                 mock.patch.object(r,'capture',return_value=frame),mock.patch.object(r,'validate_probe'), \
+                 mock.patch.object(r,'current_connection_probe',return_value=connected), \
+                 mock.patch.object(r.subprocess,'run',side_effect=AssertionError('no publication or lifecycle effect child')), \
+                 mock.patch.object(r,'write_state')as saved:
+                if fault:
+                    with self.assertRaises(RuntimeError):r.run_cycle(policy,state,now)
+                    self.assertIsNotNone(state['inflight']);saved.assert_not_called()
+                else:
+                    result=r.run_cycle(policy,state,now)
+                    self.assertEqual(result['decision'],'RECONCILED_MATERIALIZED_CREATE')
+                    self.assertEqual(result['effect'],'RECOVERY_BOOKKEEPING_ONLY')
+                    self.assertFalse(result['heartbeatPublished']);self.assertIsNone(state['inflight'])
+                    self.assertEqual(state['lastOutcome']['phase'],'RUNNING_RENEWAL_DUE')
+                    self.assertEqual(state['lastOutcome']['originalOutcome'],original)
+                    self.assertEqual((state['completedCycles'],state['totalCycles']),(5,258))
+                    saved.assert_called_once();children.assert_called_once()
+
     def test_remote_current_controller_definition_uses_existing_authenticated_carrier(self):
         from unittest import mock
         cycle,r=self.modules()

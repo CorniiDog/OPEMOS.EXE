@@ -1043,15 +1043,19 @@ def run_cycle(policy, state, now):
         # proven live renewal may already be due for its next ordinary renewal.
         # Preserve the real heartbeat's whole-job lease horizon; do not advertise
         # ready, invent readback or let that publication veto native bookkeeping.
-        renewal_due=(lineage is not None and old_outcome['action']in('GRACEFUL_RENEW','RECONCILE_CLOSED') and
-                     probe['control']['leaseExpiresUnix']<=now+policy['renewLeadSeconds'])
+        heartbeat_raw=load_code(ROOT/'normal_heartbeat.py',policy['heartbeatProducerSHA256'])
+        heartbeat=types.ModuleType('reviewed_materialized_heartbeat')
+        exec(compile(heartbeat_raw,str(ROOT/'normal_heartbeat.py'),'exec'),heartbeat.__dict__)
+        connected=current_connection_probe(policy)
+        joined=heartbeat.join_current_presence(probe,connected)
+        # A delayed CREATE acknowledgment can have the same short but still
+        # valid lease as a delayed renewal. Authenticate actual native presence
+        # without publishing readiness or requiring a fresh whole-job horizon.
+        heartbeat.state_from_current(connected,policy,now,nonce,presence_only=True)
+        renewal_due=probe['control']['leaseExpiresUnix']<=now+policy['renewLeadSeconds']
         published=None
         if not renewal_due:
-            heartbeat_raw=load_code(ROOT/'normal_heartbeat.py',policy['heartbeatProducerSHA256'])
-            heartbeat=types.ModuleType('reviewed_materialized_heartbeat')
-            exec(compile(heartbeat_raw,str(ROOT/'normal_heartbeat.py'),'exec'),heartbeat.__dict__)
-            connected=current_connection_probe(policy)
-            published=heartbeat.publish_once(heartbeat.state_from_current(heartbeat.join_current_presence(probe,connected),policy,now,nonce))
+            published=heartbeat.publish_once(heartbeat.state_from_current(joined,policy,now,nonce))
             need(published.get('readbackCurrent') is True and published.get('recoveryNonce')==nonce,'same nonce materialized heartbeat readback')
         result_sha=None if published is None else published['stateSHA256']
         state['inflight']=None;state['completedCycles']+=1;state['totalCycles']+=1;state['failureCount']=0;state['nextAttemptUnix']=now+60
