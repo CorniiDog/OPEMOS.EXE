@@ -2938,23 +2938,42 @@ print(json.dumps({'ordinaryUID1000':True,'isolatedInstalledQueue':True,'runtimeM
                         elif name=='runner_return_actual_probe':value.observe=recovery_frame
                         elif name=='media_normal_client':value.execute=modeled_client
                         return value
+                    actual_return=installed_window.verify_runner_return
                     for failed in (False,True):
-                        clock[0]=0.0;model_live[0]=True;vm_first[0]=failed;actual_attempt=uuid.uuid4().hex
-                        created.append(Path(profile['evidenceRoot'])/actual_attempt)
-                        with mock.patch.object(installed_window,'ROOT',modeled_root), \
-                             mock.patch.object(installed_window,'module',side_effect=finally_modules), \
-                             mock.patch.object(installed_window.time,'monotonic',side_effect=lambda:clock[0]), \
-                             mock.patch.object(installed_window.time,'time',side_effect=lambda:wall+clock[0]), \
-                             mock.patch.object(installed_window.time,'sleep',side_effect=sleep):
-                            if failed:
-                                with self.assertRaisesRegex(RuntimeError,'explicit modeled VM FIRST'):
-                                    installed_window.execute(sealed['windowProfilePin'],actual_attempt)
-                            else:installed_window.execute(sealed['windowProfilePin'],actual_attempt)
-                        final=json.loads((Path(profile['evidenceRoot'])/actual_attempt/'final.json').read_bytes())
-                        self.assertTrue(final['runnerRecovery']['runnerRecoveryVerified'])
-                        self.assertEqual(final['runnerRecovery']['windowFirst'],final['first'])
-                        self.assertEqual(final['first'],'explicit modeled VM FIRST'if failed else None)
-                        self.assertTrue(timer_active[0]);self.assertFalse(restore_created[0])
+                        for return_mode in ('verified','false','raise'):
+                            clock[0]=0.0;model_live[0]=True;vm_first[0]=failed
+                            timer_active[0]=True;restore_created[0]=False;actual_attempt=uuid.uuid4().hex
+                            created.append(Path(profile['evidenceRoot'])/actual_attempt)
+                            def return_outcome(pin,attempt,deadline):
+                                fd=os.open(mutex,os.O_RDONLY|os.O_NOFOLLOW)
+                                try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                                finally:os.close(fd)
+                                self.assertEqual(deadline,2700.0)
+                                if return_mode=='verified':return actual_return(pin,attempt,deadline)
+                                if return_mode=='raise':raise RuntimeError('explicit modeled recovery exception')
+                                return {'runnerRecoveryVerified':False,
+                                    'first':{'reason':'explicit modeled unverified return'}}
+                            with mock.patch.object(installed_window,'ROOT',modeled_root), \
+                                 mock.patch.object(installed_window,'module',side_effect=finally_modules), \
+                                 mock.patch.object(installed_window,'verify_runner_return',side_effect=return_outcome), \
+                                 mock.patch.object(installed_window.time,'monotonic',side_effect=lambda:clock[0]), \
+                                 mock.patch.object(installed_window.time,'time',side_effect=lambda:wall+clock[0]), \
+                                 mock.patch.object(installed_window.time,'sleep',side_effect=sleep):
+                                if failed:
+                                    with self.assertRaisesRegex(RuntimeError,'explicit modeled VM FIRST'):
+                                        installed_window.execute(sealed['windowProfilePin'],actual_attempt)
+                                elif return_mode!='verified':
+                                    with self.assertRaisesRegex(RuntimeError,'normal runner return unverified'):
+                                        installed_window.execute(sealed['windowProfilePin'],actual_attempt)
+                                else:installed_window.execute(sealed['windowProfilePin'],actual_attempt)
+                            final=json.loads((Path(profile['evidenceRoot'])/actual_attempt/'final.json').read_bytes())
+                            self.assertEqual(final['runnerRecovery']['runnerRecoveryVerified'],return_mode=='verified')
+                            if return_mode=='verified':
+                                self.assertEqual(final['runnerRecovery']['windowFirst'],final['first'])
+                            self.assertEqual(final['first'],'explicit modeled VM FIRST'if failed else None)
+                            self.assertTrue(timer_active[0])
+                            self.assertEqual(restore_created[0],return_mode!='verified')
+
         finally:
             if parent_identity is not None:
                 self.assertEqual(media.identity(os.lstat(public_parent)),parent_identity)

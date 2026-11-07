@@ -188,7 +188,8 @@ def execute(profile_pin, attempt):
             try: recovery = verify_runner_return(profile_pin, attempt, window_deadline)
             except BaseException as error:
                 recovery = {'runnerRecoveryVerified':False,'first':{'type':type(error).__name__,'reason':str(error)}}
-        if backstop and not closure_errors:
+        if (backstop and not closure_errors and type(recovery)is dict
+                and recovery.get('runnerRecoveryVerified')is True):
             try: command('retire-backstop',['/usr/bin/systemctl','stop',restore+'.timer'])
             except BaseException as error: closure_errors.append(str(error))
         record('final.json',{'first':None if first is None else str(first),'cleanup':closure_errors,
