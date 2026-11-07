@@ -92,7 +92,7 @@ def same_nbd_owner(owner):
     need((SYS/'pid').read_text().strip()==str(owner['sysfs_pid']) and
          nbd_process_identity(owner['sysfs_pid'])=={k:owner[k]for k in
              ('pid','start_ticks','argv','sysfs_pid','sysfs_start_ticks','cgroup')},
-         'NBD client task/process birth/source changed before exact operation')
+         'NBD birth/argv changed before exact operation: client task/process binding')
 
 def attach(cow,readonly,offset=None):
     args=['/usr/bin/sudo','-n','/usr/bin/qemu-nbd']

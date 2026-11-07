@@ -114,7 +114,20 @@ class OwnedNBDDisconnect(unittest.TestCase):
                            stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         path=Path('/proc')/str(p.pid)
         owner={'pid':p.pid,'start_ticks':(path/'stat').read_text().rsplit(')',1)[1].split()[19],
-               'argv':[os.fsdecode(x)for x in(path/'cmdline').read_bytes().split(b'\0')if x]}
+               'argv':[os.fsdecode(x)for x in(path/'cmdline').read_bytes().split(b'\0')if x],
+               'sysfs_pid':p.pid,'cgroup':(path/'cgroup').read_text()}
+        owner['sysfs_start_ticks']=owner['start_ticks']
+        def task_identity(tid):
+            # This ordinary-user fixture models the Root/device binding only.
+            # Its process birth/argv, PIDFD and actual exit/reap remain real;
+            # the protected Root test covers the real Root/TID/UID1000 join.
+            self.assertEqual(tid,p.pid)
+            tick=(path/'stat').read_text().rsplit(')',1)[1].split()[19]
+            return {'pid':p.pid,'start_ticks':tick,'sysfs_pid':p.pid,
+                    'sysfs_start_ticks':tick,'cgroup':(path/'cgroup').read_text(),
+                    'argv':[os.fsdecode(x)for x in(path/'cmdline').read_bytes().split(b'\0')if x]}
+        binding=mock.patch.object(self.helper,'nbd_process_identity',side_effect=task_identity)
+        binding.start();self.addCleanup(binding.stop)
         (self.sysfs/'pid').write_text(str(p.pid))
         def close():
             if p.poll()is None:p.communicate(b'x',timeout=5)
