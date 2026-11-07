@@ -1077,23 +1077,37 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                     self.assertEqual(saved_result['preservedReservationEpoch']['kind'],'OPEMOS_PINNED_TERMINAL_EPOCH_R2')
                     epoch=q.terminal_history_load(db,saved_result['preservedReservationEpoch'],retained,invocations[own])
                     self.assertTrue(any(r.get('kind')==q.HISTORY_CLOSED_ROW_KIND for r in epoch['rows']))
-                    pending=dict(closed_spec,id='newer-pending',resources=['newer-pending'])
-                    q.enqueue(db,[pending])  # genuine later enqueue, no allocation or fake epoch
+                    pending=dict(closed_spec,id='newer-pending',platform='ubuntu',resources=['newer-pending'])
+                    never_started=dict(pending,id='newer-closed-unstarted',resources=['newer-closed-unstarted'])
+                    q.enqueue(db,[pending,never_started])  # genuine later enqueue, no fake epoch
+                    lock=os.open(root/'worker.lock',os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+                    os.fchmod(lock,0o600);os.close(lock)
+                    q.fail_unstarted(root,db,[never_started])  # exact normal later-job failure producer
                     pending_before=dict(db.execute("SELECT * FROM jobs WHERE id='newer-pending'").fetchone())
                     other_before=[dict(r)for r in db.execute("SELECT * FROM jobs WHERE id!='failed-ubuntu' ORDER BY rowid")]
                     current_epoch=q.terminal_pool_epoch(db,q.pool_rows(db,
                         db.execute('SELECT * FROM jobs ORDER BY rowid').fetchall()),proof(None))
                     q=candidate
-                    for fault in ('edit','delete','reorder','allocated','started','result','binding','unknown'):
+                    for fault in ('edit','delete','reorder','allocated','started','result','binding','unknown',
+                                  'launched','reserved','unfinished','foreign-owner','unexpected-result'):
                         bad=copy.deepcopy(current_epoch)
                         if fault=='edit':bad['rows'][1]['spec']='{}'
                         elif fault=='delete':bad['rows'].pop(1)
                         elif fault=='reorder':bad['rows'][1:3]=reversed(bad['rows'][1:3])
                         elif fault=='allocated':bad['rows'][-1]['unit']=peer
                         elif fault=='started':bad['rows'][-1]['started']=time.time()
-                        elif fault=='result':bad['rows'][-1]['result']='{}'
+                        elif fault=='result':bad['rows'][-2]['result']='{}'
                         elif fault=='binding':bad['rows'][-1]['_poolBinding']={'fixture':'forbidden'}
-                        else:bad['pool']['unknownReservationsRetained']=[peer]
+                        elif fault=='unknown':bad['pool']['unknownReservationsRetained']=[peer]
+                        elif fault=='unfinished':bad['rows'][-1]['finished']=None
+                        elif fault=='foreign-owner':
+                            changed=json.loads(bad['rows'][-1]['spec']);changed['owner']='foreign';bad['rows'][-1]['spec']=q.canonical(changed)
+                        else:
+                            changed=json.loads(bad['rows'][-1]['result'])
+                            if fault=='launched':changed['launched']=True
+                            elif fault=='reserved':changed['terminalLifecycle']['reservationRetained']=True
+                            else:changed['unexpected']='field'
+                            bad['rows'][-1]['result']=q.canonical(changed)
                         with self.subTest(fault=fault),self.assertRaises(ValueError):
                             q.verify_terminal_pool_transition(epoch,bad,retained,False)
                     repaired=q.SystemdBackend(root,cfg);repaired._validate_pool_cut=complete_cut

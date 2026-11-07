@@ -2176,10 +2176,23 @@ def verify_terminal_pool_transition(initial, current, owned_row, collected, *, r
     # CPU, invocation or process and must not prevent this failed unit closing.
     # Every original row/binding/config and the whole native pool stay exact.
     for added in current['rows'][len(original_ids):]:
-        require({'id','state','unit','started','finished','result','cpus','_poolBinding'}<=set(added)
-                and added['state']=='pending'and all(added[k]is None for k in
-                    ('unit','started','finished','result','_poolBinding'))and added['cpus']in(None,'[]'),
-                'Only new unstarted unallocated pending metadata may accompany own finalization')
+        require({'id','state','unit','started','finished','result','cpus','_poolBinding','spec'}<=set(added)
+                and all(added[k]is None for k in('unit','started','_poolBinding'))
+                and added['cpus']in(None,'[]'),'New appended job must never have allocated a unit or resource')
+        pending=added['state']=='pending'and added['finished']is None and added['result']is None
+        unstarted=False
+        if added['state']=='failed'and type(added['finished'])in(int,float)and 0<=added['finished']<=time.time()+5:
+            # Existing fail_unstarted may close a later pending Actions job
+            # while this older terminal reservation is held. Accept only its
+            # exact never-launched CLOSED shape, preserving the full new row.
+            result=json.loads(added['result']);spec=json.loads(added['spec'])
+            unstarted=type(result)is dict and type(result.get('reason'))is str and bool(result['reason'])and result=={
+                'reason':result['reason'],'launched':False,'reservationRetained':False,
+                'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False,'automaticRetryAuthorized':False}}
+            unstarted=unstarted and result['launched']is False and result['reservationRetained']is False and all(
+                result['terminalLifecycle'][k]is False for k in('reservationRetained','automaticRetryAuthorized'))
+            unstarted=unstarted and type(spec)is dict and spec.get('owner')=='exe'and spec.get('platform')=='ubuntu'
+        require(pending or unstarted,'Only new unallocated pending or normally CLOSED never-started metadata may accompany own finalization')
     old={r['id']:terminal_closed_row(r)for r in initial['rows']};new={r['id']:terminal_closed_row(r)for r in current['rows']}
     require(all(new[k]==v for k,v in old.items()if k!=job),'Other full job/spec/cpus/result/finished/resource row changed')
     require(new[job]==terminal_json_domain(owned_row), 'Current complete pending original row changed')
