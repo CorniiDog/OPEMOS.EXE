@@ -355,6 +355,7 @@ def private_snapshot(validate=None):
     return rows,bindings,config
 
 def private_queue(source_raw,observer_capture=None,pool_capture=None,implementation_pin=None):
+    state=QUEUE/'state'
     if implementation_pin is None:
         implementation_pin=root_policy().get('healthImplementationDefinitionPin')
     def validate(db,rows,bindings,config):

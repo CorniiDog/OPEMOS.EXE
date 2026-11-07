@@ -3170,6 +3170,46 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             result,value,spawns,_,publishes,writes=execute(bad)
             self.assertIs(result,first);self.assertEqual((spawns,publishes,writes),(1,0,0));self.assertEqual(value,before)
 
+    @unittest.skipUnless(os.geteuid()==0,'actual Root private snapshot of UID1000 SQLite')
+    def test_actual_full_health_private_snapshot_reaches_original_state_backend_without_live_SQL_write(self):
+        from unittest import mock
+        import importlib.util,sqlite3,contextlib
+        spec=importlib.util.spec_from_file_location('full_health_actual_snapshot',SOURCE/'normal_probe.py')
+        n=importlib.util.module_from_spec(spec);spec.loader.exec_module(n)
+        with tempfile.TemporaryDirectory()as tmp:
+            base=Path(tmp);queue=base/'queue';state=queue/'state';state.mkdir(parents=True,mode=0o700)
+            private=base/'root-private';private.mkdir(mode=0o700)
+            path=state/'queue.sqlite3';db=sqlite3.connect(path)
+            db.executescript('CREATE TABLE jobs(id TEXT,state TEXT,result TEXT);CREATE TABLE pool_unit_bindings(job_id TEXT,value TEXT);CREATE TABLE config(id INTEGER,value TEXT);')
+            original={'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False},'originalUnknown':'preserved'}
+            db.execute('INSERT INTO jobs VALUES(?,?,?)',('actual-failed-original','failed',json.dumps(original)))
+            db.execute('INSERT INTO config VALUES(1,?)',(json.dumps({'manager':'system','fixture':'actual snapshot state'}),));db.commit();db.close()
+            os.chown(path,1000,1000);path.chmod(0o600);before=path.read_bytes();identity=n.full9(path.stat());calls=[]
+            class Backend:
+                def __init__(self,root,cfg):
+                    self_test.assertEqual(root,state);self_test.assertEqual(cfg['manager'],'system');calls.append(root)
+                def validate_pool(self,rows):
+                    self_test.assertEqual(rows,[{'id':'actual-failed-original','state':'failed','result':json.dumps(original)}])
+                    return {'admitted':True,'unknownReservationsRetained':[]}
+            self_test=self
+            q=types.SimpleNamespace(SystemdBackend=Backend,pool_rows=lambda db,rows:[dict(v)for v in rows])
+            @contextlib.contextmanager
+            def selected(raw,pin):
+                self.assertEqual(raw,b'authenticated selected queue source');self.assertEqual(pin,{'fixture':'separately bound implementation'})
+                yield q
+            with mock.patch.object(n,'QUEUE',queue),mock.patch.object(n,'PRIVATE_DIR',private), \
+                 mock.patch.object(n,'health_queue',side_effect=selected):
+                pool=[];rows,bindings,config=n.private_queue(b'authenticated selected queue source',
+                    implementation_pin={'fixture':'separately bound implementation'},pool_capture=pool)
+                self.assertEqual(rows[0]['id'],'actual-failed-original');self.assertEqual(bindings,[])
+                self.assertEqual(pool,[{'admitted':True,'unknownReservationsRetained':[]}])
+                self.assertEqual(calls,[state]);self.assertEqual(list(private.iterdir()),[])
+                self.assertEqual((path.read_bytes(),n.full9(path.stat())),(before,identity))
+                with mock.patch.object(Backend,'validate_pool',return_value={'admitted':False,'unknownReservationsRetained':['actual original refusal']}):
+                    with self.assertRaisesRegex(RuntimeError,'canonical current whole-pool proof'):
+                        n.private_queue(b'authenticated selected queue source',implementation_pin={'fixture':'separately bound implementation'})
+                self.assertEqual((path.read_bytes(),n.full9(path.stat())),(before,identity))
+
     def modules(self):
         import importlib.util
         values=[]
