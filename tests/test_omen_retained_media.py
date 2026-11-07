@@ -3625,6 +3625,44 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             result,value,spawns,_,publishes,writes=execute(bad)
             self.assertIs(result,first);self.assertEqual((spawns,publishes,writes),(1,0,0));self.assertEqual(value,before)
 
+    def test_retained_CREATE_busy_hold_refreshes_presence_without_reconciling_or_replaying(self):
+        """Real run_cycle selection; authenticated native/API facts are MODELED."""
+        from unittest import mock
+        import time
+        _,r=self.modules();policy,state,probe,_,_=self.pending(r);now=int(time.time())
+        state['lastOutcome'].update(action='CREATE',nonce=state['inflight'])
+        policy['controlBrokerSHA256']='9'*64
+        probe.update(runnerOnline=True,runnerBusy=True,actionsInProgress=1,
+                     controlBrokerSHA256=policy['controlBrokerSHA256'])
+        probe['control'].update(state='running',terminalLifecycle=None,reservationRetained=True,
+            **{k:True for k in('listenerAlive','controllerAlive','workerAlive','ownUnitBound')})
+        before=copy.deepcopy(state)
+        native={'reaped':True,'numeric':0,'eof':{'stdout':True,'stderr':True},
+                'first':None,'stdout':r.canonical(probe),'stderr':b''}
+        presence={'kind':'ROOT_RUNNER21_PRESENCE_RESULT_V1','connected':True,
+                  'ready':False,'busy':True,'vmAdmission':False,'readbackCurrent':True}
+        with mock.patch.object(r,'load_code',return_value=b'authenticated probe'), \
+             mock.patch.object(r,'start_held_python',return_value=object())as spawned, \
+             mock.patch.object(r,'capture',return_value=native), \
+             mock.patch.object(r,'validate_probe'), \
+             mock.patch.object(r,'reconcile_running_resume',return_value=None), \
+             mock.patch.object(r,'reconcile_materialized_pending',return_value=None), \
+             mock.patch.object(r,'reconcile_closed_inflight',return_value=None), \
+             mock.patch.object(r,'orphan_job',return_value='original-predecessor'), \
+             mock.patch.object(r,'materialized_control_ready',return_value=False), \
+             mock.patch.object(r,'reconcile_failed_heartbeat_intent',return_value=None), \
+             mock.patch.object(r,'renew_epoch',return_value=None), \
+             mock.patch.object(r,'refresh_current_presence',return_value=presence)as published, \
+             mock.patch.object(r,'write_state')as saved:
+            result=r.run_cycle(policy,state,now)
+        self.assertEqual(result['decision'],'HOLD_INFLIGHT')
+        self.assertIs(result['effect'],False)
+        self.assertEqual(result['presence'],presence)
+        published.assert_called_once_with(policy)
+        self.assertEqual(state,before,'original CREATE outcome, nonce and counters remain held')
+        self.assertEqual(spawned.call_count,1,'only the original readonly health probe, no lifecycle child')
+        saved.assert_not_called()
+
     @unittest.skipUnless(os.geteuid()==0,'actual Root private snapshot of UID1000 SQLite')
     def test_actual_full_health_private_snapshot_reaches_original_state_backend_without_live_SQL_write(self):
         from unittest import mock
