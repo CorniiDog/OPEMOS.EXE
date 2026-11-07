@@ -35,11 +35,22 @@ class IdleRunnerStatusTransition(RuntimeError):
         self.before={k:before[k]for k in keys};self.after={k:after[k]for k in keys}
         super().__init__('idle Runner21 online/offline transition during current probe: '+json.dumps({'before':self.before,'after':self.after},sort_keys=True))
 
+class AssignedRunnerStatusTransition(RuntimeError):
+    """Stable authenticated online runner acquired/released actual Actions work."""
+    def __init__(self,before,after):
+        keys=('runnerOnline','runnerBusy','actionsInProgress')
+        self.before={k:before[k]for k in keys};self.after={k:after[k]for k in keys}
+        super().__init__('online Runner21 assigned-work transition during current probe: '+json.dumps({'before':self.before,'after':self.after},sort_keys=True))
+
 def require_stable_github(before,after):
-    stable=('networkReachable','protectedMain','mainCommit','protectedMainCommit',
-            'runnerBusy','actionsInProgress')
+    stable=('networkReachable','protectedMain','mainCommit','protectedMainCommit')
     changed=[k for k in stable if after[k]!=before[k]]
     need(not changed,'GitHub non-heartbeat ownership/source changed during OMEN probe: '+','.join(changed))
+    assigned=[k for k in('runnerBusy','actionsInProgress')if after[k]!=before[k]]
+    if assigned:
+        need(before['runnerOnline']is True and after['runnerOnline']is True,
+             'GitHub non-heartbeat ownership/source changed during OMEN probe: '+','.join(assigned))
+        raise AssignedRunnerStatusTransition(before,after)
     if before['runnerOnline']!=after['runnerOnline']:
         need(all(x['runnerBusy']is False and x['actionsInProgress']==0 for x in(before,after)),
              'assigned work changed with Runner21 registration')

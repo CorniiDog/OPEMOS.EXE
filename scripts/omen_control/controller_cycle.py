@@ -105,7 +105,7 @@ def run(action,nonce,policy_sha,probe_sha):
         status_transitions=[]
         while time.monotonic()<deadline:
             try:latest=cp.observe()
-            except cp.IdleRunnerStatusTransition as transition:
+            except (cp.IdleRunnerStatusTransition,cp.AssignedRunnerStatusTransition) as transition:
                 status_transitions.append({'before':transition.before,'after':transition.after})
                 remaining=deadline-time.monotonic()
                 need(remaining>0,'original control-readback deadline after idle transition')

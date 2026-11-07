@@ -4111,7 +4111,7 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             normalCycleSHA256=cycle.sha(b'cycle'),normalProbeSHA256=cycle.sha(b'normal-probe'),
             sshConfigSHA256=cycle.sha(b'ssh'),normalTemplateSHA256=cycle.sha(b'template'))
         raw=cycle.enc(policy);nonce='f'*32;state['inflight']=nonce
-        for remaining,fault in ((1000,None),(20000,None),(1000,'binding'),(-1,None),(1000,'transition')):
+        for remaining,fault in ((1000,None),(20000,None),(1000,'binding'),(-1,None),(1000,'transition'),(20000,'assignment')):
             initial['control']['leaseExpiresUnix']=int(time.time())+remaining
             live=copy.deepcopy(initial);live['runnerOnline']=True
             live['control'].update(state='running',terminalLifecycle=None,reservationRetained=True,
@@ -4121,7 +4121,11 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             pm=importlib.util.module_from_spec(ps);ps.loader.exec_module(pm)
             cuts=[initial,live]
             if fault=='transition':cuts=[initial,pm.IdleRunnerStatusTransition(initial,live),live]
-            probe=types.SimpleNamespace(observe=mock.Mock(side_effect=cuts),IdleRunnerStatusTransition=pm.IdleRunnerStatusTransition)
+            if fault=='assignment':
+                busy=dict(live,runnerBusy=True,actionsInProgress=1)
+                cuts=[initial,pm.AssignedRunnerStatusTransition(live,busy),busy,busy]
+            probe=types.SimpleNamespace(observe=mock.Mock(side_effect=cuts),IdleRunnerStatusTransition=pm.IdleRunnerStatusTransition,
+                                        AssignedRunnerStatusTransition=pm.AssignedRunnerStatusTransition)
             if remaining>19000 and fault is None:cuts.append(copy.deepcopy(live))
             heartbeat=types.SimpleNamespace(state_from_current=mock.Mock(return_value={}),
                 join_current_presence=mock.Mock(return_value=live),
@@ -4154,6 +4158,7 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                     self.assertEqual(heartbeat.publish_once.call_count,0 if due else 1)
                     dispatched.assert_called_once()
                     if fault=='transition':self.assertEqual(probe.observe.call_count,3)
+                    if fault=='assignment':self.assertEqual(probe.observe.call_count,4)
 
     def test_actual_recovery_native_ack_requires_fresh_process_bound_control_and_next_renewal(self):
         from unittest import mock
@@ -4369,6 +4374,14 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
         self.assertFalse(caught.exception.before['runnerOnline']);self.assertTrue(caught.exception.after['runnerOnline'])
         cp.require_stable_github(before,dict(before,heartbeatCurrent=True))
         cp.require_stable_github(before,dict(before,actionsQueued=3))
+        connected=dict(before,runnerOnline=True)
+        assigned=dict(connected,runnerBusy=True,actionsInProgress=1)
+        with self.assertRaises(cp.AssignedRunnerStatusTransition)as caught:
+            cp.require_stable_github(connected,assigned)
+        self.assertFalse(caught.exception.before['runnerBusy']);self.assertTrue(caught.exception.after['runnerBusy'])
+        for key,value in(('protectedMain',False),('mainCommit','d'*40),('protectedMainCommit','e'*40)):
+            with self.subTest(assignedSourceDrift=key),self.assertRaisesRegex(RuntimeError,key):
+                cp.require_stable_github(connected,dict(assigned,**{key:value}))
         for key,value in [('mainCommit','c'*40),('runnerBusy',True),('actionsInProgress',1)]:
             with self.subTest(key=key),self.assertRaisesRegex(RuntimeError,key):
                 cp.require_stable_github(before,dict(after,**{key:value}))
