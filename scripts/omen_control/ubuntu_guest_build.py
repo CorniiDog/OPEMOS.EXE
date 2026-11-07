@@ -99,13 +99,55 @@ def run(argv, cwd, env, log, end, owned):
                      'sha256':sha(str(log)+suffix)} for suffix in('.stdout','.stderr')]}
 
 
-def prerequisite_install_argv(root, debs):
+def prerequisite_apt_options(root):
+    return ['-o','Dir::Cache::archives='+str(root),
+            '-o','Dir::State::lists='+str(root/'apt-lists'),
+            '-o','Dir::Etc::sourcelist='+str(root/'apt-sources.list'),
+            '-o','Dir::Etc::sourceparts='+str(root/'apt-sources.d')]
+
+
+def prerequisite_repository(root, debs, packages, deadline):
+    """Expose authenticated dependency bytes without requesting their installation.
+
+    This operation-local index adds no external repository or persistent trust
+    configuration. Its package records come only from the already hash-bound
+    input medium; APT still resolves against the guest's real installed status.
+    """
+    need(type(packages) is list and packages and
+         all(type(p) is str and re.fullmatch('[a-z0-9][a-z0-9+.-]*',p)
+             for p in packages) and len(set(packages)) == len(packages),
+         'declared prerequisite package names')
+    records = []; available = set()
+    for deb in debs:
+        remaining = deadline-time.monotonic()
+        need(remaining > 0, 'original prerequisite deadline before package metadata')
+        control = subprocess.run(['/usr/bin/dpkg-deb','--field',str(root/deb['name'])],
+                                 capture_output=True,text=True,check=True,
+                                 timeout=min(10,remaining)).stdout.rstrip('\n')
+        fields = dict(line.split(': ',1) for line in control.splitlines()
+                      if line and not line[0].isspace() and ': ' in line)
+        name = fields.get('Package','')
+        need(re.fullmatch('[a-z0-9][a-z0-9+.-]*',name) and
+             fields.get('Architecture') in ('amd64','all') and fields.get('Version') and
+             not any(k in fields for k in ('Filename','Size','SHA256')),
+             'actual native prerequisite package control')
+        available.add(name)
+        records.append(control+'\nFilename: ./'+deb['name']+'\nSize: '+str(deb['bytes'])+
+                       '\nSHA256: '+deb['sha256']+'\n\n')
+    need(set(packages) <= available, 'declared prerequisite missing from offline input')
+    (root/'Packages').write_text(''.join(records))
+    (root/'apt-sources.list').write_text('deb [trusted=yes] file:'+str(root)+' ./\n')
+    for directory in ('apt-lists','apt-sources.d'):
+        (root/directory).mkdir(mode=0o700)
+    return {'packages':packages,'index_sha256':sha(root/'Packages')}
+
+
+def prerequisite_install_argv(root, packages):
     # --no-download consumes APT's archive cache. Local path operands alone
     # can still be queued for acquisition (including a repository copy of the
     # same version); bind the cache to the exact extracted, authenticated debs.
     return ['/usr/bin/apt-get','--yes','--no-download','--no-install-recommends',
-            '--no-remove','-o','Dir::Cache::archives='+str(root),
-            'install',*[str(root/d['name']) for d in debs]]
+            '--no-remove',*prerequisite_apt_options(root),'install',*packages]
 
 
 def install_prerequisites(config):
@@ -146,8 +188,23 @@ def install_prerequisites(config):
         need(result['debs'], 'actual offline prerequisite packages absent')
         # No external guest networking or silent package fallback. All package
         # bytes came from this admitted operation's authenticated input medium.
-        completed = subprocess.run(prerequisite_install_argv(root, result['debs']),
-            stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=600)
+        deadline = time.monotonic()+600
+        result['requested_prerequisites'] = prerequisite_repository(
+            root,result['debs'],config['packages'],deadline)
+        # The local index makes the complete dependency closure available, but
+        # only the authenticated top-level request is an installation operand.
+        # Private sources/lists prevent stale guest repositories or networking
+        # from changing this transaction; the guest's real dpkg status remains.
+        for action,argv in [('index',['/usr/bin/apt-get',*prerequisite_apt_options(root),'update']),
+                            ('install',prerequisite_install_argv(root,config['packages']))]:
+            remaining = deadline-time.monotonic()
+            need(remaining > 0, 'original prerequisite deadline before '+action)
+            completed = subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
+                                      stderr=subprocess.STDOUT,timeout=remaining)
+            if action == 'index':
+                (root/'apt-index.log').write_bytes(completed.stdout)
+                need(completed.returncode == 0, 'authenticated local prerequisite index failed: '+
+                     completed.stdout[-4096:].decode('utf8','replace'))
         (root/'apt.log').write_bytes(completed.stdout)
         result['apt_numeric'] = completed.returncode
         result['apt_log'] = {'name':'apt.log','bytes':len(completed.stdout),

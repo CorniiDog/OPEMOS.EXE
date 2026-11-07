@@ -11,6 +11,7 @@ import shutil
 import sys
 import tempfile
 import subprocess
+import time
 import uuid
 import unittest
 
@@ -48,7 +49,7 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
             subprocess.run(['dpkg-deb','--build',str(package),str(deb)],
                            capture_output=True,check=True,timeout=10)
             before = deb.read_bytes()
-            argv = guest.prerequisite_install_argv(cache,[{'name':deb.name}])
+            argv = guest.prerequisite_install_argv(cache,[name])
             # The real guest also has repository metadata for many of the
             # supplied versions. A local-file-only fixture misses that choice.
             repo = root / 'repository'; repo.mkdir()
@@ -99,6 +100,55 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                 self.assertFalse(thread.is_alive())
             self.assertEqual(deb.read_bytes(),before)
 
+    @unittest.skipUnless(os.getuid() == 0 and shutil.which('apt-get') and shutil.which('dpkg-deb'),
+                         'real protected Root prerequisite-selection regression')
+    def test_offline_dependency_availability_does_not_request_desktop_removal(self):
+        """Real APT solver and private installed status; never install on the test host."""
+        import ubuntu_guest_build as guest
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);cache=root/'archives';cache.mkdir()
+            suffix=uuid.uuid4().hex
+            library='opemos-library-'+suffix;desktop='opemos-desktop-'+suffix
+            app='opemos-build-'+suffix;debs=[];originals={}
+            for name,version,depends in [(library,'2',''),(app,'1',library+' (>= 1)')]:
+                directory=root/name;(directory/'DEBIAN').mkdir(parents=True)
+                control=('Package: '+name+'\nVersion: '+version+'\nArchitecture: all\n'
+                         'Maintainer: OPEMOS fixture <fixture@example.invalid>\n'
+                         'Description: non-executable dependency selection fixture\n')
+                if depends:control+='Depends: '+depends+'\n'
+                (directory/'DEBIAN/control').write_text(control)
+                path=cache/(name+'_'+version+'_all.deb')
+                subprocess.run(['dpkg-deb','--build',str(directory),str(path)],
+                               capture_output=True,check=True,timeout=10)
+                raw=path.read_bytes();originals[path]=raw
+                debs.append({'name':path.name,'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest()})
+            status=root/'status'
+            status.write_text('Package: '+library+'\nStatus: install ok installed\n'
+                'Architecture: all\nVersion: 1\nDescription: existing library\n\n'
+                'Package: '+desktop+'\nStatus: install ok installed\nArchitecture: all\n'
+                'Version: 1\nDepends: '+library+' (= 1)\nDescription: retained desktop\n\n')
+            before=status.read_bytes()
+            guest.prerequisite_repository(cache,debs,[app],time.monotonic()+30)
+            isolation=['-o','Dir::State::status='+str(status),
+                       '-o','Dir::State::extended_states='+str(root/'extended-states')]
+            subprocess.run(['/usr/bin/apt-get',*guest.prerequisite_apt_options(cache),
+                            *isolation,'update'],capture_output=True,check=True,timeout=20)
+            argv=guest.prerequisite_install_argv(cache,[app]);at=argv.index('install')
+            prefix=[*argv[:at],'--download-only',*isolation,'install']
+            # The old explicit-all-files request forces an unnecessary library
+            # upgrade and removal of the existing desktop. The guard must refuse.
+            failed=subprocess.run([*prefix,*[str(cache[d['name']])for d in debs]],
+                                  capture_output=True,timeout=20)
+            self.assertEqual(failed.returncode,100,failed.stdout+failed.stderr)
+            self.assertIn(b'remove',failed.stdout+failed.stderr)
+            passed=subprocess.run([*prefix,*argv[at+1:]],capture_output=True,timeout=20)
+            self.assertEqual(passed.returncode,0,passed.stdout+passed.stderr)
+            self.assertIn(b'0 to remove',passed.stdout)
+            self.assertEqual(status.read_bytes(),before)
+            for path,raw in originals.items():self.assertEqual(path.read_bytes(),raw)
+            with self.assertRaisesRegex(ValueError,'declared prerequisite missing'):
+                guest.prerequisite_repository(cache,debs,['missing'],time.monotonic()+30)
+
     def test_real_archive_extraction_returns_actual_apt_refusal_to_existing_event_log(self):
         """Real extractor/result files; DMI, mount, UID and apt execution modeled."""
         import tarfile
@@ -124,14 +174,21 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
             def command(argv, **kwargs):
                 if argv[0] == '/usr/bin/findmnt':
                     return subprocess.CompletedProcess(argv, 0, stdout='iso9660 ro,nodev\n')
+                if argv[0] == '/usr/bin/dpkg-deb':
+                    return subprocess.CompletedProcess(argv,0,stdout=
+                        'Package: package\nVersion: 1\nArchitecture: amd64\nDescription: fixture\n')
+                if argv[-1] == 'update':
+                    return subprocess.CompletedProcess(argv,0,stdout=b'local index ready\n')
                 self.assertEqual(argv[:4], ['/usr/bin/apt-get', '--yes', '--no-download',
                                            '--no-install-recommends'])
                 self.assertIn('Dir::Cache::archives='+str(root/('opemos-guest-prerequisites-'+nonce)),argv)
-                self.assertEqual(Path(argv[argv.index('install')+1]).read_bytes(), payload)
+                self.assertEqual(argv[argv.index('install')+1:],['package'])
+                self.assertEqual((root/('opemos-guest-prerequisites-'+nonce)/
+                                  'package_1_amd64.deb').read_bytes(),payload)
                 return subprocess.CompletedProcess(argv, 100, stdout=apt_output)
             config = {'nonce':nonce, 'input_archive':str(archive),
                       'input_sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),
-                      'expanded_bytes':len(payload)}
+                      'expanded_bytes':len(payload),'packages':['package']}
             with patch.object(guest, 'Path', side_effect=path), \
                  patch.object(guest.os, 'getuid', return_value=0), \
                  patch.object(guest.os, 'geteuid', return_value=0), \
@@ -434,7 +491,7 @@ print(json.dumps({'realTaskProcessJoin':True,'ordinaryReader':1000,'rootPayload'
                 item.size=len(raw);archive.addfile(item,io.BytesIO(raw))
             definition={'kind':'UBUNTU_GUEST_SOURCE_INPUT_V1','compiled_or_packaged':False,
                 'archive_bytes':payload.stat().st_size,'archive_sha256':hashlib.sha256(payload.read_bytes()).hexdigest(),
-                'expanded_bytes':1024}
+                'expanded_bytes':1024,'packages':['package']}
             candidate=root/'source-input.zip'
             with zipfile.ZipFile(candidate,'x')as archive:
                 archive.write(payload,'ubuntu-source-inputs.tar')
@@ -461,6 +518,8 @@ print(json.dumps({'realTaskProcessJoin':True,'ordinaryReader':1000,'rootPayload'
             actual=subprocess.run(['isoinfo','-R','-i',result['path'],'-x','/ubuntu-source-inputs.tar'],
                                   capture_output=True,check=True).stdout
             self.assertEqual(actual,payload.read_bytes())
+            self.assertEqual(json.loads((root/'prepared/build.json').read_text())['packages'],
+                             definition['packages'])
             self.assertTrue(result['source_payload_readback'])
             self.assertFalse((root/'prepared/ubuntu-source-inputs.tar').exists())
             self.assertTrue(candidate.exists())
@@ -483,7 +542,8 @@ print(json.dumps({'realTaskProcessJoin':True,'ordinaryReader':1000,'rootPayload'
             with payload.open('rb')as data:
                 while block:=data.read(1048576):digest.update(block)
             definition={'kind':'UBUNTU_GUEST_SOURCE_INPUT_V1','compiled_or_packaged':False,
-                'archive_bytes':size,'archive_sha256':digest.hexdigest(),'expanded_bytes':1024}
+                'archive_bytes':size,'archive_sha256':digest.hexdigest(),'expanded_bytes':1024,
+                'packages':['package']}
             candidate=root/'source-input.zip'
             with zipfile.ZipFile(candidate,'x',compression=zipfile.ZIP_DEFLATED,compresslevel=1)as archive:
                 archive.write(payload,'ubuntu-source-inputs.tar')

@@ -265,6 +265,7 @@ def source_medium(config):
            'producer_run_id':source['producer_run_id'],'producer_attempt':source['producer_attempt'],
            'input_archive':'/media/opemosgui/OPROBOT/ubuntu-source-inputs.tar',
            'input_sha256':definition['archive_sha256'],'expanded_bytes':definition['expanded_bytes'],
+           'packages':definition['packages'],
            'remaining_seconds':config['remaining_seconds'],'max_package_bytes':2147483648,
            'owned_command_sha256':hashlib.sha256(owned).hexdigest()}
     create_file(root/'build.json',(json.dumps(guest,sort_keys=True)+'\n').encode(),0o444)
