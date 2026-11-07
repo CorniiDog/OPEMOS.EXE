@@ -11,8 +11,8 @@ LABELS=['self-hosted','Linux','X64','opemos-omen-robot']
 PRODUCERS={'.github/workflows/windows-portable.yml','.github/workflows/ubuntu-executable.yml','.github/workflows/macos-arm64.yml'}
 # Only these fields authorize routing to the ordinary runner admission path.
 # Recovery provenance and optional diagnostics may evolve independently.
-RUNNER_STATE_FIELDS={'version','repository','source_commit','checked_at',
-                     'expires_at','ready','runner_id','runner_name','labels'}
+RUNNER_STATE_FIELDS={'version','repository','source_commit',
+                     'runner_id','runner_name','labels'}
 
 def main():
     # The route is authorized by authenticated event/runner facts below. A
@@ -54,14 +54,19 @@ def main():
         # candidate and need not change when an unrelated Main commit moves.
         source=state['source_commit']
         assert type(source)is str and len(source)==40 and all(x in '0123456789abcdef'for x in source)
-        now=int(time.time())
-        stage='runner heartbeat clock/180-second freshness'
-        assert type(state['checked_at'])is int and type(state['expires_at'])is int and state['expires_at']==state['checked_at']+180 and state['checked_at']<=now<state['expires_at']
         stage='runner exact labels/name/id'
         assert state['labels']==LABELS and state['runner_name']=='opemos-omen-robot'and type(state['runner_id'])is int and state['runner_id']>0
-        stage='runner heartbeat explicitly ready=true'
-        assert state['ready']is True
-        ready=True;value.update(status='ready-for-ordinary-admission',source_commit=source,runner_id=state['runner_id'])
+        # GitHub holds a labelled self-hosted job until its runner is online
+        # and idle. This snapshot must not discard a push during recovery.
+        # The installed job hook still verifies live source/lease authority
+        # before any operation; a hosted route never grants VM admission.
+        now=int(time.time());checked=state.get('checked_at');expires=state.get('expires_at')
+        current=(type(checked)is int and type(expires)is int and
+                 expires==checked+180 and checked<=now<expires)
+        reported_ready=state.get('ready')is True
+        ready=True;value.update(status='ready-for-ordinary-admission'if current and reported_ready else 'queued-for-ordinary-admission',
+                                source_commit=source,runner_id=state['runner_id'],
+                                heartbeat_current=current,heartbeat_reported_ready=reported_ready)
         for row in value['vms'].values():row['reason']='Runner route online; actual VM case remains unverified'
     except Exception as error:
         value['reason']='Trusted route refused at '+stage+': '+type(error).__name__
@@ -71,7 +76,7 @@ def main():
     finally:
         try:
             rows=json.loads(Path('ci/required-vms.json').read_text())['required_vms']
-            value['vms']={r['id']:{'name':r['name'],'status':'unavailable','reason':value.get('reason','Runner route online; actual VM remains unverified')}for r in rows}
+            value['vms']={r['id']:{'name':r['name'],'status':'unavailable','reason':value.get('reason','Routed to GitHub queue; actual VM remains unverified')}for r in rows}
             report.mkdir(exist_ok=True)
             (report/'all20.json').write_text(json.dumps(value,indent=2)+'\n')
         except Exception as error:
@@ -80,7 +85,7 @@ def main():
         with open(os.environ['GITHUB_OUTPUT'],'a')as stream:stream.write('ready='+str(ready).lower()+'\nsource='+source+'\n')
         try:
             with open(os.environ['GITHUB_STEP_SUMMARY'],'a')as stream:
-                stream.write('Installed controller: `'+source+'`. Candidate execution remains unverified.\n')
+                stream.write('Controller route: `'+source+'`. GitHub waits for the labelled runner to be online and idle; the installed hook independently checks live admission.\n')
                 stream.write('No domain, CPU resume, installer or NVIDIA pass is inferred from runner availability.\n')
         except Exception as error:
             print('::warning::Optional step summary unavailable: '+type(error).__name__)

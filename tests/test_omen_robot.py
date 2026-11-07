@@ -133,23 +133,32 @@ class HostedRunnerGuard(unittest.TestCase):
         del self.state['reason']
         self.state['telemetry']={'generation':2,'notes':['listener recovered']}
         self.assertEqual(self.run_gate(),0)
-    def test_recovery_metadata_does_not_authorize_stale_or_malformed_source(self):
+    def test_recovery_metadata_does_not_authorize_malformed_source(self):
         self.state.update(queue_source_sha256='c'*64,recovery_nonce='d'*32)
-        self.assertEqual(self.run_gate(now=1180),1)
         self.state['source_commit']='not-an-installed-commit'
         self.assertEqual(self.run_gate(),1)
     def test_missing_authoritative_runner_identity_still_refuses(self):
         del self.state['runner_id']
         self.state['telemetry']={'runner_id':1}
         self.assertEqual(self.run_gate(),1)
-    def test_boolean_schema_version_and_float_expiry_do_not_authorize(self):
+    def test_boolean_schema_version_does_not_authorize(self):
         self.state['version']=True
         self.assertEqual(self.run_gate(),1)
-        self.state['version']=1;self.state['expires_at']=1180.0
-        self.assertEqual(self.run_gate(),1)
-    def test_stale_heartbeat_fails_before_self_hosted_queue(self):
-        self.assertEqual(self.run_gate(now=1180),1)
-        self.assertIn('ready=false',(self.root/'output').read_text())
+    def test_stale_heartbeat_enters_github_queue_without_claiming_a_vm(self):
+        self.assertEqual(self.run_gate(now=1180),0)
+        self.assertIn('ready=true',(self.root/'output').read_text())
+        value=json.loads(Path('robot-preflight/all20.json').read_text())
+        self.assertEqual(value['status'],'queued-for-ordinary-admission')
+        self.assertFalse(value['heartbeat_current'])
+        self.assertTrue(all(r['status']=='unavailable'for r in value['vms'].values()))
+    def test_optional_missing_or_malformed_clock_cannot_discard_a_push(self):
+        for field in ('checked_at','expires_at','ready'):
+            self.state.pop(field)
+        self.assertEqual(self.run_gate(),0)
+        self.state.update(checked_at=1000,expires_at=1180.0,ready=True)
+        self.assertEqual(self.run_gate(),0)
+        value=json.loads(Path('robot-preflight/all20.json').read_text())
+        self.assertFalse(value['heartbeat_current'])
     def test_installed_controller_is_distinct_from_workflow_and_candidate(self):
         self.state['source_commit']='b'*40;self.assertEqual(self.run_gate(),0)
         self.assertIn('source='+'b'*40,(self.root/'output').read_text())
@@ -166,12 +175,16 @@ class HostedRunnerGuard(unittest.TestCase):
     def test_absent_runner_fails_with_all20(self):
         self.state['runner_id']=None;self.state['ready']=False;self.assertEqual(self.run_gate(),1)
         self.assertEqual(len(json.loads(Path('robot-preflight/all20.json').read_text())['vms']),20)
-    def test_explicit_offline_state_names_failed_check_without_promoting_rows(self):
+    def test_offline_runner_enters_github_queue_without_promoting_rows(self):
         self.state['ready']=False
-        self.assertEqual(self.run_gate(),1)
+        self.assertEqual(self.run_gate(),0)
         value=json.loads(Path('robot-preflight/all20.json').read_text())
-        self.assertEqual(value['failed_check'],'runner heartbeat explicitly ready=true')
-        self.assertTrue(all(r['status']=='unavailable' and 'explicitly ready=true' in r['reason'] for r in value['vms'].values()))
+        self.assertEqual(value['status'],'queued-for-ordinary-admission')
+        self.assertFalse(value['heartbeat_reported_ready'])
+        self.assertTrue(all(r['status']=='unavailable' and 'GitHub queue' in r['reason'] for r in value['vms'].values()))
+    def test_offline_snapshot_still_requires_exact_registered_identity(self):
+        self.state['ready']=False;self.state['runner_name']='another-runner'
+        self.assertEqual(self.run_gate(now=1180),1)
 
 class PointerKeywordCustody(unittest.TestCase):
     """Synthetic fault-only keyword wiring; never actual mouse acceptance."""

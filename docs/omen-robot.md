@@ -3,10 +3,13 @@
 `omen-robot.yml` executes on completion of **01 Windows EXE**, **02 Ubuntu
 AppImage** and **03 macOS Executable** on protected Main. Manual Main dispatch
 is an additional route. There is no privileged PR or producer-artifact code
-execution. A hosted guard verifies the live protected source and Root's fresh
-180-second runner heartbeat. The external fixed runner job guard independently
-checks the exact workflow, repository, event and Main before checkout. A missing
-runner fails quickly with an artifact showing all twenty unavailable entries.
+execution. A hosted guard verifies the protected workflow and the recorded
+controller identity. GitHub queues the job until the labelled runner is online
+and idle; an expired or offline heartbeat does not discard the push. GitHub's
+normal 24-hour self-hosted queue limit applies. The external fixed runner job
+guard independently checks the live source, lease, exact workflow, repository
+and event before checkout. Heartbeat freshness remains diagnostic, and no VM
+or GPU admission is inferred from entering the queue.
 
 The dedicated runner executes Robot Framework **7.5**, official wheel SHA-256
 `5a194db36524604fafa1da89adebc837db9a95adf15ffd746e09ce98251e6c68`.

@@ -43,7 +43,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - id: guard
-        name: Verify protected controller workflow and fresh installed-controller heartbeat
+        name: Verify trusted controller route and queue for OMEN availability
         env:
           GITHUB_TOKEN: ${{ github.token }}
           OPEMOS_OMEN_ROBOT_RUNNER_STATE: ${{ vars.OPEMOS_OMEN_ROBOT_RUNNER_STATE }}
