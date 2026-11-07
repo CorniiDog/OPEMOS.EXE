@@ -951,10 +951,27 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
         self.assertEqual(set(os.listdir('/proc/self/fd')),before)
 
     def test_proc_exit_monitor_then_normal_tick_closes_only_terminal_unit_with_live_peer(self):
-        """Real task exit/SQL/finalizers; external manager/pool facts MODELED."""
-        import time
+        """Actual installed composition, real exit/SQL/R2; manager/pool MODELED."""
+        import ast,time,zlib
         from unittest.mock import patch
-        import test_queue as q
+        original=zlib.decompress((Path(__file__).parent/
+            'fixtures/omen-ci-physical-a621-queue.py.zlib').read_bytes()).decode()
+        self.assertEqual(hashlib.sha256(original.encode()).hexdigest(),
+            'a62195a8b84edc38ba5560b47eb77d03e49ace6f656c0e9770b8e58931ee655c')
+        sources=lambda text:{n.name:ast.get_source_segment(text,n)
+            for n in ast.parse(text).body if isinstance(n,ast.FunctionDef)}
+        before=sources(original);modern=sources((SOURCE/'test_queue.py').read_text())
+        composed=original
+        for name in ('exact_proc_revalidation_evidence','verify_terminal_pool_transition'):
+            composed=composed.replace(before[name],modern[name])
+        after=sources(composed)
+        self.assertEqual([name for name,body in before.items()if after[name]!=body],
+                         ['verify_terminal_pool_transition','exact_proc_revalidation_evidence'])
+        def loaded(text,name):
+            module=types.ModuleType(name);module.__file__=str(SOURCE/'test_queue.py')
+            exec(compile(text,module.__file__,'exec'),module.__dict__);return module
+        legacy=loaded(original,'actual_physical_a621');q=legacy
+        candidate=loaded(composed,'physical_a621_two_function_repair')
         child=subprocess.Popen([sys.executable,'-I','-c','import time;time.sleep(.1)'])
         proc=Path('/proc',str(child.pid));held=os.open(proc,os.O_RDONLY|os.O_DIRECTORY|os.O_CLOEXEC)
         start=int((proc/'stat').read_text().rsplit(')',1)[1].split()[19])
@@ -985,6 +1002,13 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                     binding=dict(version=1,job_id=job,unit=unit,invocation=invocations[unit],stateRoot=str(root),
                         prefix=backend.prefix,specSHA256=hashlib.sha256(q.canonical(spec).encode()).hexdigest(),cpus=[index],memory=1024**3)
                     db.execute('INSERT INTO pool_unit_bindings VALUES(?,?)',(job,q.canonical(binding)))
+                closed_spec=q.normalize_job(dict(id='prior-closed',platform='fixture',owner='exe',
+                    command=['/usr/bin/true'],cwd=str(base),files=[str(marker)],cores=1,memory=1024**3,
+                    timeout_seconds=300,resources=['prior-closed'],approval={'path':str(marker),
+                    'sha256':hashlib.sha256(marker.read_bytes()).hexdigest()}),base)
+                db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',('prior-closed',q.canonical(closed_spec),
+                    'failed','[]',None,1.,2.,q.canonical({'FIRST':'retained original',
+                    'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False}})))
                 db.commit();(root/'logs/failed-ubuntu').mkdir(parents=True)
                 (root/'logs/failed-ubuntu/stderr.log').write_text('actual preparation FIRST retained\n')
                 leader=dict(tid=os.getpid(),tgid=os.getpid(),start=123,ppid=1,uids=[os.getuid()]*4,cgroup=pool+'/'+peer)
@@ -1037,12 +1061,50 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                     self.assertEqual(records[-1]['freshWholePoolProof']['readonlyMembershipTransition'],membership.evidence)
                     self.assertFalse(q._READONLY_BOUNDARY_PREPARATION)
                     self.assertIs(observed['newAdmissionEffectsReleaseForbidden'],True)
-                    q.tick(root,db,backend,cfg)
+                    # The actual installed writer stores a compact R2 epoch,
+                    # then its old raw-row comparison fails on unchanged CLOSED
+                    # history. Preserve that genuine commit and original FIRST.
+                    with self.assertRaisesRegex(ValueError,'Other full job/spec/cpus/result/finished/resource row changed'):
+                        q.tick(root,db,backend,cfg)
+                    retained=q.pool_rows(db,db.execute("SELECT * FROM jobs WHERE id='failed-ubuntu'").fetchall())[0]
+                    saved_result=json.loads(retained['result'])
+                    self.assertEqual(retained['state'],'terminal_cleanup')
+                    self.assertEqual(saved_result['preservedReservationEpoch']['kind'],'OPEMOS_PINNED_TERMINAL_EPOCH_R2')
+                    epoch=q.terminal_history_load(db,saved_result['preservedReservationEpoch'],retained,invocations[own])
+                    self.assertTrue(any(r.get('kind')==q.HISTORY_CLOSED_ROW_KIND for r in epoch['rows']))
+                    pending=dict(closed_spec,id='newer-pending',resources=['newer-pending'])
+                    q.enqueue(db,[pending])  # genuine later enqueue, no allocation or fake epoch
+                    pending_before=dict(db.execute("SELECT * FROM jobs WHERE id='newer-pending'").fetchone())
+                    other_before=[dict(r)for r in db.execute("SELECT * FROM jobs WHERE id!='failed-ubuntu' ORDER BY rowid")]
+                    current_epoch=q.terminal_pool_epoch(db,q.pool_rows(db,
+                        db.execute('SELECT * FROM jobs ORDER BY rowid').fetchall()),proof(None))
+                    q=candidate
+                    for fault in ('edit','delete','reorder','allocated','started','result','binding','unknown'):
+                        bad=copy.deepcopy(current_epoch)
+                        if fault=='edit':bad['rows'][1]['spec']='{}'
+                        elif fault=='delete':bad['rows'].pop(1)
+                        elif fault=='reorder':bad['rows'][1:3]=reversed(bad['rows'][1:3])
+                        elif fault=='allocated':bad['rows'][-1]['unit']=peer
+                        elif fault=='started':bad['rows'][-1]['started']=time.time()
+                        elif fault=='result':bad['rows'][-1]['result']='{}'
+                        elif fault=='binding':bad['rows'][-1]['_poolBinding']={'fixture':'forbidden'}
+                        else:bad['pool']['unknownReservationsRetained']=[peer]
+                        with self.subTest(fault=fault),self.assertRaises(ValueError):
+                            q.verify_terminal_pool_transition(epoch,bad,retained,False)
+                    repaired=q.SystemdBackend(root,cfg);repaired._validate_pool_cut=complete_cut
+                    repaired.inspect=backend.inspect;repaired.whole_owned_cgroup=backend.whole_owned_cgroup
+                    with patch.object(q,'_RAW_SYSTEMCTL',side_effect=manager):
+                        q.finish_committed_terminal(db,repaired,retained)
                     final=dict(db.execute("SELECT * FROM jobs WHERE id='failed-ubuntu'").fetchone())
                     result=json.loads(final['result']);self.assertEqual(final['state'],'failed')
                     self.assertIsNotNone(final['finished']);self.assertEqual(result['terminalLifecycle']['phase'],'CLOSED')
                     self.assertIs(result['terminalLifecycle']['reservationRetained'],False)
-                    q.tick(root,db,backend,cfg)  # terminal writer is not invoked a second time
+                    self.assertEqual(result['preservedReservationEpoch'],saved_result['preservedReservationEpoch'])
+                    self.assertEqual(result['terminalCleanupFailure'],saved_result['terminalCleanupFailure'])
+                    self.assertEqual(dict(db.execute("SELECT * FROM jobs WHERE id='newer-pending'").fetchone()),pending_before)
+                    self.assertEqual([dict(r)for r in db.execute("SELECT * FROM jobs WHERE id!='failed-ubuntu' ORDER BY rowid")],other_before)
+                    with self.assertRaisesRegex(ValueError,'Only durable retained terminal cleanup lease'):
+                        q.finish_committed_terminal(db,repaired,final)
                     self.assertEqual(dict(db.execute("SELECT * FROM jobs WHERE id='failed-ubuntu'").fetchone()),final)
                 self.assertEqual(dict(db.execute("SELECT * FROM jobs WHERE id='live-control'").fetchone()),peer_before)
                 self.assertEqual([tuple(r)for r in db.execute('SELECT * FROM pool_unit_bindings')],bindings)
