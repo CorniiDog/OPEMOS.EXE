@@ -103,7 +103,8 @@ def main():
         'linuxdeploy-x86_64.AppImage':'https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-x86_64.AppImage',
         'linuxdeploy-plugin-gtk.sh':'https://raw.githubusercontent.com/tauri-apps/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh',
         'linuxdeploy-plugin-gstreamer.sh':'https://raw.githubusercontent.com/tauri-apps/linuxdeploy-plugin-gstreamer/master/linuxdeploy-plugin-gstreamer.sh',
-        'linuxdeploy-plugin-appimage.AppImage':'https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage'}
+        'linuxdeploy-plugin-appimage.AppImage':'https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage',
+        'runtime-x86_64':'https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64'}
     for name,url in tools.items():
         with urllib.request.urlopen(url,timeout=60) as source, (tauri/name).open('xb') as output:
             size = 0

@@ -250,6 +250,20 @@ def kvm_viability():
             'stderr':p.stderr[:2048],'guest_OS_boot_accepted':False}
 
 
+def offline_appimage_environment(root):
+    # appimagetool otherwise downloads its runtime while bundling. Keep this
+    # guest offline and use the same hash-bound source-input archive as tools.
+    runtime=Path(root)/'cache/tauri/runtime-x86_64'
+    fd=os.open(runtime,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    try:
+        info=os.fstat(fd)
+        need(stat.S_ISREG(info.st_mode)and info.st_nlink==1 and
+             info.st_uid==os.getuid()and 0<info.st_size<=200000000,
+             'staged offline AppImage runtime custody')
+    finally:os.close(fd)
+    return {'LDAI_RUNTIME_FILE':str(runtime)}
+
+
 def build(config, workspace):
     need(os.getuid() == os.geteuid() == 1000, 'ordinary guest compiler only')
     nonce = config['nonce']; source = config['candidate_source_commit']
@@ -281,6 +295,7 @@ def build(config, workspace):
                GITHUB_ACTIONS='true', GITHUB_REPOSITORY=REPOSITORY,
                GITHUB_SHA=source, GITHUB_RUN_ID=config['producer_run_id'],
                GITHUB_RUN_ATTEMPT=config['producer_attempt'])
+    env.update(offline_appimage_environment(root))
     commands = [
         ['node','--version'], ['rustc','--version'],
         ['npm','ci','--offline'], ['npm','run','build:linux-test'],

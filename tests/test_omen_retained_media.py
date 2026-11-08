@@ -27,6 +27,36 @@ import types
 
 
 class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
+    def test_staged_appimage_runtime_reaches_real_clean_owned_packaging_child(self):
+        """Real tar/extraction/env/child transport; no AppImage or VM pass modeled."""
+        import tarfile
+        import ubuntu_guest_build as guest
+        import owned_command as owned
+        spec=importlib.util.spec_from_file_location('offline_runtime_input',
+            SOURCE.parent/'prepare_ubuntu_source_inputs.py')
+        producer=importlib.util.module_from_spec(spec);spec.loader.exec_module(producer)
+        with tempfile.TemporaryDirectory()as temporary:
+            root=Path(temporary);download=root/'downloaded-runtime'
+            payload=b'bounded opaque AppImage runtime input\n';download.write_bytes(payload)
+            archive=root/'inputs.tar'
+            with tarfile.open(archive,'x')as out:
+                producer.safe_tree(out,download,'cache/tauri/runtime-x86_64',lambda item:item)
+            workspace=root/'guest';guest.extract_inputs(archive,workspace,1048576)
+            reader='import os,pathlib,hashlib; print(hashlib.sha256(pathlib.Path(os.environ["LDAI_RUNTIME_FILE"]).read_bytes()).hexdigest())'
+            argv=[sys.executable,'-c',reader]
+            absent=guest.run(argv,workspace,{},workspace/'missing-runtime',time.monotonic()+10,owned)
+            self.assertNotEqual(absent['numeric'],0)
+            self.assertIn('LDAI_RUNTIME_FILE',(workspace/'missing-runtime.stderr').read_text())
+            actual=guest.run(argv,workspace,guest.offline_appimage_environment(workspace),
+                             workspace/'staged-runtime',time.monotonic()+10,owned)
+            self.assertEqual(actual['numeric'],0)
+            self.assertEqual((workspace/'staged-runtime.stdout').read_text(),hashlib.sha256(payload).hexdigest()+'\n')
+            for result in(absent,actual):
+                n=result['native'];self.assertTrue(n['lifecycleClosed']and n['reaped']and n['stdoutEOF']and n['stderrEOF'])
+                self.assertTrue(n['fd']['restored']and n['childSetRestored']);self.assertEqual(n['errors'],[])
+            runtime=workspace/'cache/tauri/runtime-x86_64';runtime.unlink();runtime.symlink_to(download)
+            with self.assertRaises(OSError):guest.offline_appimage_environment(workspace)
+
     def test_actual_node_cli_relative_module_survives_producer_and_guest_extraction(self):
         """Real tar and Node execution; no npm download or guest acceptance."""
         import tarfile
