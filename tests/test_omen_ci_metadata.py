@@ -241,14 +241,14 @@ sel.close()
 os.umask(0o077)
 s=socket.socket(socket.AF_UNIX);s.bind('qmp.sock');s.listen(1);s.settimeout(5)
 print('READY',flush=True)
-for attempt in range(3):
+for attempt in range(9):
  c,_=s.accept();c.settimeout(3)
  with c:
   with c.makefile('rb')as f:
    c.sendall((b'{}\\n'if attempt==0 else b'{"QMP":{}}\\n'))
    if attempt:
     request=json.loads(f.readline());c.sendall((json.dumps({'return':{},'id':request['id']})+'\\n').encode())
-   if attempt==2:
+   if attempt in(2,5,8):
     request=json.loads(f.readline());c.sendall((json.dumps({'return':{'name':'original-owned-VM'},'id':request['id']})+'\\n').encode())
    assert f.read(1)==b'', 'previous QMP client must close before next finalizer client'
 s.close()
@@ -266,6 +266,31 @@ s.close()
             with self.assertRaisesRegex(TimeoutError,'original observer READY failure'):
                 with self.connection_control.owned_qmp(self.root/'qmp.sock',child.pid):
                     raise TimeoutError('original observer READY failure')
+            with self.connection_control.owned_qmp(self.root/'qmp.sock',child.pid)as finalizer:
+                self.assertEqual(finalizer.call('query-name'),{'name':'original-owned-VM'})
+            # A Robot fault can follow release of the first peer and creation
+            # of a replacement. The pipeline owns whichever peer is current;
+            # the outer owned_qmp still refers to the already closed original.
+            with self.assertRaisesRegex(RuntimeError,'original Robot import refused'):
+                with self.connection_control.owned_qmp(self.root/'qmp.sock',child.pid)as initial:
+                    pipeline=self.connection_control.Pipeline.__new__(self.connection_control.Pipeline)
+                    pipeline.q=initial
+                    with pipeline:
+                        initial.close()
+                        pipeline.q=self.connection_control.QMP(
+                            self.connection_control.connect_owned(self.root/'qmp.sock',child.pid))
+                        raise RuntimeError('original Robot import refused')
+            with self.connection_control.owned_qmp(self.root/'qmp.sock',child.pid)as finalizer:
+                self.assertEqual(finalizer.call('query-name'),{'name':'original-owned-VM'})
+            # Successful Robot handoffs replace the same peer too. Their final
+            # connection must close before normal QEMU shutdown can reconnect.
+            with self.connection_control.owned_qmp(self.root/'qmp.sock',child.pid)as initial:
+                pipeline=self.connection_control.Pipeline.__new__(self.connection_control.Pipeline)
+                pipeline.q=initial
+                with pipeline:
+                    initial.close()
+                    pipeline.q=self.connection_control.QMP(
+                        self.connection_control.connect_owned(self.root/'qmp.sock',child.pid))
             with self.connection_control.owned_qmp(self.root/'qmp.sock',child.pid)as finalizer:
                 self.assertEqual(finalizer.call('query-name'),{'name':'original-owned-VM'})
             out,err=child.communicate(timeout=5)

@@ -717,7 +717,7 @@ def main():
             need(ready['input_carrier']['serial']==C['guest_operation']['input_carrier_serial']==nonce[:20] and
                  ready['input_carrier']['relativePath']==guest['input_relative_path'],
                  'actual original guest carrier/path belongs to this admitted operation')
-            pipeline=CONTROL.Pipeline(binding,guest,native_q,obs_sock,ready,root)
+            pipeline=channels.enter_context(CONTROL.Pipeline(binding,guest,native_q,obs_sock,ready,root))
             pipeline.end=WHOLE_END  # original job clock; never restart it for the GUI
             def current_output_and_metadata():
                 check_qemu_output(qemu_streams);metadata_guard(192*1024**2)

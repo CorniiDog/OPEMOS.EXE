@@ -691,6 +691,68 @@ def native_control_bound(control,window,birth):
     return proof
 
 
+ROBOT_RUNTIME_ROOT=Path('/home/connor/.local/share/opemos-ci/github-runner/robot-python')
+
+def fixed_robot_bootstrap(context,entry,entry_sha,cache_prefix):
+    """Select only the existing lease-authenticated RF runtime under Python -I."""
+    ci10_root(context)  # Same Root policy/sender/operation ancestry as the pointer.
+    def read(path,uid,digest=None):
+        path=Path(path)
+        for parent in path.parents:
+            s=parent.lstat();need(stat.S_ISDIR(s.st_mode)and s.st_uid in(0,os.getuid())
+                and not s.st_mode&0o022,'fixed Robot runtime ancestry')
+        fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+        try:
+            s=os.fstat(fd);before=ci10_sig(s);raw=b''
+            need(stat.S_ISREG(s.st_mode)and s.st_uid==uid and s.st_nlink==1 and
+                 not s.st_mode&0o022 and s.st_size<=8388608,'fixed Robot runtime file custody')
+            while part:=os.read(fd,65536):raw+=part;need(len(raw)<=8388608,'bounded Robot runtime member')
+            need(before==ci10_sig(os.fstat(fd))==ci10_sig(path.lstat())and len(raw)==s.st_size
+                 and(digest is None or hashlib.sha256(raw).hexdigest()==digest),'fixed Robot runtime file epoch/hash')
+            return raw
+        finally:os.close(fd)
+    policy_ref=context['normal_policy_pin'];policy_path=Path(policy_ref['path'])
+    lease=ci9_json(read(policy_path.parent/'lease.json',0))
+    need(lease['kind']=='OPEMOS_ROBOT_FIXED_CONTROL_LEASE'and
+         lease['engine_source_commit']==context['identity']['source_commit']and
+         lease['connection_fixed_policy']=={'path':str(policy_path),'sha256':policy_ref['sha256']}and
+         lease['engine_pins']['scripts/run_omen_robot_guest.py']==entry_sha,
+         'same actual Root lease and selected Robot entry')
+    profile=ci9_json(read(lease['profile_path'],0,lease['profile_sha256']))
+    need(profile['robotframework']=={'version':'7.5','wheel_sha256':
+         '5a194db36524604fafa1da89adebc837db9a95adf15ffd746e09ce98251e6c68'},
+         'same official pinned RF7.5 runtime')
+    manifest=lease['manifest'];items=ci9_json(read(manifest['path'],os.getuid(),manifest['sha256']))
+    need(type(items)is list and len(items)<=100000,'existing bounded Runner program manifest')
+    selected={}
+    for item in items:
+        name=Path(item['path'])
+        if not name.parts or name.parts[0]!='robot-python':continue
+        need(not name.is_absolute()and '..'not in name.parts and len(name.parts)>1 and
+             'symlink'not in item and str(name)not in selected,'fixed Robot manifest member')
+        raw=read(ROBOT_RUNTIME_ROOT.parent/name,os.getuid(),item['sha256'])
+        need(len(raw)==item['bytes'],'fixed Robot manifest member bytes');selected[str(name)]=item
+    need(all('robot-python/'+name in selected for name in
+        ('robot/__init__.py','robot/version.py','robotframework-7.5.dist-info/METADATA')),
+        'complete selected RF7.5 distribution')
+    actual=set()
+    for directory,dirs,files in os.walk(ROBOT_RUNTIME_ROOT,followlinks=False):
+        # The isolated child uses a fresh, unwritten bytecode prefix, so old
+        # ambient caches are not executable inputs.
+        dirs[:]=[n for n in dirs if n!='__pycache__']
+        for name in dirs:
+            s=(Path(directory)/name).lstat();need(stat.S_ISDIR(s.st_mode)and
+                s.st_uid==os.getuid()and not s.st_mode&0o022,'fixed Robot runtime directory')
+        for name in files:actual.add(str((Path(directory)/name).relative_to(ROBOT_RUNTIME_ROOT.parent)))
+        need(len(actual)<=len(selected),'unlisted Robot runtime source')
+    need(actual==set(selected)and not os.path.lexists(cache_prefix),'exact Robot source set and fresh bytecode prefix')
+    raw=held(entry,1048576);need(hashlib.sha256(raw).hexdigest()==entry_sha,'same held selected Robot entry')
+    # No ambient PYTHONPATH/site fallback; execute the verified entry bytes.
+    return ('import sys\nsys.pycache_prefix='+repr(str(cache_prefix))+
+            '\nsys.path.insert(0,'+repr(str(ROBOT_RUNTIME_ROOT))+')\nsys.argv=sys.argv[1:]\n'+
+            '__file__='+repr(str(entry))+'\nexec(compile('+repr(raw)+',__file__,"exec"))\n')
+
+
 class RobotPipeline:
     """The normal job produces observations; the existing Robot child sends input."""
     ACTIONS=('chooser-open','chooser-confirm-exact-input','Build',
@@ -849,7 +911,10 @@ class RobotPipeline:
             'OPEMOS_TRANSACTION_NONCE':self.identity['operation_nonce'],'OPEMOS_POINTER_OPERATION':op['path'],
             'OPEMOS_POINTER_OPERATION_SHA256':op['sha256']}
         runner=self.engine/'scripts/run_omen_robot_guest.py';suite=self.engine/'tests/robot/guest.robot'
-        argv=['/usr/bin/env',*[k+'='+v for k,v in env.items()],sys.executable,'-I','-B',str(runner),
+        bootstrap=fixed_robot_bootstrap(context,runner,
+            self.cfg['normalPolicy']['engineSHA256']['scripts/run_omen_robot_guest.py'],
+            p.root/(prefix+'-unused-pycache'))
+        argv=['/usr/bin/env',*[k+'='+v for k,v in env.items()],sys.executable,'-I','-B','-c',bootstrap,str(runner),
             request['path'],request['sha256'],str(suite),str(p.root/(prefix+'-reports'))]
         # QMP admits one client. Release the parent's connection before the
         # already reviewed Robot sender uses it; native observation is separate.
@@ -943,6 +1008,12 @@ class Pipeline:
              ready['process']['inherited_nonce']==binding['nonce']and
              ready['process'].get('exe_sha256')==config['native_executable_sha256'],
              'same admitted candidate/app birth/normal operation')
+
+    def __enter__(self):return self
+    def __exit__(self,*failure):
+        # Robot releases and replaces this peer between mouse operations.
+        # Close the current peer before the normal VM finalizer reconnects.
+        self.q.close()
 
     def request(self,kind,**operands):
         self.check()

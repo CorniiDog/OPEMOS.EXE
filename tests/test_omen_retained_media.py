@@ -900,6 +900,87 @@ class UbuntuSourceProducerInputs(unittest.TestCase):
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
         return module
 
+    def test_robot_runtime_bootstrap_real_isolated_uid1000_and_pinned_sources(self):
+        """Real isolation/custody with a model library; not RF or GUI acceptance."""
+        nonce=uuid.uuid4().hex
+        release=Path('/var/lib/opemos-robot-control-r1/releases')/nonce
+        missing=[];parent=release
+        while not parent.exists():missing.append(parent);parent=parent.parent
+        for parent in reversed(missing):parent.mkdir(mode=0o755);parent.chmod(0o755)
+        try:
+            with tempfile.TemporaryDirectory(prefix='fixed-robot-')as temp:
+                root=Path(temp);root.chmod(0o711)
+                def directory(path,uid=1000):
+                    path.mkdir(parents=True,exist_ok=True);os.chown(path,uid,uid);path.chmod(0o700 if uid else 0o755)
+                def file(path,raw,uid=1000,mode=0o600):
+                    path.write_bytes(raw);os.chown(path,uid,uid);path.chmod(mode)
+                    return hashlib.sha256(raw).hexdigest()
+                modules=root/'modules';directory(modules,0)
+                source=(SOURCE/'connection_control.py').read_bytes()
+                sender=file(modules/'connection_control.py',source,0,0o444)
+                runtime=root/'runner/robot-python';directory(root/'runner');directory(runtime)
+                directory(runtime/'robot');directory(runtime/'robotframework-7.5.dist-info')
+                members={'robot/__init__.py':b"__version__='7.5'\nfixture_origin='pinned'\n",
+                         'robot/version.py':b"VERSION='7.5'\n",
+                         'robotframework-7.5.dist-info/METADATA':b'Name: robotframework\nVersion: 7.5\n'}
+                manifest=[]
+                for name,raw in members.items():
+                    digest=file(runtime/name,raw)
+                    manifest.append(dict(path='robot-python/'+name,bytes=len(raw),sha256=digest))
+                digest=file(root/'runner/manifest.json',json.dumps(manifest).encode())
+                operations=root/'operations';directory(operations)
+                generation=operations/('run-fixture-'+nonce);directory(generation)
+                work=generation/'runtime';directory(work)
+                entry=work/'entry.py'
+                entry_sha=file(entry,b'import robot,sys,json\nprint(json.dumps(dict(origin=robot.fixture_origin,isolated=sys.flags.isolated,args=sys.argv[1:])))\n',mode=0o500)
+                profile={'robotframework':{'version':'7.5','wheel_sha256':
+                    '5a194db36524604fafa1da89adebc837db9a95adf15ffd746e09ce98251e6c68'}}
+                profile_sha=file(root/'profile.json',json.dumps(profile).encode(),0,0o444)
+                policy={'kind':'ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1',
+                        'operationRoot':str(operations),'programSHA256':{'connection_control.py':sender}}
+                policy_sha=file(release/'fixed-policy.json',json.dumps(policy).encode(),0,0o444)
+                context={'normal_policy_pin':{'path':str(release/'fixed-policy.json'),'sha256':policy_sha},
+                         'operation_root':str(work),'identity':{'source_commit':'a'*40,'operation_nonce':nonce},
+                         'sender_source_sha256':sender}
+                lease={'kind':'OPEMOS_ROBOT_FIXED_CONTROL_LEASE','engine_source_commit':'a'*40,
+                    'connection_fixed_policy':context['normal_policy_pin'],
+                    'engine_pins':{'scripts/run_omen_robot_guest.py':entry_sha},
+                    'profile_path':str(root/'profile.json'),'profile_sha256':profile_sha,
+                    'manifest':{'path':str(root/'runner/manifest.json'),'sha256':digest}}
+                file(release/'lease.json',json.dumps(lease).encode(),0,0o444)
+                hostile=root/'ambient';directory(hostile)
+                file(hostile/'robot.py',b"raise RuntimeError('ambient Robot executed')\n")
+                body=r'''
+import sys,os,json,subprocess
+from pathlib import Path
+sys.path.insert(0,sys.argv[1]);import connection_control as m
+runtime,work,entry=map(Path,sys.argv[2:5]);context=json.loads(sys.argv[5]);entry_sha=sys.argv[6]
+m.ROBOT_RUNTIME_ROOT=runtime
+bootstrap=m.fixed_robot_bootstrap(context,entry,entry_sha,work/'unused-cache')
+env=dict(os.environ,PYTHONPATH=sys.argv[7])
+actual=subprocess.run([sys.executable,'-I','-B','-c',bootstrap,str(entry),'actual-argument'],
+    capture_output=True,text=True,env=env,cwd=work,timeout=10)
+assert actual.returncode==0,actual.stderr
+assert json.loads(actual.stdout)==dict(origin='pinned',isolated=1,args=['actual-argument'])
+assert not (work/'unused-cache').exists()
+target=runtime/'robot/__init__.py';original=target.read_bytes()
+target.write_bytes(original+b"raise RuntimeError('tampered runtime executed')\n")
+try:m.fixed_robot_bootstrap(context,entry,entry_sha,work/'other-cache')
+except RuntimeError as error:assert 'epoch/hash'in str(error)
+else:raise AssertionError('tampered fixed runtime accepted')
+target.write_bytes(original);(runtime/'unlisted.py').write_text('raise RuntimeError()')
+try:m.fixed_robot_bootstrap(context,entry,entry_sha,work/'other-cache')
+except RuntimeError as error:assert 'runtime source'in str(error)or'source set'in str(error)
+else:raise AssertionError('unlisted ambient source accepted')
+print(json.dumps(dict(isolated=True,pinned=True,tamperRefused=True,ambientRefused=True)))
+'''
+                child=subprocess.run([sys.executable,'-I','-B','-c',body,str(modules),str(runtime),
+                    str(work),str(entry),json.dumps(context),entry_sha,str(hostile)],
+                    user=1000,group=1000,extra_groups=[],cwd=work,capture_output=True,text=True,timeout=20)
+                self.assertEqual(child.returncode,0,child.stderr)
+                self.assertTrue(json.loads(child.stdout)['isolated'])
+        finally:shutil.rmtree(release)
+
     def test_nbd_task_group_join_real_uid1000_pidfd_and_disconnect(self):
         """Real /proc, Root payload, ordinary reader and PIDFD; NBD transport is modeled."""
         import threading
