@@ -29,6 +29,8 @@ ROUTE='.github/workflows/omen-robot.yml'
 NATIVE={'ubuntu':('appimage-package','02 Ubuntu AppImage'),'windows':('build','01 Windows EXE')}
 PRODUCER_PATH={'ubuntu':'.github/workflows/ubuntu-executable.yml','windows':'.github/workflows/windows-portable.yml'}
 CAP=2*1024**2
+CURRENT_REPORT_EXCHANGE='/media/connor/Games/OPEMOS/CI-artifacts/robot-runtime/reports'
+HISTORIC_REPORT_EXCHANGE='/home/connor/.local/share/opemos-ci/github-runner/robot-private/reports'
 def require(value,reason):
  if not value:raise Refusal(reason)
 def strict(raw):
@@ -540,6 +542,35 @@ def source_results_directory():
  return Path('source-build-results')/(run_id+'-'+attempt)
 
 
+def source_report_exchange():
+ current=Path(CURRENT_REPORT_EXCHANGE)
+ selected=Path(os.environ['OPEMOS_ROBOT_REPORT_EXCHANGE'])
+ require(selected in(current,Path(HISTORIC_REPORT_EXCHANGE)),
+         'separate-partition current report/package exchange')
+ if selected==current:return current
+ # Runner.Listener loads .env after the launcher's environment. Older reviewed
+ # installations select its historical alias; launch.py binds BOTH names read
+ # only to the same shared directory. Authenticate that binding, then always
+ # consume the canonical SharedStorage path and the existing file SHA/full9.
+ fds=[];identities=[]
+ try:
+  for path in(current,selected):
+   fd=os.open(path,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);fds.append(fd)
+   held=os.fstat(fd);named=path.lstat()
+   fields=('st_dev','st_ino','st_mode','st_uid','st_gid')
+   require(stat.S_ISDIR(held.st_mode)and held.st_uid==held.st_gid==1000 and
+           not held.st_mode&0o077 and
+           all(getattr(held,k)==getattr(named,k)for k in fields),
+           'private held current report exchange alias')
+   identities.append((held.st_dev,held.st_ino))
+  require(identities[0]==identities[1],'same actual shared report exchange alias')
+ except OSError as error:
+  raise Refusal('current report exchange alias unavailable')from error
+ finally:
+  for fd in reversed(fds):os.close(fd)
+ return current
+
+
 def build_source_on_omen():
  require(os.getuid()==os.geteuid()==1000 and os.environ.get('GITHUB_JOB')=='appimage-package',
          'trusted source-producer Actions job')
@@ -573,9 +604,7 @@ def build_source_on_omen():
          result['source_input']['producer_run_id']==context['run_id']and
          result['source_input']['producer_attempt']==context['attempt']and
          result['GUIOrSteamOSAcceptance']is False,'actual guest output, never a full-stack pass')
- exchange=Path(os.environ['OPEMOS_ROBOT_REPORT_EXCHANGE'])
- require(str(exchange)=='/media/connor/Games/OPEMOS/CI-artifacts/robot-runtime/reports',
-         'separate-partition current report/package exchange')
+ exchange=source_report_exchange()
  name=result['directory'];require(type(name)is str and Path(name).name==name and
          re.fullmatch(context['run_id']+'-'+context['attempt']+'-[0-9a-f]{32}-packages',name),
          'current operation package directory only')

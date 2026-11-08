@@ -47,6 +47,24 @@ class Metadata:
  def verify(self):return gate.producer_ready(SOURCE,self.value['platform'],'10','2',self.read,self.download)
 
 class RequiredProducerTests(unittest.TestCase):
+ @unittest.skipUnless(sys.platform=='linux','Linux source-producer namespace contract')
+ def test_source_exchange_keeps_canonical_path_and_refuses_unbound_aliases(self):
+  with tempfile.TemporaryDirectory()as temp:
+   current=Path(temp)/'shared';current.mkdir(mode=0o700)
+   historical=Path(temp)/'historical';historical.mkdir(mode=0o700)
+   with patch.object(gate,'CURRENT_REPORT_EXCHANGE',str(current)),\
+        patch.object(gate,'HISTORIC_REPORT_EXCHANGE',str(historical)):
+    with patch.dict(os.environ,{'OPEMOS_ROBOT_REPORT_EXCHANGE':str(current)}):
+     self.assertEqual(gate.source_report_exchange(),current)
+    with patch.dict(os.environ,{'OPEMOS_ROBOT_REPORT_EXCHANGE':str(historical)}):
+     before=set(os.listdir('/proc/self/fd'))if sys.platform=='linux'else None
+     with self.assertRaises(gate.Refusal):gate.source_report_exchange()
+     if before is not None:self.assertEqual(set(os.listdir('/proc/self/fd')),before)
+     historical.rmdir();historical.symlink_to(current,target_is_directory=True)
+     with self.assertRaises(gate.Refusal):gate.source_report_exchange()
+    with patch.dict(os.environ,{'OPEMOS_ROBOT_REPORT_EXCHANGE':str(Path(temp)/'arbitrary')}):
+     with self.assertRaisesRegex(gate.Refusal,'separate-partition'):gate.source_report_exchange()
+
  def test_source_build_failure_report_uses_current_attempt_and_keeps_old_results(self):
   """Real result writer/consumer; only broker transport and caller UID modeled."""
   class Broker:

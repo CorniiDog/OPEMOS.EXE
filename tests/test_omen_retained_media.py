@@ -1955,6 +1955,24 @@ baseline=set(os.listdir('/proc/self/fd'));store=storage.Storage(config,C,N,None)
 actual=store.check('real-private-mount');assert actual['device']==Path(config['mount']).stat().st_dev
 assert store.loopfd is not None and stat.S_ISBLK(os.fstat(store.loopfd).st_mode)
 Path(config['mount'],'actual-owned-data').write_bytes(b'actual retained private ext4 data\n')
+# Exercise the production package consumer against real private-kernel bind
+# aliases, not a modeled samefile result. No VM/AppImage acceptance is implied.
+sys.path.insert(0,str(Path(sys.argv[1]).parent));import required_omen as package_gate
+import hashlib
+shared=Path(config['mount'])/'shared-reports';shared.mkdir(mode=0o700);shared.chmod(0o700);os.chown(shared,1000,1000)
+historical=root/'historical-reports';historical.mkdir(mode=0o700);os.chown(historical,1000,1000)
+package_gate.CURRENT_REPORT_EXCHANGE=str(shared);package_gate.HISTORIC_REPORT_EXCHANGE=str(historical)
+os.environ['OPEMOS_ROBOT_REPORT_EXCHANGE']=str(historical)
+package=shared/'fixture.AppImage';payload=b'actual readonly package fixture bytes';package.write_bytes(payload);package.chmod(0o400);os.chown(package,1000,1000)
+N.checked(['/usr/bin/mount','--bind',str(shared),str(historical)],10,'report-alias-bind')
+try:
+ N.checked(['/usr/bin/mount','-o','remount,bind,ro',str(historical)],10,'report-alias-readonly')
+ directory=package_gate.source_report_exchange();assert directory==shared
+ package_gate.source_package_pin(directory/package.name,{'bytes':len(payload),'sha256':hashlib.sha256(payload).hexdigest()})
+finally:N.checked(['/usr/bin/umount',str(historical)],10,'report-alias-unmount')
+try:package_gate.source_report_exchange()
+except package_gate.Refusal:pass
+else:raise AssertionError('unbound historical directory accepted as shared storage')
 readable=root/'user-modules';readable.mkdir(mode=0o755);readable.chmod(0o755)
 for name,path in(('virtual_usb.py',Path(sys.argv[1])/'virtual_usb.py'),
                  ('vm_write_ceiling.py',Path(sys.argv[1]).parent/'vm_write_ceiling.py')):
