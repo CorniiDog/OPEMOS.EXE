@@ -370,7 +370,7 @@ class MetadataConsumerFailure(ValueError):
         super().__init__(first["type"] + ": " + first["reason"])
 
 
-def queue_call(config, action, manifests=(), capture_receipt=None):
+def queue_call(config, action, manifests=(), capture_receipt=None, job_ids=None):
     """Complete unchanged normal producer, consume, close, then prove closure.
 
     Only current verified source/dependencies and sealed absolute manifests are
@@ -380,6 +380,11 @@ def queue_call(config, action, manifests=(), capture_receipt=None):
     import contextlib
     import types
     require(action in ("status", "submit", "fail-unstarted"), "CI never starts/replaces a queue worker")
+    if job_ids is not None:
+        require(action == 'status' and not manifests and type(job_ids) is list and
+                1 <= len(job_ids) <= 256 and len(set(job_ids)) == len(job_ids) and
+                all(type(j) is str and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,79}', j) for j in job_ids),
+                'Exact bounded wait status scope only')
     modules = {}
     for item in config["queue_modules"]:
         require(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", item["module"]), "Declared module name required")
@@ -424,6 +429,8 @@ def queue_call(config, action, manifests=(), capture_receipt=None):
             receipt["owned_descriptors"].append(record);owned.append((fd,record))
             paths.append("/proc/self/fd/" + str(fd))
         argv = ["--queue", config["queue_dir"], action, *paths]
+        if job_ids is not None:
+            argv += [value for job in job_ids for value in ('--wait-job-id', job)]
         with contextlib.redirect_stdout(output): code = namespace["main"](argv)
         receipt["producer_exit"] = code
         require(type(code) is int and code == 0, "Normal queue metadata consumer failed")
@@ -525,20 +532,28 @@ def root_guard(root=ROOT):
     real_dir(root / ".receipts")
 
 
-def queue_status(config, diagnostic=None):
+def queue_status(config, diagnostic=None, job_ids=None):
     queue = Path(config["queue_dir"])
     real_dir(queue)
     database = (queue / "queue.sqlite3").lstat()
     require(stat.S_ISREG(database.st_mode) and database.st_uid == os.getuid() and database.st_nlink == 1,
             "Existing queue database required; this adapter never initializes a queue")
-    payload = queue_call(config, "status", capture_receipt=diagnostic)
+    payload = queue_call(config, "status", capture_receipt=diagnostic, job_ids=job_ids)
     pool_sha = hashlib.sha256(json.dumps(payload["pool"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     require(pool_sha == config["pool_sha256"], "Installed shared-pool configuration differs from reviewed admission")
     jobs = payload["jobs"]
     require(isinstance(jobs, list) and len({x["id"] for x in jobs}) == len(jobs), "Ambiguous queue rows")
+    if job_ids is not None:
+        require(payload.get('kind') == 'NORMAL_QUEUE_WAIT_STATUS_V1' and
+                payload.get('job_ids') == job_ids and
+                set(payload.get('missing_job_ids', [])) == set(job_ids) - {j['id'] for j in jobs} and
+                {j['id'] for j in jobs} <= set(job_ids), 'Complete exact wait scope; no full-history claim')
     if diagnostic is not None:
-        diagnostic.update(job_rows=len(jobs), pool_sha256=pool_sha, all_rows_retained=True,
+        diagnostic.update(job_rows=len(jobs), pool_sha256=pool_sha, all_rows_retained=job_ids is None,
                           top_level_keys=sorted(payload), mutation="normal status only; no submit/run/dispatch/expire")
+        if job_ids is not None:
+            diagnostic.update(scope='requested-jobs-only', requested_job_ids=list(job_ids),
+                              missing_job_ids=payload['missing_job_ids'])
         lock=queue/'worker.lock'
         try:fd=os.open(lock,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
         except FileNotFoundError:
@@ -574,7 +589,10 @@ def wait_jobs(config,job_ids,manifests,deadline,diagnostic):
     absent_since=None
     while True:
         require(time.monotonic()<deadline,'Original normal queue deadline; active closure UNKNOWN, no retry/cleanup')
-        cut={};rows=queue_status(config,diagnostic=cut)
+        # Drop the previous cut before reading the next one. Neither this
+        # control broker nor its diagnostics retain complete historical rows.
+        rows=None
+        cut={};rows=queue_status(config,diagnostic=cut,job_ids=job_ids)
         require(time.monotonic()<deadline,'Original normal queue deadline after status; closure UNKNOWN')
         diagnostic.update(cut)
         diagnostic['jobs']={j:{k:rows.get(j,{}).get(k)for k in('state','unit')}for j in job_ids}
@@ -593,7 +611,7 @@ def wait_jobs(config,job_ids,manifests,deadline,diagnostic):
             if unstarted:
                 try:
                     diagnostic['normal_pending_closure']=queue_call(config,'fail-unstarted',manifests)
-                    after=queue_status(config)
+                    after=queue_status(config,job_ids=job_ids)
                     if closed_jobs(job_ids,after):diagnostic.update(closure='CLOSED',reservationRetained=False)
                 except Exception as error:
                     diagnostic['pending_closure_failure']={'type':type(error).__name__,'reason':str(error)}

@@ -682,6 +682,84 @@ class LosslessHistoryRepack(unittest.TestCase):
             self.assertEqual(q.history_read_leaf(fd,new,self.uid,q.HISTORY_FILE_MAX),other)
 
 
+class ActualRequestedJobWaitStatus(unittest.TestCase):
+    """Real canonical producer, retained history, held capture and wait consumer."""
+    def setUp(self):
+        source=Path(__file__).resolve().parents[1]/'scripts/omen_control/test_queue.py'
+        spec=importlib.util.spec_from_file_location('actual_wait_status_queue',source)
+        self.q=importlib.util.module_from_spec(spec);spec.loader.exec_module(self.q)
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name);self.root.chmod(0o700)
+        self.queue=self.root/'queue';self.queue.mkdir(mode=0o700);self.queue.chmod(0o700)
+        _,self.db=self.q.connect(self.queue);self.addCleanup(self.db.close)
+        self.pool={'cpu_ids':[0,1],'memory_bytes':32*1024**3,
+                   'slice':'opemos-vm-pool.slice','manager':'system'}
+        self.db.execute('INSERT INTO config VALUES(1,?)',(self.q.canonical(self.pool),))
+        self.db.commit()
+        (self.queue/'worker.lock').touch(mode=0o600)
+        self.cfg={'queue_dir':str(self.queue),'queue_modules':[],
+            'queue_entry':{'path':str(source),'sha256':hashlib.sha256(source.read_bytes()).hexdigest()},
+            'pool_sha256':hashlib.sha256(self.q.canonical(self.pool).encode()).hexdigest(),
+            'queue_metadata':{'max_bytes':512*1024**2,'free_reserve_bytes':0,
+                              'scratch_dir':str(self.root)}}
+
+    def add(self,job,state,result):
+        self.db.execute('INSERT INTO jobs(id,spec,state,unit,result) VALUES(?,?,?,?,?)',
+            (job,self.q.canonical({'platform':'ubuntu'}),state,
+             None if state=='pending'else job+'.service',
+             None if result is None else self.q.canonical(result)))
+        self.db.commit()
+
+    def test_retained_history_and_own_large_epoch_never_enter_broker_metadata(self):
+        # Both unrelated history AND the selected job's original epoch can
+        # be large. Neither is sent to or decoded by the waiting broker.
+        payload='original-retained-'+'x'*(2*1024**2)
+        for i in range(8):self.add('old-'+str(i),'failed',{'original':payload})
+        self.add('own','passed',{'reason':'normal result','originalEpoch':payload,
+            'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False}})
+        before=[tuple(r)for r in self.db.execute('SELECT * FROM jobs ORDER BY rowid')]
+        for _ in range(3):
+            diagnostic={};rows=stage.queue_status(self.cfg,diagnostic=diagnostic,job_ids=['own','absent'])
+            self.assertEqual(set(rows),{'own'})
+            self.assertEqual(rows['own']['result']['terminalLifecycle'],
+                {'phase':'CLOSED','reservationRetained':False})
+            self.assertTrue(stage.closed_jobs(['own'],rows))
+            self.assertLess(diagnostic['captured_bytes'],2048)
+            self.assertFalse(diagnostic['all_rows_retained'])
+            self.assertEqual(diagnostic['scope'],'requested-jobs-only')
+            self.assertEqual(diagnostic['missing_job_ids'],['absent'])
+            self.assertTrue(diagnostic['complete'])
+            self.assertTrue(diagnostic['normal_queue_descriptors_closed'])
+        self.assertEqual([tuple(r)for r in self.db.execute('SELECT * FROM jobs ORDER BY rowid')],before)
+
+    def test_actual_wait_reaches_original_closed_state_and_preserves_unknown_refusal(self):
+        self.add('own','pending',None)
+        def complete(_seconds):
+            self.db.execute('UPDATE jobs SET state=?,unit=?,result=? WHERE id=?',
+                ('passed','own.service',self.q.canonical({'terminalLifecycle':
+                    {'phase':'CLOSED','reservationRetained':False}}),'own'));self.db.commit()
+        diagnostic={}
+        with mock.patch.object(stage.time,'sleep',side_effect=complete):
+            rows=stage.wait_jobs(self.cfg,['own'],[],stage.time.monotonic()+10,diagnostic)
+        self.assertTrue(stage.closed_jobs(['own'],rows))
+        self.assertEqual(rows['own']['result']['terminalLifecycle']['phase'],'CLOSED')
+        self.db.execute('UPDATE jobs SET result=? WHERE id=?',
+            (self.q.canonical({'reason':'Unit evidence missing; keep reservation'}),'own'));self.db.commit()
+        rows=stage.queue_status(self.cfg,job_ids=['own'])
+        self.assertFalse(stage.closed_jobs(['own'],rows))
+        self.assertTrue(rows['own']['result']['reason'].startswith('Unit evidence missing'))
+
+    def test_exact_scope_source_and_lifecycle_types_stay_strict(self):
+        self.add('own','failed',{'reason':{'not':'text'}})
+        with self.assertRaisesRegex(stage.MetadataConsumerFailure,'lifecycle field types'):
+            stage.queue_status(self.cfg,job_ids=['own'])
+        for ids in ([],['own','own'],['../escape']):
+            with self.assertRaisesRegex(ValueError,'bounded wait status'):
+                stage.queue_status(self.cfg,job_ids=ids)
+        bad=copy.deepcopy(self.cfg);bad['queue_entry']['sha256']='0'*64
+        with self.assertRaises(ValueError):stage.queue_status(bad,job_ids=['own'])
+
+
 class MetadataOwnedClosure(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
@@ -909,7 +987,7 @@ class OrdinaryDispatcherStartup(unittest.TestCase):
 
     def test_late_status_cannot_extend_original_wait_deadline(self):
         clock=[1.0];called=[]
-        def status(config,diagnostic):clock[0]=11.0;return {self.job['id']:{'state':'passed'}}
+        def status(config,diagnostic,**kwargs):clock[0]=11.0;return {self.job['id']:{'state':'passed'}}
         with mock.patch.object(stage.time,'monotonic',side_effect=lambda:clock[0]),mock.patch.object(stage,'queue_status',side_effect=status):
             with self.assertRaisesRegex(ValueError,'deadline after status'):
                 stage.wait_jobs(self.config,[self.job['id']],[self.pin],10,{})

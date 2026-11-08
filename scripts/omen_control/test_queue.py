@@ -4491,6 +4491,49 @@ def fail_unstarted(root,db,jobs):
     finally:os.close(fd)
 
 
+def wait_status(db, job_ids):
+    """Read-only status for exactly the waiting caller's jobs, not history.
+
+    SQLite projects the few lifecycle fields before returning bytes to Python.
+    Original result blobs and retained epochs stay in the canonical database.
+    This response is explicitly scoped; it never supplies pool admission proof.
+    """
+    require(1 <= len(job_ids) <= MAX_JOBS and len(set(job_ids)) == len(job_ids)
+            and all(type(j) is str and NAME.fullmatch(j) for j in job_ids),
+            'Bounded distinct normal wait job identifiers')
+    try:
+        db.execute('BEGIN')
+        cfg = config(db)
+        marks = ','.join('?' for _ in job_ids)
+        selected = db.execute('SELECT id,state,unit,'
+            "json_type(result) AS result_type,"
+            "json_type(result,'$.reason') AS reason_type,"
+            "substr(json_extract(result,'$.reason'),1,160) AS reason,"
+            "json_type(result,'$.terminalLifecycle.phase') AS phase_type,"
+            "substr(json_extract(result,'$.terminalLifecycle.phase'),1,96) AS phase,"
+            "json_type(result,'$.terminalLifecycle.reservationRetained') AS retained_type "
+            'FROM jobs WHERE id IN (' + marks + ') ORDER BY rowid', job_ids).fetchall()
+        jobs = []
+        for row in selected:
+            require(row['result_type'] in (None, 'object') and
+                    row['reason_type'] in (None, 'null', 'text') and
+                    row['phase_type'] in (None, 'null', 'text') and
+                    row['retained_type'] in (None, 'null', 'true', 'false'),
+                    'Exact normal wait lifecycle field types')
+            result = None if row['result_type'] is None else {
+                'reason': row['reason'] or '',
+                'terminalLifecycle': {'phase': row['phase'], 'reservationRetained':
+                    {'true': True, 'false': False}.get(row['retained_type'])}}
+            jobs.append({'id': row['id'], 'state': row['state'],
+                         'unit': row['unit'], 'result': result})
+        present = {row['id'] for row in jobs}
+        return {'kind': 'NORMAL_QUEUE_WAIT_STATUS_V1', 'job_ids': job_ids,
+                'missing_job_ids': [j for j in job_ids if j not in present],
+                'pool': cfg, 'jobs': jobs}
+    finally:
+        db.rollback()
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--queue", type=Path, default=Path(__file__).parent / "test-queue-state")
@@ -4511,7 +4554,9 @@ def main(argv=None):
     add.add_argument("--approval", type=Path, required=True)
     add.add_argument("--resource", action="append", required=True)
     commands.add_parser("plan")
-    status_parser=commands.add_parser("status");status_parser.add_argument("--job-id")
+    status_parser=commands.add_parser("status");status_scope=status_parser.add_mutually_exclusive_group()
+    status_scope.add_argument("--job-id")
+    status_scope.add_argument("--wait-job-id", action="append")
     run_parser=commands.add_parser("run");run_parser.add_argument("--collected-proof",type=Path);run_parser.add_argument("--collected-approval",type=Path);run_parser.add_argument("--diagnostic-proof",type=Path);run_parser.add_argument("--diagnostic-approval",type=Path);run_parser.add_argument("--reconcile-failed-libvirt",choices=tuple(FAILED_LIBVIRT_TERMINAL_TARGETS))
     args = parser.parse_args(argv)
     if args.action=='run' and args.reconcile_failed_libvirt is not None:
@@ -4568,6 +4613,11 @@ def main(argv=None):
         enqueue(db, jobs)
         print(canonical({"queued": [x["id"] for x in jobs]}))
     elif args.action in ("plan", "status"):
+        if args.action == 'status' and args.wait_job_id is not None:
+            try:
+                print(canonical(wait_status(db, args.wait_job_id)))
+                return 0
+            finally: db.close()
         if args.action=="status"and args.job_id is not None:
             try:
                 require(re.fullmatch(r"[A-Za-z0-9_.-]{1,80}",args.job_id)is not None,"Exact normal job identifier")

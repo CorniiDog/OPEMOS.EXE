@@ -142,7 +142,7 @@ class SourceBuildLockLifecycle(unittest.TestCase):
             load_pinned=lambda ref:self.cfg if ref=='modeled-config' else
                 {'sourceBuildEnabled':True} if ref==self.admission else {'jobs':[self.job]},
             absolute_manifest=lambda value:value,verify_original_operand=lambda *args:None,
-            queue_status=lambda config:{})
+            queue_status=lambda config,**kwargs:{})
         self.engine.stage=self.stage
     def tearDown(self):
         for handle,_ in self.handles:handle.close()

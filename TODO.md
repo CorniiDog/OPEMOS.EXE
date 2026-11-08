@@ -5350,3 +5350,19 @@ R121 publication: normal receive-pack returned server500 three times with ref ab
 
 
 2026-11-06 EXE normal Ubuntu GUI operation continuation: connect existing Root deployment/policy/planner and normal queue to authenticated produced package, Robot native pointer/screenshots and full file-backed USB readback. Reuse existing private file-backed ext4 storage API for the measured host-space constraint; preserve original images and canonical history. Generic controller identity and candidate identity stay separate. Ubuntu-stage verification explicitly leaves SteamOS/NVIDIA/install/update/healing acceptance incomplete. Exact Core source/effects review and current operative CI remain required before deployment; no host test or guest acceptance claimed. This lead-only fast-forward push is necessary for remote CI and immutable counterpart review; origin remains https://github.com/CorniiDog/OPEMOS.EXE.git, topic work/exe-ubuntu-automatic-operation-20261105. No PR-cap, Main, trust or runtime hold bypass.
+
+### 2026-11-08 — bounded normal queue wait metadata (existing runner repair)
+
+- [x] Implement a read-only requested-job lifecycle projection in the existing
+  normal queue, with explicit scope/missing IDs. Wire the authenticated stage
+  wait loop and source-build pre-submit replay check to it. Preserve default
+  full status, complete retained jobs/results, ordinary submission, pool and
+  VM/GPU admission, source pins, original deadlines and descriptor closure.
+- [ ] Hosted CI and exact Core source/effects disposition before deployment;
+  then production listener/lease/natural-heartbeat and real GUI acceptance.
+  Local validation is AST and whitespace only, not project test execution.
+  A normal fast-forward push to CorniiDog/OPEMOS.EXE is necessary for remote
+  Linux/Root regression execution and immutable independent Core review.
+  Actual broker OOM and the 96,591,145-byte whole-history poll are retained in
+  the authenticated shared handoff; no limit raise, deletion or restart is
+  represented as the permanent repair.
