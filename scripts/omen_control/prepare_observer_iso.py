@@ -65,7 +65,7 @@ app="$owned/OPEMOS EXE Linux Test_0.1.0_amd64.AppImage"
 cp --no-clobber -- "$package" "$app"
 printf '%s  %s\\n' b252781da4a8af77c1439e0197208fc5c607d29bbc7ef18595ed550029ee9580 "$app" | sha256sum --check --strict
 chmod u+x -- "$app"
-export OPROBOT_NONCE="$nonce" OPEMOS_EXPERIMENTAL_LINUX=1 OPEMOS_LINUX_ACCEL=kvm GDK_BACKEND=x11
+export OPROBOT_NONCE="$nonce" OPEMOS_EXPERIMENTAL_LINUX=1 OPEMOS_LINUX_ACCEL=kvm GDK_BACKEND=x11 WEBKIT_DISABLE_DMABUF_RENDERER=1
 phase=native_app_and_observer
 "$app" --appimage-extract-and-run > "$owned/app.log" 2>&1 &
 app_launcher=$!
@@ -392,7 +392,7 @@ cp --no-clobber -- '''+shlex.quote(package)+''' "$app"
 cp -a --no-clobber -- '''+shlex.quote(package+'.runtime')+''' "$app.runtime"
 printf '%s  %s\\n' '''+shlex.quote(descriptor['package_sha256'])+''' "$app" | sha256sum --check --strict
 chmod u+x -- "$app"
-export OPROBOT_NONCE="$nonce" OPEMOS_EXPERIMENTAL_LINUX=1 OPEMOS_LINUX_ACCEL=kvm GDK_BACKEND=x11
+export OPROBOT_NONCE="$nonce" OPEMOS_EXPERIMENTAL_LINUX=1 OPEMOS_LINUX_ACCEL=kvm GDK_BACKEND=x11 WEBKIT_DISABLE_DMABUF_RENDERER=1
 phase=guest_display
 # Set the guest framebuffer before launching the app. Its 800px minimum
 # window height also needs room for the GNOME panel and window decoration.

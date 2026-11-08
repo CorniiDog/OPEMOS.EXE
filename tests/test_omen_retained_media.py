@@ -819,6 +819,28 @@ class UbuntuCandidateDiscLayout(unittest.TestCase):
                                             capture_output=True, check=True).stdout
                     self.assertEqual(actual, expected_bytes)
                 script = (root / 'prepared/start.sh').read_text()
+                on_disc = subprocess.run(['isoinfo', '-R', '-i', iso, '-x', '/start.sh'],
+                                         capture_output=True, check=True).stdout.decode()
+                self.assertEqual(on_disc, script)
+                # Execute the generated export stanza with a benign child.
+                # Port/package/native checks remain production requirements;
+                # this proves inherited launch ABI, not a guest/GUI pass.
+                exports = [line for line in on_disc.splitlines()
+                           if line.startswith('export OPROBOT_NONCE=')]
+                self.assertEqual(len(exports), 1)
+                child = 'import json,os;print(json.dumps({k:os.environ.get(k)for k in '+repr(
+                    ['WEBKIT_DISABLE_DMABUF_RENDERER', 'GDK_BACKEND', 'OPEMOS_LINUX_ACCEL',
+                     'OPROBOT_NONCE', 'KEEP'])+'}))'
+                for ambient in (None, '', '0', 'unexpected'):
+                    env = {**os.environ, 'KEEP': 'preserved'}
+                    env.pop('WEBKIT_DISABLE_DMABUF_RENDERER', None)
+                    if ambient is not None:env['WEBKIT_DISABLE_DMABUF_RENDERER'] = ambient
+                    actual = subprocess.run(['bash', '-c', 'nonce='+shlex.quote(nonce)+'\n'+
+                        exports[0]+'\nexec /usr/bin/python3 -I -B -c '+shlex.quote(child)],
+                        env=env, capture_output=True, text=True, check=True)
+                    self.assertEqual(json.loads(actual.stdout), dict(WEBKIT_DISABLE_DMABUF_RENDERER='1',
+                        GDK_BACKEND='x11', OPEMOS_LINUX_ACCEL='kvm', OPROBOT_NONCE=nonce, KEEP='preserved'))
+                    self.assertEqual(env.get('WEBKIT_DISABLE_DMABUF_RENDERER'), ambient)
                 self.assertIn(shlex.quote('/media/opemosgui/OPROBOT' + expected), script)
                 self.assertLess(script.index('phase=guest_display'),
                                 script.index('phase=native_app_and_observer'))
