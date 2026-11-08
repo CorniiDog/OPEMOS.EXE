@@ -691,11 +691,13 @@ class ActualRequestedJobWaitStatus(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name);self.root.chmod(0o700)
         self.queue=self.root/'queue';self.queue.mkdir(mode=0o700);self.queue.chmod(0o700)
-        _,self.db=self.q.connect(self.queue);self.addCleanup(self.db.close)
+        _,db=self.q.connect(self.queue)
         self.pool={'cpu_ids':[0,1],'memory_bytes':32*1024**3,
                    'slice':'opemos-vm-pool.slice','manager':'system'}
-        self.db.execute('INSERT INTO config VALUES(1,?)',(self.q.canonical(self.pool),))
-        self.db.commit()
+        try:
+            db.execute('INSERT INTO config VALUES(1,?)',(self.q.canonical(self.pool),))
+            db.commit()
+        finally:db.close()
         (self.queue/'worker.lock').touch(mode=0o600)
         self.cfg={'queue_dir':str(self.queue),'queue_modules':[],
             'queue_entry':{'path':str(source),'sha256':hashlib.sha256(source.read_bytes()).hexdigest()},
@@ -704,11 +706,17 @@ class ActualRequestedJobWaitStatus(unittest.TestCase):
                               'scratch_dir':str(self.root)}}
 
     def add(self,job,state,result):
-        self.db.execute('INSERT INTO jobs(id,spec,state,unit,result) VALUES(?,?,?,?,?)',
+        self.sql('INSERT INTO jobs(id,spec,state,unit,result) VALUES(?,?,?,?,?)',
             (job,self.q.canonical({'platform':'ubuntu'}),state,
              None if state=='pending'else job+'.service',
              None if result is None else self.q.canonical(result)))
-        self.db.commit()
+
+    def sql(self,query,parameters=()):
+        import sqlite3
+        db=sqlite3.connect(self.queue/'queue.sqlite3')
+        try:
+            result=db.execute(query,parameters).fetchall();db.commit();return result
+        finally:db.close()  # fixture never lends its SQL descriptors to consumer
 
     def test_retained_history_and_own_large_epoch_never_enter_broker_metadata(self):
         # Both unrelated history AND the selected job's original epoch can
@@ -717,7 +725,7 @@ class ActualRequestedJobWaitStatus(unittest.TestCase):
         for i in range(8):self.add('old-'+str(i),'failed',{'original':payload})
         self.add('own','passed',{'reason':'normal result','originalEpoch':payload,
             'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False}})
-        before=[tuple(r)for r in self.db.execute('SELECT * FROM jobs ORDER BY rowid')]
+        before=self.sql('SELECT * FROM jobs ORDER BY rowid')
         for _ in range(3):
             diagnostic={};rows=stage.queue_status(self.cfg,diagnostic=diagnostic,job_ids=['own','absent'])
             self.assertEqual(set(rows),{'own'})
@@ -730,21 +738,21 @@ class ActualRequestedJobWaitStatus(unittest.TestCase):
             self.assertEqual(diagnostic['missing_job_ids'],['absent'])
             self.assertTrue(diagnostic['complete'])
             self.assertTrue(diagnostic['normal_queue_descriptors_closed'])
-        self.assertEqual([tuple(r)for r in self.db.execute('SELECT * FROM jobs ORDER BY rowid')],before)
+        self.assertEqual(self.sql('SELECT * FROM jobs ORDER BY rowid'),before)
 
     def test_actual_wait_reaches_original_closed_state_and_preserves_unknown_refusal(self):
         self.add('own','pending',None)
         def complete(_seconds):
-            self.db.execute('UPDATE jobs SET state=?,unit=?,result=? WHERE id=?',
+            self.sql('UPDATE jobs SET state=?,unit=?,result=? WHERE id=?',
                 ('passed','own.service',self.q.canonical({'terminalLifecycle':
-                    {'phase':'CLOSED','reservationRetained':False}}),'own'));self.db.commit()
+                    {'phase':'CLOSED','reservationRetained':False}}),'own'))
         diagnostic={}
         with mock.patch.object(stage.time,'sleep',side_effect=complete):
             rows=stage.wait_jobs(self.cfg,['own'],[],stage.time.monotonic()+10,diagnostic)
         self.assertTrue(stage.closed_jobs(['own'],rows))
         self.assertEqual(rows['own']['result']['terminalLifecycle']['phase'],'CLOSED')
-        self.db.execute('UPDATE jobs SET result=? WHERE id=?',
-            (self.q.canonical({'reason':'Unit evidence missing; keep reservation'}),'own'));self.db.commit()
+        self.sql('UPDATE jobs SET result=? WHERE id=?',
+            (self.q.canonical({'reason':'Unit evidence missing; keep reservation'}),'own'))
         rows=stage.queue_status(self.cfg,job_ids=['own'])
         self.assertFalse(stage.closed_jobs(['own'],rows))
         self.assertTrue(rows['own']['result']['reason'].startswith('Unit evidence missing'))
@@ -794,7 +802,7 @@ class ActualRequestedJobWaitStatus(unittest.TestCase):
         diagnostic={};rows=stage.queue_status(cfg,diagnostic=diagnostic,job_ids=['own'])
         self.assertTrue(stage.closed_jobs(['own'],rows))
         self.assertLess(diagnostic['captured_bytes'],2048)
-        self.assertEqual(self.db.execute('SELECT count(*) FROM jobs').fetchone()[0],2)
+        self.assertEqual(self.sql('SELECT count(*) FROM jobs')[0][0],2)
 
 
 class MetadataOwnedClosure(unittest.TestCase):
