@@ -3836,6 +3836,44 @@ def readonly_pool_membership_transition(error):
             all(type(c)is dict and c.get('closed')is True and c.get('UNKNOWN')is False
                 and type(c.get('fd'))is int and c['fd']>=0 and type(c.get('label'))is str for c in closes))
 
+def readonly_proc_directory_transition(error):
+    """A closed read-only recheck raced another exiting task, not admission."""
+    if type(error)is not PoolAdmissionFailure:return False
+    e=error.evidence
+    if (type(e)is not dict or e.get('admitted')is not False or
+            e.get('reservationRetained')is not True or
+            e.get('operationOrReleaseAuthorized')is not False or
+            e.get('unknownReservationsRetained')not in(None,[])):return False
+    failure=e.get('firstFailure')
+    if type(failure)is not dict or failure.get('operationOrReleaseAuthorized')is not False:return False
+    typed=failure.get('firstFailure')
+    if (type(typed)is not dict or set(typed)!={'type','errno','tid','path','stage'} or
+            typed['type']!='TransientProcObservation' or type(typed['errno'])is not int or
+            typed['errno']not in(2,3) or type(typed['tid'])is not int or typed['tid']<=0 or
+            typed['path']!='/proc/'+str(typed['tid']) or typed['stage']!='pid-directory-open'):return False
+    # Set only around the classifier's rescan, after its original source,
+    # ledger, invocation and manager checks. Do not generalize arbitrary75 or
+    # an unclassified/foreign missing process into a monitoring continuation.
+    records=getattr(error,'monitorOriginalRecords',None)
+    if type(records)is not list or not 0<len(records)<=1024:return False
+    matches=[]
+    for record in records:
+        if type(record)is not dict or type(record.get('properties'))is not dict:continue
+        props=record['properties'];unit=record.get('unit');inv=record.get('invocation')
+        if (type(unit)is str and re.fullmatch(r'opemos-testq-[0-9a-f]{12}-[0-9a-f]{32}\.service',unit)and
+                type(inv)is str and re.fullmatch('[0-9a-f]{32}',inv)and
+                record.get('reservationRetained')is True and record.get('operationOrReleaseAuthorized')is False and
+                props.get('LoadState')=='loaded'and props.get('InvocationID')==inv and
+                props.get('MainPID')==str(typed['tid'])and
+                props.get('ControlGroup')=='/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/'+unit):matches.append(record)
+    if len(matches)!=1:return False
+    closes=failure.get('closeOutcomes')
+    return (type(closes)is list and 0<len(closes)<=1024 and
+            any(c.get('label')=='proc-root'for c in closes if type(c)is dict)and
+            all(type(c)is dict and c.get('closed')is True and c.get('UNKNOWN')is False and
+                type(c.get('fd'))is int and c['fd']>=0 and type(c.get('label'))is str for c in closes))
+
+
 def monitor_current_unit(backend,ctx,props,fresh):
     # A live peer keeps the pool populated after another unit has exited.
     # Observe that unit independently; this does not release its reservation.
@@ -3961,7 +3999,10 @@ def exact_proc_revalidation_evidence(typed,running):
 
 def monitor_proc_revalidation_exit(db,backend,error,typed,rows,running,records):
     exact_proc_revalidation_evidence(typed,running)
-    fresh_rows,fresh=boundary_pool_epoch(db,backend)
+    try:fresh_rows,fresh=boundary_pool_epoch(db,backend)
+    except PoolAdmissionFailure as second:
+        second.monitorOriginalRecords=records
+        raise
     require(fresh.get('admitted')is True and fresh.get('allOwnedDescriptorsClosed')is True and fresh.get('includesUID0')is True and fresh.get('completeBoundedTraversal')is True and fresh.get('unknownReservationsRetained')==[],'fresh complete UID0 pool proof required; never swallow foreign/unknown owners')
     require([(r['id'],r['state'],r['unit'],r['spec'],r['cpus'],r.get('_poolBinding'))for r in fresh_rows]==[(r['id'],r['state'],r['unit'],r['spec'],r['cpus'],r.get('_poolBinding'))for r in rows],'complete original logical ledger unchanged')
     absent=monitor_observed_thread_exit(typed,includeLeader=False)
@@ -4146,10 +4187,19 @@ def worker(root, db, cfg, reconcile_failed_libvirt=None, _backend=None):
                         diagnostic={'firstFailure':getattr(error,'evidence',None),'reservationRetained':True,'operationOrReleaseAuthorized':False}
                         try:observation=monitor_admitted_libvirt(db,backend,error)if error.evidence.get('kind')=='ADMITTED_LIBVIRT_OBSERVATION_UNAVAILABLE'else monitor_membership_race(db,backend,error)
                         except BaseException as classification:
-                            classification.evidence={'kind':'MONITOR_DISPOSITION_REFUSED','originalMonitorFrame':diagnostic,'classificationFailure':{'type':type(classification).__name__,'reason':str(classification)},'reservationRetained':True,'operationOrReleaseAuthorized':False}
+                            # A second task can exit while the monitoring-only
+                            # classifier obtains its fresh cut. Keep BOTH refusals
+                            # and return to the ordinary loop; neither cut is
+                            # positive admission or terminal evidence.
+                            retry=readonly_proc_directory_transition(classification)
+                            second=getattr(classification,'evidence',None)
+                            classification.evidence={'kind':'READONLY_MONITOR_RECHECK_CHURN'if retry else'MONITOR_DISPOSITION_REFUSED','originalMonitorFrame':diagnostic,'classificationFailure':{'type':type(classification).__name__,'reason':str(classification),'evidence':second},'reservationRetained':True,'operationOrReleaseAuthorized':False}
                             try:persist_monitor_failure(root,classification)
                             except Exception as secondary:classification.optionalWorkerFailureReport={'type':type(secondary).__name__,'reason':str(secondary)}
-                            raise
+                            if not retry:raise
+                            if hasattr(classification,'optionalWorkerFailureReport'):raise
+                            observation={'firstFailure':error.evidence,'readonlyRecheckRefusal':second,
+                                'newAdmissionEffectsReleaseForbidden':True,'originalServiceNotCancelled':True}
                         monitor_count+=1
                         if monitor_first is None:
                             monitor_first=observation;encoded=canonical(observation)

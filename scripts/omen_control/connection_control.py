@@ -1163,8 +1163,26 @@ class Pipeline:
             need(not errors,'actual application failure: '+repr(errors))
             remaining=self.end-time.monotonic();need(remaining>0,'actual application completion absent');time.sleep(min(30,remaining))
 
+    def wait_builder_ready(self):
+        """The asynchronous host check changes layout; observe it before input."""
+        end=min(self.end,time.monotonic()+25)
+        while True:
+            need(time.monotonic()<end,'original deadline before native builder readiness')
+            raw=self.request('UI_STATE')
+            need(time.monotonic()<end,'original deadline after native builder readiness')
+            rows=[r for r in raw['value']['namesByWindow']if r['window_id']==self.app['window_id']]
+            need(len(rows)==1 and type(rows[0]['names'])is list and
+                 all(type(n)is str for n in rows[0]['names']),'same app native builder readiness')
+            names=rows[0]['names']
+            need(not any(n.startswith(('Experimental Linux host prerequisite is missing:',
+                                      'Build failed','Image build failed','Error:'))for n in names),
+                 'actual application builder failure before pointer input')
+            if 'Experimental Linux host ready'in names:return raw
+            time.sleep(min(.2,max(0,end-time.monotonic())))
+
     def build_write(self):
         labels=self.cfg['labels']
+        self.wait_builder_ready()
         self.choose('chooser-open',labels['choose_input'],self.cfg['input_path'],labels['open'])
         self.choose('choose-output-directory',labels['choose_output'],self.cfg['output_directory'],labels['select_folder'])
         input_image=self.request('FILE',role='input_path')

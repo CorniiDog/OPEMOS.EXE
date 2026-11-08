@@ -27,6 +27,39 @@ import types
 
 
 class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
+    def test_native_builder_readiness_precedes_first_chooser_target(self):
+        """Observed checking-to-ready layout transition; guest facts modeled."""
+        import connection_control as control
+        from unittest.mock import patch
+        pipeline=object.__new__(control.Pipeline)
+        pipeline.app={'window_id':17};pipeline.end=time.monotonic()+5
+        pipeline.cfg={'labels':{'choose_input':'Choose Image…','open':'Open'},'input_path':'/owned/image.img'}
+        replies=[{'namesByWindow':[{'window_id':18,'names':['Experimental Linux host ready']},
+                                  {'window_id':17,'names':['Checking builder…']}]},
+                 {'namesByWindow':[{'window_id':17,'names':['Experimental Linux host ready']}]}]
+        observed=[]
+        def request(kind):
+            self.assertEqual(kind,'UI_STATE');value=replies.pop(0);observed.append(value)
+            return {'value':value}
+        class FirstChooserReached(RuntimeError):pass
+        def choose(*args):
+            self.assertEqual(len(observed),2)
+            self.assertEqual(args,('chooser-open','Choose Image…','/owned/image.img','Open'))
+            raise FirstChooserReached('same native-ready app before first point')
+        pipeline.request=request;pipeline.choose=choose
+        with patch.object(control.time,'sleep'),self.assertRaisesRegex(FirstChooserReached,'before first point'):
+            pipeline.build_write()
+        deadline=pipeline.end
+        with patch.object(control.time,'monotonic',side_effect=[0,0,2]),\
+             self.assertRaisesRegex(RuntimeError,'deadline after native builder readiness'):
+            pipeline.end=1;pipeline.request=lambda _: {'value':replies[0] if replies else observed[-1]}
+            pipeline.wait_builder_ready()
+        pipeline.end=deadline
+        pipeline.request=lambda _: {'value':{'namesByWindow':[{'window_id':17,
+            'names':['Experimental Linux host prerequisite is missing: qemu-img.']}]}}
+        with self.assertRaisesRegex(RuntimeError,'builder failure before pointer input'):
+            pipeline.wait_builder_ready()
+
     def test_actual_png_client_paint_precedes_native_target_query(self):
         """Real PNG decode/custody; QMP and the guest window are modeled.
 
@@ -2116,6 +2149,116 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                 monitor(q.PoolAdmissionFailure('wrong observation',broken))
         broken=copy.deepcopy(error.evidence);broken['firstFailure']['closeOutcomes'][0]['UNKNOWN']=True
         with self.assertRaises(ValueError):monitor(q.PoolAdmissionFailure('unknown close',broken))
+
+    def test_installed_worker_retains_cascading_proc_exit_then_rechecks_readonly(self):
+        """Real proc disappearance/FDs, physical code, worker/locks/log/SQL.
+
+        Manager and later completion facts are modeled; this grants no native
+        admission or closure. Existing normal-tick tests cover that next phase.
+        """
+        import ast,fcntl,time,zlib
+        from unittest.mock import patch
+        original=zlib.decompress((Path(__file__).parent/
+            'fixtures/omen-ci-physical-7df4-queue.py.zlib').read_bytes()).decode()
+        self.assertEqual(hashlib.sha256(original.encode()).hexdigest(),
+            '7df43a15959cd568f4bf6a74919300b2607e45c6d83d2eb6e877fa1f2d5ddaf8')
+        modern=(SOURCE/'test_queue.py').read_text()
+        funcs=lambda text:{n.name:n for n in ast.parse(text).body if isinstance(n,ast.FunctionDef)}
+        old_funcs,new_funcs=funcs(original),funcs(modern)
+        def handler(text,node):
+            return next(ast.get_source_segment(text,n)for n in ast.walk(node)
+                if isinstance(n,ast.ExceptHandler)and n.name=='classification')
+        changed=original.replace(handler(original,old_funcs['worker']),handler(modern,new_funcs['worker']))
+        changed=changed.replace(ast.get_source_segment(original,old_funcs['monitor_proc_revalidation_exit']),
+                                ast.get_source_segment(modern,new_funcs['monitor_proc_revalidation_exit']))
+        helper=ast.get_source_segment(modern,new_funcs['readonly_proc_directory_transition'])
+        changed=changed.replace('def monitor_current_unit(',helper+'\n\ndef monitor_current_unit(',1)
+        after=funcs(changed)
+        self.assertEqual(set(after)-set(old_funcs),{'readonly_proc_directory_transition'})
+        self.assertEqual([n for n in old_funcs if ast.get_source_segment(original,old_funcs[n])!=
+                          ast.get_source_segment(changed,after[n])],['monitor_proc_revalidation_exit','worker'])
+        q=types.ModuleType('physical7df_monitor_recheck_candidate');q.__file__=str(SOURCE/'test_queue.py')
+        sys.modules[q.__name__]=q;exec(compile(changed,q.__file__,'exec'),q.__dict__)
+        ns={};exec(compile(q.POOL_PROOF_SOURCE,'root_pool_proof_r1.py','exec'),ns)
+        pool=next(n for n in ast.parse(q.POOL_PROOF_SOURCE).body if isinstance(n,ast.FunctionDef)and n.name=='readonly_pool')
+        names={'owned','read','first_pid_directory_identity','proc_once','proc'}
+        factory='def actual_probe(io):\n    fd_states=[]\n    field_reads=0\n    def clock(): pass\n'
+        for n in pool.body:
+            if isinstance(n,ast.FunctionDef)and n.name in names:
+                factory+='\n'+'\n'.join('    '+l for l in ast.unparse(n).splitlines())+'\n'
+        factory+='    return proc,fd_states\n';exec(compile(factory,'production-proc-reader','exec'),ns)
+        child=subprocess.Popen([sys.executable,'-I','-c','pass']);child.wait(timeout=5)
+        probe,closed=ns['actual_probe'](ns['KernelIO']())
+        with self.assertRaises((FileNotFoundError,ns['OwnedFDProofFailure']))as missing:
+            probe(child.pid)
+        detail=missing.exception.evidence
+        self.assertEqual(detail['firstFailure'],dict(type='TransientProcObservation',errno=2,
+            tid=child.pid,path='/proc/'+str(child.pid),stage='pid-directory-open'))
+        self.assertTrue(closed);self.assertTrue(all(c['closed']and not c['UNKNOWN']for c in closed))
+        secondary=q.PoolAdmissionFailure('actual missing leader during readonly recheck',dict(
+            admitted=False,reservationRetained=True,operationOrReleaseAuthorized=False,firstFailure=detail))
+        unit='opemos-testq-'+'a'*12+'-'+'b'*32+'.service';inv='c'*32
+        secondary.monitorOriginalRecords=[dict(jobId='original-control',unit=unit,invocation=inv,
+            properties=dict(LoadState='loaded',InvocationID=inv,MainPID=str(child.pid),
+                ControlGroup='/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/'+unit),
+            reservationRetained=True,operationOrReleaseAuthorized=False)]
+        secondary_evidence=copy.deepcopy(secondary.evidence)
+        self.assertTrue(q.readonly_proc_directory_transition(secondary))
+        for fault in ('errno','path','stage','close','unknown-owner'):
+            bad=copy.deepcopy(secondary.evidence)
+            if fault=='errno':bad['firstFailure']['firstFailure']['errno']=13
+            elif fault=='path':bad['firstFailure']['firstFailure']['path']='/proc/1'
+            elif fault=='stage':bad['firstFailure']['firstFailure']['stage']='unbound-site'
+            elif fault=='close':bad['firstFailure']['closeOutcomes'][0]['UNKNOWN']=True
+            else:bad['unknownReservationsRetained']=['foreign']
+            refused=q.PoolAdmissionFailure('negative',bad);refused.monitorOriginalRecords=copy.deepcopy(secondary.monitorOriginalRecords)
+            self.assertFalse(q.readonly_proc_directory_transition(refused))
+        foreign=q.PoolAdmissionFailure('unbound missing main',copy.deepcopy(secondary.evidence))
+        self.assertFalse(q.readonly_proc_directory_transition(foreign))
+        foreign.monitorOriginalRecords=copy.deepcopy(secondary.monitorOriginalRecords)
+        foreign.monitorOriginalRecords[0]['properties']['MainPID']='1'
+        self.assertFalse(q.readonly_proc_directory_transition(foreign))
+        with tempfile.TemporaryDirectory(prefix='opemos-physical-monitor-recheck-')as tmp:
+            root,db=q.connect(Path(tmp)/'state');runtime=Path(tmp)/'runtime';runtime.mkdir()
+            heavy=os.open(runtime/'opemos-heavy.lock',os.O_RDWR|os.O_CREAT|os.O_EXCL,0o600)
+            fcntl.flock(heavy,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',('original-control','{}','running',
+                '[0]','original-unit',time.time(),None,None));db.commit()
+            before=[tuple(r)for r in db.execute('SELECT * FROM jobs')]
+            primary=q.PoolAdmissionFailure('original exited task during planned renewal',dict(
+                admitted=False,reservationRetained=True,operationOrReleaseAuthorized=False,
+                firstFailure={'firstFailure':{'type':'TransientProcRevalidationObservation'},
+                              'closeOutcomes':copy.deepcopy(closed)}))
+            class NextOrdinaryTick(RuntimeError):pass
+            ticks=[]
+            def tick(*args):
+                ticks.append(1)
+                self.assertEqual([tuple(r)for r in db.execute('SELECT * FROM jobs')],before)
+                if len(ticks)==1:raise primary
+                raise NextOrdinaryTick('fresh ordinary tick, no refusal promoted to admission')
+            try:
+                with patch.dict(os.environ,{'OPEMOS_QUEUE_HEAVY_ENTRY':'1','XDG_RUNTIME_DIR':str(runtime)}),\
+                     patch.object(q,'tick',side_effect=tick),\
+                     patch.object(q,'monitor_membership_race',side_effect=secondary),\
+                     patch.object(q.time,'sleep'),self.assertRaisesRegex(NextOrdinaryTick,'fresh ordinary tick'):
+                    q.worker(root,db,{},_backend=types.SimpleNamespace())
+                self.assertEqual(len(ticks),2)
+                frames=[json.loads(l)for l in(root/'monitor-failures.log').read_text().splitlines()]
+                retained=next(f for f in frames if f['evidence'].get('kind')=='READONLY_MONITOR_RECHECK_CHURN')
+                self.assertEqual(retained['evidence']['originalMonitorFrame']['firstFailure'],primary.evidence)
+                self.assertEqual(retained['evidence']['classificationFailure']['evidence'],secondary_evidence)
+                self.assertIs(retained['operationOrReleaseAuthorized'],False)
+                self.assertEqual([tuple(r)for r in db.execute('SELECT * FROM jobs')],before)
+                unknown=copy.deepcopy(secondary_evidence)
+                unknown['firstFailure']['closeOutcomes'][0]['UNKNOWN']=True
+                with patch.dict(os.environ,{'OPEMOS_QUEUE_HEAVY_ENTRY':'1','XDG_RUNTIME_DIR':str(runtime)}),\
+                     patch.object(q,'tick',side_effect=primary)as failed_tick,\
+                     patch.object(q,'monitor_membership_race',side_effect=q.PoolAdmissionFailure('unknown close',unknown)),\
+                     self.assertRaises(q.PoolAdmissionFailure):
+                    q.worker(root,db,{},_backend=types.SimpleNamespace())
+                self.assertEqual(failed_tick.call_count,1,'unknown closure is never a readonly retry')
+                self.assertEqual([tuple(r)for r in db.execute('SELECT * FROM jobs')],before)
+            finally:db.close();os.close(heavy)
 
     def test_monitor_exit_keeps_numeric_remain_after_exit_as_observation_only(self):
         """Manager/pool facts modeled; PID absence and source consumers are real."""
