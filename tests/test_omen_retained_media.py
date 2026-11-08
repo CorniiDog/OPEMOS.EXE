@@ -934,7 +934,8 @@ class UbuntuSourceProducerInputs(unittest.TestCase):
                 poisoned=members['robot/__init__.py'].replace(b"'pinned'",b"'cache!'")
                 self.assertEqual(len(poisoned),len(members['robot/__init__.py']))
                 target.write_bytes(poisoned);os.utime(target,ns=(stamp.st_atime_ns,stamp.st_mtime_ns))
-                cache=Path(py_compile.compile(str(target),doraise=True))
+                cache=Path(py_compile.compile(str(target),doraise=True,
+                    invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP))
                 os.chown(cache.parent,1000,1000);cache.parent.chmod(0o700)
                 os.chown(cache,1000,1000);cache.chmod(0o600)
                 target.write_bytes(members['robot/__init__.py'])
