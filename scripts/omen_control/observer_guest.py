@@ -52,6 +52,22 @@ def proc_identity(pid, expected=None):
             'exe_sha256':digest.hexdigest(),'cmdline':cmdline,
             'inherited_nonce':inherited_nonce}
 
+
+def launched_window_matches(windows, expected_title, nonce):
+    """Select this launch before requiring a unique native window.
+
+    Another app in the retained desktop can have the same title. Its window
+    cannot become this operation's target. The selected process still passes
+    the full executable/PID/start/nonce check before READY or pointer input.
+    """
+    matches=[]
+    for window in windows:
+        if expected_title.lower() not in window['title'].lower():continue
+        try:env=(Path('/proc')/str(window['pid'])/'environ').read_bytes().split(b'\0')
+        except (FileNotFoundError,ProcessLookupError):continue
+        if b'OPROBOT_NONCE='+nonce.encode() in env:matches.append(window)
+    return matches
+
 class X11:
     class Attributes(C.Structure):
         _fields_=[('x',C.c_int),('y',C.c_int),('width',C.c_int),
@@ -417,7 +433,7 @@ def main():
     x=X11();before=[];matches=[];app=None;deadline=time.monotonic()+180
     while time.monotonic()<deadline:
         before=x.windows()
-        matches=[w for w in before if expected_title.lower() in w['title'].lower()]
+        matches=launched_window_matches(before,expected_title,sys.argv[1])
         if len(matches)==1:
             app=matches[0];break
         time.sleep(.2)

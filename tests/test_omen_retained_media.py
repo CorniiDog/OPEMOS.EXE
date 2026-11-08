@@ -27,6 +27,76 @@ import types
 
 
 class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
+    def test_native_window_selection_uses_real_current_launch_before_unique_title(self):
+        """The actual observer main must ignore another real process's title.
+
+        No X11 input or port is modeled as acceptance: reaching the unchanged
+        port-custody refusal proves native selection and executable auth ran.
+        """
+        import select
+        from unittest import mock
+        import observer_guest as observer
+        nonce = 'b' * 32
+        children = []
+        def child_with_nonce(value):
+            env = dict(os.environ); env.pop('OPROBOT_NONCE', None)
+            if value is not None: env['OPROBOT_NONCE'] = value
+            child = subprocess.Popen([sys.executable, '-I', '-B', '-c',
+                'import sys; print("READY",flush=True); sys.stdin.buffer.read()'],
+                env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            children.append(child)
+            self.assertTrue(select.select([child.stdout], [], [], 5)[0])
+            self.assertEqual(child.stdout.readline(), b'READY\n')
+            return child
+        try:
+            old = child_with_nonce('a' * 32)
+            current = child_with_nonce(nonce)
+            unrelated = child_with_nonce(None)
+            def window(child, ident):
+                return {'pid': child.pid, 'window_id': ident,
+                    'title': 'OPEMOS EXE — Experimental Linux Test',
+                    'rect': [116, 69, 760, 800], 'transient_for': None, 'dialog_type': False}
+            rows = [window(old, 8388612), window(current, 12582926), window(unrelated, 31)]
+            self.assertEqual(observer.launched_window_matches(rows, 'OPEMOS EXE', nonce), [rows[1]])
+            self.assertEqual(observer.launched_window_matches(rows, 'OPEMOS EXE', 'c' * 32), [])
+            self.assertEqual(observer.launched_window_matches(rows, 'different app', nonce), [])
+            # A same-nonce ambiguity remains ambiguous; never choose the first.
+            duplicate = child_with_nonce(nonce)
+            self.assertEqual(observer.launched_window_matches(
+                rows + [window(duplicate, 32)], 'OPEMOS EXE', nonce), [rows[1], window(duplicate, 32)])
+            native = Path('/proc') / str(current.pid) / 'exe'
+            expected = {'native_executable_bytes': native.stat().st_size,
+                'native_executable_sha256': hashlib.sha256(native.read_bytes()).hexdigest()}
+            fake_x = types.SimpleNamespace(windows=lambda: rows)
+            with mock.patch.object(observer, 'X11', return_value=fake_x), \
+                 mock.patch.object(observer, 'pipeline_config', return_value=expected), \
+                 mock.patch.object(observer.sys, 'argv', ['observer_guest.py', nonce,
+                    'OPEMOS EXE', '--pipeline', '/unused-operation.json', 'a' * 64]), \
+                 mock.patch.dict(observer.os.environ, {'OPROBOT_PORT_BEFORE': '',
+                    'OPROBOT_PORT_AFTER': '', 'OPROBOT_PORT_SUDO': ''}), \
+                 mock.patch.object(observer, 'proc_identity', wraps=observer.proc_identity) as identity:
+                with self.assertRaisesRegex(RuntimeError, 'exact disposable virtio observer port custody missing'):
+                    observer.main()
+                self.assertEqual(identity.call_count, 1)
+                self.assertEqual(identity.call_args.args[0], current.pid)
+                # The current launch's wrong executable still refuses before READY.
+                with mock.patch.object(observer, 'pipeline_config', return_value={
+                        **expected, 'native_executable_sha256': '0' * 64}):
+                    with self.assertRaisesRegex(RuntimeError, 'actual descriptor-bound native executable hash'):
+                        observer.main()
+                with mock.patch.object(fake_x, 'windows', return_value=rows + [window(duplicate, 32)]), \
+                     mock.patch.object(observer.time, 'monotonic', side_effect=[0, 0, 181]), \
+                     mock.patch.object(observer.time, 'sleep'), \
+                     contextlib.redirect_stderr(io.StringIO()) as diagnostic:
+                    with self.assertRaisesRegex(RuntimeError, 'unique actual app native X11 window absent'):
+                        observer.main()
+                    self.assertEqual(json.loads(diagnostic.getvalue())['match_count'], 2)
+        finally:
+            for child in children:
+                stdout, stderr = child.communicate(timeout=5)
+                self.assertEqual(child.returncode, 0)
+                self.assertEqual(stdout, b''); self.assertEqual(stderr, b'')
+
     def test_normal_native_ready_uses_original_job_deadline_after_delayed_bootstrap(self):
         """Real delayed transport through the actual normal job consumer."""
         import socket
