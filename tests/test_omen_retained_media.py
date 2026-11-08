@@ -27,6 +27,7 @@ import types
 
 
 class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
+    @unittest.skipUnless(sys.platform=='linux','real Linux owned-child environment transport')
     def test_staged_appimage_runtime_reaches_real_clean_owned_packaging_child(self):
         """Real tar/extraction/env/child transport; no AppImage or VM pass modeled."""
         import tarfile
