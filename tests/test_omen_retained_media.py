@@ -908,7 +908,7 @@ class UbuntuSourceProducerInputs(unittest.TestCase):
         while not parent.exists():missing.append(parent);parent=parent.parent
         for parent in reversed(missing):parent.mkdir(mode=0o755);parent.chmod(0o755)
         try:
-            with tempfile.TemporaryDirectory(prefix='fixed-robot-')as temp:
+            with tempfile.TemporaryDirectory(prefix='fixed-robot-',dir='/var/lib')as temp:
                 root=Path(temp);root.chmod(0o711)
                 def directory(path,uid=1000):
                     path.mkdir(parents=True,exist_ok=True);os.chown(path,uid,uid);path.chmod(0o700 if uid else 0o755)
