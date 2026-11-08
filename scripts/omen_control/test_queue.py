@@ -4501,6 +4501,7 @@ def wait_status(db, job_ids):
     require(1 <= len(job_ids) <= MAX_JOBS and len(set(job_ids)) == len(job_ids)
             and all(type(j) is str and NAME.fullmatch(j) for j in job_ids),
             'Bounded distinct normal wait job identifiers')
+    require(not db.in_transaction, 'Normal wait owns only its read transaction')
     try:
         db.execute('BEGIN')
         cfg = config(db)
@@ -4510,7 +4511,8 @@ def wait_status(db, job_ids):
             "json_type(result,'$.reason') AS reason_type,"
             "substr(json_extract(result,'$.reason'),1,160) AS reason,"
             "json_type(result,'$.terminalLifecycle.phase') AS phase_type,"
-            "substr(json_extract(result,'$.terminalLifecycle.phase'),1,96) AS phase,"
+            "CASE WHEN json_extract(result,'$.terminalLifecycle.phase')='CLOSED' "
+            "THEN 'CLOSED' ELSE NULL END AS phase,"
             "json_type(result,'$.terminalLifecycle.reservationRetained') AS retained_type "
             'FROM jobs WHERE id IN (' + marks + ') ORDER BY rowid', job_ids).fetchall()
         jobs = []

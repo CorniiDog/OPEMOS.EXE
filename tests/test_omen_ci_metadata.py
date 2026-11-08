@@ -767,6 +767,16 @@ class ActualRequestedJobWaitStatus(unittest.TestCase):
         bad=copy.deepcopy(self.cfg);bad['queue_entry']['sha256']='0'*64
         with self.assertRaises(ValueError):stage.queue_status(bad,job_ids=['own'])
 
+    def test_only_exact_closed_phase_can_be_projected_as_closed(self):
+        self.add('own','passed',None)
+        for phase in ('CLOSED\x00not-closed','CLOSED'+'x'*100,'ACTIVE','CLOSED'):
+            self.sql('UPDATE jobs SET result=? WHERE id=?',
+                (self.q.canonical({'terminalLifecycle':{'phase':phase,
+                    'reservationRetained':False}}),'own'))
+            row=stage.queue_status(self.cfg,job_ids=['own'])['own']
+            self.assertEqual(row['result']['terminalLifecycle']['phase'],
+                             'CLOSED'if phase=='CLOSED'else None)
+
     def test_actual_installed_7df_helpers_consume_only_the_new_wait_projection(self):
         import ast, zlib
         original=zlib.decompress((Path(__file__).parent/
