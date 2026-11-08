@@ -32,7 +32,9 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
         import socket
         import threading
         from unittest import mock
-        import job
+        previous_umask = os.umask(0o077)
+        try: import job
+        finally: os.umask(previous_umask)
         import connection_control as control
         nonce = 'a' * 32
         for event in ({'kind': 'READY', 'nonce': nonce},
@@ -69,7 +71,9 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
         import socket
         import threading
         from unittest import mock
-        import job
+        previous_umask = os.umask(0o077)
+        try: import job
+        finally: os.umask(previous_umask)
         import connection_control as control
         left, right = socket.socketpair(); stop = threading.Event()
         def producer():
