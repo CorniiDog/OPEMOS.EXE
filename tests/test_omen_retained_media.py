@@ -2242,10 +2242,11 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                 raise NextOrdinaryTick('fresh ordinary tick, no refusal promoted to admission')
             try:
                 with patch.dict(os.environ,{'OPEMOS_QUEUE_HEAVY_ENTRY':'1','XDG_RUNTIME_DIR':str(runtime)}),\
+                     patch.object(q,'SystemdBackend',return_value=types.SimpleNamespace()),\
                      patch.object(q,'tick',side_effect=tick),\
                      patch.object(q,'monitor_membership_race',side_effect=secondary),\
                      patch.object(q.time,'sleep'),self.assertRaisesRegex(NextOrdinaryTick,'fresh ordinary tick'):
-                    q.worker(root,db,{},_backend=types.SimpleNamespace())
+                    q.worker(root,db,{})
                 self.assertEqual(len(ticks),2)
                 frames=[json.loads(l)for l in(root/'monitor-failures.log').read_text().splitlines()]
                 retained=next(f for f in frames if f['evidence'].get('kind')=='READONLY_MONITOR_RECHECK_CHURN')
@@ -2256,10 +2257,11 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                 unknown=copy.deepcopy(secondary_evidence)
                 unknown['firstFailure']['closeOutcomes'][0]['UNKNOWN']=True
                 with patch.dict(os.environ,{'OPEMOS_QUEUE_HEAVY_ENTRY':'1','XDG_RUNTIME_DIR':str(runtime)}),\
+                     patch.object(q,'SystemdBackend',return_value=types.SimpleNamespace()),\
                      patch.object(q,'tick',side_effect=primary)as failed_tick,\
                      patch.object(q,'monitor_membership_race',side_effect=q.PoolAdmissionFailure('unknown close',unknown)),\
                      self.assertRaises(q.PoolAdmissionFailure):
-                    q.worker(root,db,{},_backend=types.SimpleNamespace())
+                    q.worker(root,db,{})
                 self.assertEqual(failed_tick.call_count,1,'unknown closure is never a readonly retry')
                 self.assertEqual([tuple(r)for r in db.execute('SELECT * FROM jobs')],before)
             finally:db.close();os.close(heavy)
