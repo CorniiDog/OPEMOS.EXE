@@ -798,7 +798,7 @@ class RobotPipeline:
         native=p.app if window is None else window;prefix='robot-'+str(len(self.actions)+1)
         before=self.capture(prefix+'-before')
         raw=p.target(label,list(roles),window);control=raw['value']
-        ownership=native_control_bound(control,native,self.birth)
+        ownership=native_control_bound(control,native,p.ready['process'])
         need(control['window_id']==native['window_id']and
              control['visible']is True and control['enabled']is True and
              control['hitObservation']=='native-same-control-unoccluded',

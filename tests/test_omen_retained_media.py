@@ -115,13 +115,26 @@ finally:
             # Exercise both maintained host consumers up to their next guarded
             # boundary; no mocked capture or destination is GUI acceptance.
             class NextGuard(RuntimeError): pass
-            pipeline = object.__new__(control.Pipeline)
-            pipeline.robot_click = None; pipeline.app = window
-            pipeline.ready = {'process': birth}; pipeline.q = mock.Mock()
-            pipeline.cfg = {'display': [1600, 900]}; pipeline.root = Path('/unused')
-            pipeline.actions = []
-            robot = object.__new__(control.RobotPipeline)
-            robot.birth = birth; robot.actions = []; robot.controls = {}
+            source = 'b'*40; digest = 'c'*64
+            guest = {'nonce': nonce, 'source_commit': source, 'package_sha256': digest,
+                'native_executable_sha256': birth['exe_sha256'], 'whole_seconds': 60,
+                'display': [1600, 900]}
+            binding = {'nonce': nonce, 'artifact_source': source, 'package_sha256': digest,
+                'host_boot_id': str(uuid.uuid4()), 'vm_name': 'opemos-robot-ubuntu-'+nonce}
+            ready = {'nonce': nonce, 'process': birth, 'app': window, 'guest_uid': 1000,
+                'guest_architecture': 'x86_64', 'guest_boot_id': str(uuid.uuid4()),
+                'display_connection': ':0'}
+            pipeline = control.Pipeline(binding, guest, mock.Mock(), None, ready, Path('/unused'))
+            config = {'source_commit': source, 'run_id': '1', 'attempt': '1',
+                'inventory_vm_id': 'ubuntu', 'queue_job_id': 'ubuntu-build-write-'+nonce,
+                'original_source': {'source_commit': source}, 'candidate': {'descriptor': {'sha256': digest}},
+                'programRoot': '/unused', 'normalPolicy': {'programSHA256': {
+                    'connection_control.py': digest, 'observer_guest.py': digest}},
+                'guest_operation': guest}
+            robot = control.RobotPipeline(pipeline, config, '/unused', None)
+            self.assertEqual(robot.birth, {'pid': parent.pid, 'start': int(birth['start_ticks'])})
+            self.assertNotIn('start_ticks', robot.birth)
+            self.assertNotIn('inherited_nonce', robot.birth)
             robot.capture = lambda _: {'ref': 'before', 'capture_id': 'one'}
             robot.destination_admission = mock.Mock(side_effect=NextGuard('destination'))
             for value in [target, *bad]:
