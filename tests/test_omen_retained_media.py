@@ -927,6 +927,18 @@ class UbuntuSourceProducerInputs(unittest.TestCase):
                 for name,raw in members.items():
                     digest=file(runtime/name,raw)
                     manifest.append(dict(path='robot-python/'+name,bytes=len(raw),sha256=digest))
+                # A valid timestamp cache is executable even with -B. The
+                # isolated bootstrap must select verified source instead.
+                import py_compile
+                target=runtime/'robot/__init__.py';stamp=target.stat()
+                poisoned=members['robot/__init__.py'].replace(b"'pinned'",b"'cache!'")
+                self.assertEqual(len(poisoned),len(members['robot/__init__.py']))
+                target.write_bytes(poisoned);os.utime(target,ns=(stamp.st_atime_ns,stamp.st_mtime_ns))
+                cache=Path(py_compile.compile(str(target),doraise=True))
+                os.chown(cache.parent,1000,1000);cache.parent.chmod(0o700)
+                os.chown(cache,1000,1000);cache.chmod(0o600)
+                target.write_bytes(members['robot/__init__.py'])
+                os.utime(target,ns=(stamp.st_atime_ns,stamp.st_mtime_ns))
                 digest=file(root/'runner/manifest.json',json.dumps(manifest).encode())
                 operations=root/'operations';directory(operations)
                 generation=operations/('run-fixture-'+nonce);directory(generation)
