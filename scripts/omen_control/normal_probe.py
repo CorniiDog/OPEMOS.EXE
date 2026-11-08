@@ -322,8 +322,7 @@ def queue_snapshot_file(path,cap,optional=False):
             if optional:raise QueueSnapshotChanged('queue sidecar disappeared')from None
             raise
         custody(named)
-        need(named.st_nlink==1,'held current queue data custody '+str(path))
-        if before.st_nlink==0 or after.st_nlink==0:
+        if any(s.st_nlink==0 for s in(before,after,named)):
             raise QueueSnapshotChanged('optional queue sidecar unlinked while held')
         if len(raw)!=before.st_size or full9(before)!=full9(after)or full9(before)!=full9(named):
             raise QueueSnapshotChanged('queue data epoch changed during held read')
