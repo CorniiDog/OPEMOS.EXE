@@ -300,6 +300,17 @@ def source_build(config):return config['kind']==SOURCE_KIND
 def operation_input(config):return config['source_input']if source_build(config)else config['candidate']
 
 
+def receive_native_ready(channel,nonce,result,control):
+    # Package copying, offline prerequisites and native observation share this
+    # job's original clock. The socket's connect timeout is not a second,
+    # shorter bootstrap budget, nor a per-byte renewable read deadline.
+    wait={'originalOperationDeadlineMonotonic':WHOLE_END,
+          'startedMonotonic':time.monotonic()}
+    result['guest_native_bootstrap_wait']=wait
+    try:return control.next_native_event(channel,nonce,result,end=WHOLE_END)
+    finally:wait['completedMonotonic']=time.monotonic()
+
+
 def receive_source_package(channel,config,result):
     """Receive bounded actual guest bytes over its existing owned QEMU socket."""
     end=WHOLE_END;channel.settimeout(remaining(7200))
@@ -689,7 +700,7 @@ def main():
         # bootstrap can fail and emit a typed refusal. It never activates the
         # chooser; its QMP pointer comes only after verified native READY.
         with contextlib.ExitStack() as channels:
-            obs_sock=channels.enter_context(CONTROL.connect_owned(str(obs),q.pid,200))
+            obs_sock=channels.enter_context(CONTROL.connect_owned(str(obs),q.pid,remaining(200)))
             boot_text(control,'bash /media/opemosgui/OPROBOT/start.sh\n')
             result['post_bootstrap_frame']=capture_bootstrap(control,300,root/'post-bootstrap.png')
             control.close();control=None  # one actual QMP connection at a time
@@ -699,7 +710,7 @@ def main():
                 receive_source_package(obs_sock,C,result)
                 result['effects'].append('actual-guest-compile-package-and-whole-byte-export')
                 return  # existing finally owns the same QEMU/native/original closure
-            ready=CONTROL.next_native_event(obs_sock,nonce,result)
+            ready=receive_native_ready(obs_sock,nonce,result,CONTROL)
             need(ready.get('kind')=='READY'and ready.get('port_custody',{}).get('sudo_numeric')in('0','NOT_NEEDED'),
                  'actual source-bound guest observer READY/port custody')
             guest=dict(C['guest_operation']);guest['input_path']=ready['input_path']

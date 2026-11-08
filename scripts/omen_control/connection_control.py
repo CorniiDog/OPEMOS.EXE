@@ -134,15 +134,21 @@ def frame(q,path,display=None):
     return {'path':str(path),'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),
             'width':width,'height':height}
 
-def observer_line(s,cap=65536):
+def observer_line(s,cap=65536,end=None):
     b=bytearray()
     while not b.endswith(b'\n'):
+        if end is not None:
+            remaining=end-time.monotonic()
+            need(remaining>0,'original native observer deadline before receive')
+            s.settimeout(remaining)
         part=s.recv(1);need(part,'observer channel EOF before native result')
+        if end is not None:
+            need(time.monotonic()<end,'original native observer deadline after receive')
         b.extend(part);need(len(b)<=cap,'observer line cap exceeded')
     return json.loads(b)
 
-def next_native_event(s,nonce,receipt):
-    row=observer_line(s)
+def next_native_event(s,nonce,receipt,end=None):
+    row=observer_line(s,end=end)
     if row.get('kind')=='BOOTSTRAP_REFUSED':
         # Retain the bounded original event even when its binding is invalid;
         # this diagnostic field never supplies a successful native result.

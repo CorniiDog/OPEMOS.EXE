@@ -27,6 +27,84 @@ import types
 
 
 class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
+    def test_normal_native_ready_uses_original_job_deadline_after_delayed_bootstrap(self):
+        """Real delayed transport through the actual normal job consumer."""
+        import socket
+        import threading
+        from unittest import mock
+        import job
+        import connection_control as control
+        nonce = 'a' * 32
+        for event in ({'kind': 'READY', 'nonce': nonce},
+                      {'kind': 'BOOTSTRAP_REFUSED', 'nonce': nonce,
+                       'phase': 'guest_prerequisites', 'numeric': 1}):
+            with self.subTest(kind=event['kind']):
+                left, right = socket.socketpair(); right.settimeout(.01)
+                errors = []
+                def producer():
+                    try:
+                        time.sleep(.08)
+                        left.sendall((json.dumps(event) + '\n').encode())
+                    except BaseException as error: errors.append(error)
+                sender = threading.Thread(target=producer); sender.start()
+                end = time.monotonic() + 2; receipt = {}
+                try:
+                    with mock.patch.object(job, 'WHOLE_END', end):
+                        if event['kind'] == 'READY':
+                            self.assertEqual(job.receive_native_ready(right, nonce, receipt, control), event)
+                        else:
+                            with self.assertRaisesRegex(RuntimeError, 'exact guest bootstrap refused at guest_prerequisites'):
+                                job.receive_native_ready(right, nonce, receipt, control)
+                            self.assertEqual(receipt['typed_guest_bootstrap_refusal'], event)
+                        self.assertEqual(job.WHOLE_END, end)
+                    wait = receipt['guest_native_bootstrap_wait']
+                    self.assertEqual(wait['originalOperationDeadlineMonotonic'], end)
+                    self.assertLess(wait['startedMonotonic'], wait['completedMonotonic'])
+                    self.assertLess(wait['completedMonotonic'], end)
+                finally:
+                    right.close(); sender.join(3); left.close()
+                self.assertFalse(sender.is_alive()); self.assertEqual(errors, [])
+
+    def test_native_ready_partial_bytes_cannot_extend_original_job_deadline(self):
+        import socket
+        import threading
+        from unittest import mock
+        import job
+        import connection_control as control
+        left, right = socket.socketpair(); stop = threading.Event()
+        def producer():
+            try:
+                while not stop.wait(.02): left.sendall(b' ')
+            except (BrokenPipeError, OSError): pass
+        sender = threading.Thread(target=producer); sender.start()
+        start = time.monotonic(); end = start + .15; receipt = {}
+        try:
+            with mock.patch.object(job, 'WHOLE_END', end):
+                with self.assertRaises((TimeoutError, RuntimeError)):
+                    job.receive_native_ready(right, 'a' * 32, receipt, control)
+                self.assertEqual(job.WHOLE_END, end)
+            self.assertLess(time.monotonic() - start, 1)
+            self.assertEqual(receipt['guest_native_bootstrap_wait']['originalOperationDeadlineMonotonic'], end)
+            self.assertNotIn('typed_guest_bootstrap_refusal', receipt)
+        finally:
+            stop.set(); right.close(); sender.join(3); left.close()
+        self.assertFalse(sender.is_alive())
+
+    def test_native_ready_expired_or_late_read_never_returns_success(self):
+        import socket
+        from unittest import mock
+        import connection_control as control
+        left, right = socket.socketpair()
+        try:
+            wire = b'{"kind":"READY"}\n'; left.sendall(wire)
+            with self.assertRaisesRegex(RuntimeError, 'original native observer deadline before receive'):
+                control.next_native_event(right, 'a' * 32, {}, end=time.monotonic() - 1)
+            self.assertEqual(right.recv(len(wire), socket.MSG_PEEK), wire)
+            with mock.patch.object(control.time, 'monotonic', side_effect=[1., 3.]):
+                with self.assertRaisesRegex(RuntimeError, 'original native observer deadline after receive'):
+                    control.next_native_event(right, 'a' * 32, {}, end=2.)
+        finally: left.close(); right.close()
+
     @unittest.skipUnless(sys.platform=='linux','real Linux owned-child environment transport')
     def test_staged_appimage_runtime_reaches_real_clean_owned_packaging_child(self):
         """Real tar/extraction/env/child transport; no AppImage or VM pass modeled."""
