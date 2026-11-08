@@ -6,6 +6,7 @@ The original backing image is held and checked read-only throughout. No mount,
 fsck, guest account, password, or source image write is part of this operation.
 """
 import fcntl
+import errno
 import hashlib
 import json
 import os
@@ -42,11 +43,21 @@ def sha(path):
         while b:=f.read(4*1024*1024):h.update(b)
     return h.hexdigest()
 
-def idle():
+def disconnected_sysfs_pid():
+    """Only an owned successful disconnect permits a removed kernfs node."""
+    try:return (SYS/'pid').read_text().strip()
+    except OSError as error:
+        if error.errno not in (errno.ENOENT,errno.ENODEV):raise
+        return ''
+
+
+def idle(after_disconnect=False):
     need(SYS.is_dir(),'NBD sysfs node absent')
     ro=(SYS/'ro').read_text().strip()
     need(ro in ('0','1'),'NBD idle read-only indicator malformed')
-    need(not (SYS/'pid').exists() or not (SYS/'pid').read_text().strip(),
+    absent=not disconnected_sysfs_pid() if after_disconnect else (
+        not (SYS/'pid').exists() or not (SYS/'pid').read_text().strip())
+    need(absent,
          'NBD already has an attached process')
     need(not list((SYS/'holders').iterdir()),'NBD has foreign holders')
     for dev in (NODE,*(str(x) for x in Path('/dev').glob('nbd0p*'))):
@@ -120,8 +131,10 @@ def attach(cow,readonly,offset=None):
         raise RuntimeError('owned NBD read-only mode differs; detached')
     return owner
 
-def detach(owner):
+def detach(owner,record=None):
     if owner is None:return None
+    need(not owner.get('disconnect_started'),'owned NBD disconnect already started; never repeat')
+    owner['disconnect_started']=True;owner['disconnect_phase']='VALIDATING'
     import select
     pid=owner['pid'];proc=Path('/proc')/str(pid)
     def same_attached_birth():
@@ -130,13 +143,22 @@ def detach(owner):
     try:
         same_attached_birth()
         exited=select.poll();exited.register(pidfd,select.POLLIN)
-        result=cmd(['/usr/bin/sudo','-n','/usr/bin/qemu-nbd','--disconnect',NODE],timeout=40)
+        owner['disconnect_attempted']=True;owner['disconnect_phase']='ISSUING'
+        if record is not None:record('attempt',owner)
+        try:result=cmd(['/usr/bin/sudo','-n','/usr/bin/qemu-nbd','--disconnect',NODE],timeout=40)
+        except BaseException as error:
+            owner['disconnect_phase']='COMMAND_UNKNOWN'
+            owner['disconnect_error']={'type':type(error).__name__,'reason':str(error)}
+            if record is not None:record('command-unknown',owner)
+            raise
+        owner['disconnect_result']=result;owner['disconnect_phase']='RETURNED'
+        if record is not None:record('result',owner)
         need(result['numeric']==0,'owned NBD disconnect refused')
+        owner['disconnect_phase']='OBSERVING'
         started=time.monotonic();deadline=started+10
         while True:
             need(time.monotonic()<deadline,'owned NBD closure observation deadline expired')
-            try:associated=(SYS/'pid').read_text().strip()
-            except FileNotFoundError:associated=''
+            associated=disconnected_sysfs_pid()
             need(associated in('',str(owner['sysfs_pid'])),
                  'NBD association replaced after owned disconnect')
             try:birth=(proc/'stat').read_text().rsplit(')',1)[1].split()[19]
@@ -156,9 +178,12 @@ def detach(owner):
             remaining=deadline-time.monotonic()
             need(remaining>0,'owned NBD process/association not gone after disconnect')
             time.sleep(min(.1,remaining))
-        return {'disconnect_numeric':0,'pid_absent':True,'client_task_absent':True,
+        closed={'disconnect_numeric':0,'pid_absent':True,'client_task_absent':True,
                 'original_pidfd_exited':True,
-                'closure_wait_seconds':time.monotonic()-started,**idle()}
+                'closure_wait_seconds':time.monotonic()-started,**idle(after_disconnect=True)}
+        owner['disconnect_phase']='CLOSED';owner['disconnect_closure']=closed
+        if record is not None:record('closed',owner)
+        return closed
     finally:os.close(pidfd)
 
 def debugfs(request,writable=False,cap=65536):
@@ -334,6 +359,14 @@ def main():
                     'rule_sha256':hashlib.sha256(RULE).hexdigest(),
                     'target':TARGET,'accepted':False,'first_failure':None}
     first=None
+    disconnect_record_number=0
+    def record_disconnect(phase,value):
+        nonlocal disconnect_record_number
+        disconnect_record_number+=1
+        path=root/('observer-disconnect-'+str(disconnect_record_number).zfill(2)+'-'+phase+'.json')
+        job.write_json(path,value)
+        out.setdefault('disconnect_records',[]).append({'phase':phase,'path':str(path),
+            'sha256':sha(path),'identity':job.sig(path.lstat())})
     try:
         out['pre_idle']=idle()
         out['cow_before']={'identity':job.sig(cow.lstat()),'sha256':sha(cow)}
@@ -358,7 +391,7 @@ def main():
         offset=selected[0]['start']*table['sectorsize']
         out['partition']={'offset':offset,'type':selected[0]['type'],
                           'start':selected[0]['start'],'size':selected[0]['size']}
-        out['raw_detach']=detach(owner);owner=None
+        out['raw_detach']=detach(owner,record_disconnect);owner=None
         out['partition_nbd_ro']=attach(cow,True,offset);owner=out['partition_nbd_ro']
         # The actual RO NBD diagnostic returned empty/2 initially and exact
         # ext4 export later in the same association, without a cache flush.
@@ -378,7 +411,7 @@ def main():
         absent=cmd(['/usr/bin/sudo','-n','/usr/sbin/debugfs','-R','stat '+TARGET,NODE])
         need(absent['numeric']==0 and 'File not found by ext2_lookup' in absent['stderr'],
              'exact guest udev rule target already exists or lookup unexpected')
-        out['partition_detach']=detach(owner);owner=None
+        out['partition_detach']=detach(owner,record_disconnect);owner=None
         out['partition_nbd_rw']=attach(cow,False,offset);owner=out['partition_nbd_rw']
         rule_file=root/'observer-rule.new'
         fd=os.open(rule_file,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)
@@ -402,7 +435,7 @@ def main():
                            'uid':0,'gid':0,'mode':'0644','readback':True}
         if c['kind']=='ROOT_ADMITTED_UBUNTU_SOURCE_BUILD_V1'or 'guest_prerequisites'in c:
             out['guest_source_build_files']=write_guest_source_files(c,root)
-        out['write_detach']=detach(owner);owner=None
+        out['write_detach']=detach(owner,record_disconnect);owner=None
         out['cow_after']={'identity':job.sig(cow.lstat()),'sha256':sha(cow)}
         before=out['cow_before']['identity'];after=out['cow_after']['identity']
         need(all(before[k]==after[k]for k in
@@ -420,9 +453,15 @@ def main():
         out['first_failure']=first
     finally:
         if owner is not None:
-            try:out['failure_detach']=detach(owner)
-            except BaseException as error:
-                out['secondary_failure']={'type':type(error).__name__,'reason':str(error)}
+            if owner.get('disconnect_started'):
+                out['failure_detach']={'not_repeated':True,
+                    'command_attempted':owner.get('disconnect_attempted',False),
+                    'phase':owner['disconnect_phase'],
+                    'closure':owner.get('disconnect_closure','UNKNOWN')}
+            else:
+                try:out['failure_detach']=detach(owner,record_disconnect)
+                except BaseException as error:
+                    out['secondary_failure']={'type':type(error).__name__,'reason':str(error)}
         os.close(basefd);os.close(lockfd)
         job.write_json(root/'observer-rule-provision.json',out)
     need(out['accepted'] and not out.get('secondary_failure'),

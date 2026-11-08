@@ -956,19 +956,88 @@ with patch.object(m,'cmd')as command:
   if path==Path('/proc')/str(leader)/'stat':raise ProcessLookupError(errno.ESRCH,'pre-disconnect task lost')
   return read_text(path,*args,**kwargs)
  with patch.object(Path,'read_text',lost_before):
-  try:m.detach(owner)
+  try:m.detach(copy.deepcopy(owner))
   except ProcessLookupError:pass
   else:raise AssertionError('pre-disconnect ESRCH accepted')
  command.assert_not_called()
+ def device_lost_before(path,*args,**kwargs):
+  if path==sysfs/'pid':raise OSError(errno.ENODEV,'pre-disconnect device lost')
+  return read_text(path,*args,**kwargs)
+ with patch.object(Path,'read_text',device_lost_before):
+  try:m.detach(copy.deepcopy(owner))
+  except OSError as error:assert error.errno==errno.ENODEV
+  else:raise AssertionError('pre-disconnect ENODEV accepted')
+ command.assert_not_called()
+# Each attempted command has a durable intent, then its actual result (or
+# UNKNOWN exception) before any post-disconnect observation. Neither a refusal
+# nor a timeout permits a second command on that owner during cleanup.
+import subprocess
+for outcome in ('nonzero','timeout'):
+ trial=copy.deepcopy(owner);records=[];command_calls=[]
+ def record(phase,value):
+  path=root/('disconnect-'+outcome+'-'+phase+'.json')
+  m.job.write_json(path,value);records.append((phase,json.loads(path.read_text())))
+ def refused(argv,**kwargs):
+  assert records[0][0]=='attempt' and records[0][1]['disconnect_phase']=='ISSUING'
+  command_calls.append(argv)
+  if outcome=='timeout':raise subprocess.TimeoutExpired(argv,40)
+  return {'numeric':1,'stdout':'','stderr':'actual refusal'}
+ with patch.object(m,'cmd',side_effect=refused):
+  try:m.detach(trial,record)
+  except (RuntimeError,subprocess.TimeoutExpired):pass
+  else:raise AssertionError('failed disconnect accepted')
+  try:m.detach(trial,record)
+  except RuntimeError as error:assert 'never repeat'in str(error)
+  else:raise AssertionError('failed disconnect repeated')
+ assert len(command_calls)==1
+ assert [phase for phase,_ in records]==['attempt','result'if outcome=='nonzero'else'command-unknown']
+ if outcome=='nonzero':assert records[-1][1]['disconnect_result']['numeric']==1
+ else:assert records[-1][1]['disconnect_phase']=='COMMAND_UNKNOWN'
+# A numeric success alone is never native closure: replacement, reused births
+# and a late observation still refuse without another disconnect.
+from contextlib import ExitStack
+for outcome in ('association-replaced','process-reused','task-reused','late'):
+ trial=copy.deepcopy(owner);post=False;command_calls=[]
+ def returned(argv,**kwargs):
+  global post
+  command_calls.append(argv);post=True
+  return {'numeric':0,'stdout':'','stderr':''}
+ def changed_after(path,*args,**kwargs):
+  value=read_text(path,*args,**kwargs)
+  if not post:return value
+  if outcome=='association-replaced'and path==sysfs/'pid':return str(tid+1)
+  target=leader if outcome=='process-reused'else tid
+  if outcome in ('process-reused','task-reused')and path==Path('/proc')/str(target)/'stat':
+   head,tail=value.rsplit(')',1);fields=tail.split();fields[19]='0'
+   return head+') '+' '.join(fields)
+  return value
+ with ExitStack()as stack:
+  stack.enter_context(patch.object(m,'cmd',side_effect=returned))
+  stack.enter_context(patch.object(Path,'read_text',changed_after))
+  if outcome=='late':stack.enter_context(patch.object(m.time,'monotonic',side_effect=[0,0,11]))
+  try:m.detach(trial)
+  except RuntimeError:pass
+  else:raise AssertionError('unproved post-disconnect closure accepted: '+outcome)
+  try:m.detach(trial)
+  except RuntimeError as error:assert 'never repeat'in str(error)
+  else:raise AssertionError('post-observation failure repeated disconnect')
+ assert len(command_calls)==1
 calls=[]
-detached=False;exit_reads=set()
+detached=False;exit_reads=set();removed_sysfs_reads=[];records=[]
+def record_success(phase,value):
+ path=root/('disconnect-success-'+phase+'.json')
+ m.job.write_json(path,value);records.append((phase,json.loads(path.read_text())))
 def disconnect(argv,**kwargs):
  global detached
  assert argv==['/usr/bin/sudo','-n','/usr/bin/qemu-nbd','--disconnect',m.NODE]
+ assert records[0][0]=='attempt' and records[0][1]['disconnect_phase']=='ISSUING'
  calls.append(argv);os.write(exit_fd,b'x');(sysfs/'pid').unlink()
  detached=True
  return {'numeric':0,'stdout':'','stderr':''}
 def exited_stat(path,*args,**kwargs):
+ if detached and path==sysfs/'pid':
+  assert records[1][0]=='result' and records[1][1]['disconnect_result']['numeric']==0
+  removed_sysfs_reads.append(str(path));raise OSError(errno.ENODEV,'post-disconnect removed kernfs node')
  if detached and path in (Path('/proc')/str(leader)/'stat',Path('/proc')/str(tid)/'stat'):
   exit_reads.add(str(path));raise ProcessLookupError(errno.ESRCH,'post-disconnect proc exit')
  return read_text(path,*args,**kwargs)
@@ -976,8 +1045,10 @@ def exited_stat(path,*args,**kwargs):
 # client thread really exit/reap, and the ordinary reader polls the real PIDFD.
 before=set(os.listdir('/proc/self/fd'))
 with patch.object(m,'cmd',side_effect=disconnect),patch.object(m,'idle',return_value={'sysfs_pid_absent':True}),patch.object(Path,'read_text',exited_stat):
- closed=m.detach(owner)
+ closed=m.detach(owner,record_success)
 assert len(calls)==1 and closed['original_pidfd_exited']and closed['pid_absent']and closed['client_task_absent']
+assert removed_sysfs_reads and [phase for phase,_ in records]==['attempt','result','closed']
+assert records[-1][1]['disconnect_closure']==closed
 assert exit_reads=={str(Path('/proc')/str(pid)/'stat')for pid in(leader,tid)}
 assert set(os.listdir('/proc/self/fd'))==before
 print(json.dumps({'realTaskProcessJoin':True,'ordinaryReader':1000,'rootPayload':0,
