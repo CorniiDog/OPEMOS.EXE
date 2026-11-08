@@ -759,6 +759,43 @@ class ActualRequestedJobWaitStatus(unittest.TestCase):
         bad=copy.deepcopy(self.cfg);bad['queue_entry']['sha256']='0'*64
         with self.assertRaises(ValueError):stage.queue_status(bad,job_ids=['own'])
 
+    def test_actual_installed_7df_helpers_consume_only_the_new_wait_projection(self):
+        import ast, zlib
+        original=zlib.decompress((Path(__file__).parent/
+            'fixtures/omen-ci-physical-7df4-queue.py.zlib').read_bytes()).decode()
+        self.assertEqual(hashlib.sha256(original.encode()).hexdigest(),
+            '7df43a15959cd568f4bf6a74919300b2607e45c6d83d2eb6e877fa1f2d5ddaf8')
+        modern=Path(self.cfg['queue_entry']['path']).read_text()
+        definitions={n.name:n for n in ast.parse(modern).body if isinstance(n,ast.FunctionDef)}
+        summary=ast.get_source_segment(modern,definitions['wait_status'])
+        old_defs={n.name:n for n in ast.parse(original).body if isinstance(n,ast.FunctionDef)}
+        main=ast.get_source_segment(original,old_defs['main'])
+        main=main.replace('commands.add_parser("status")',
+            'status_parser=commands.add_parser("status");status_parser.add_argument("--wait-job-id",action="append")')
+        branch='''        if args.action == 'status' and args.wait_job_id is not None:
+            try:
+                print(canonical(wait_status(db, args.wait_job_id)))
+                return 0
+            finally: db.close()
+'''
+        main=main.replace('    elif args.action in ("plan", "status"):\n',
+            '    elif args.action in ("plan", "status"):\n'+branch)
+        candidate=original.replace(ast.get_source_segment(original,old_defs['main']),summary+'\n\n'+main)
+        after={n.name:n for n in ast.parse(candidate).body if isinstance(n,ast.FunctionDef)}
+        self.assertEqual(set(after)-set(old_defs),{'wait_status'})
+        for name,node in old_defs.items():
+            if name!='main':self.assertEqual(ast.dump(node,include_attributes=False),
+                                            ast.dump(after[name],include_attributes=False))
+        source=self.root/'physical7df-wait-only.py';source.write_text(candidate);source.chmod(0o600)
+        cfg=copy.deepcopy(self.cfg);cfg['queue_entry']={'path':str(source),
+            'sha256':hashlib.sha256(source.read_bytes()).hexdigest()}
+        self.add('original-legacy','failed',{'originalEpoch':'x'*(4*1024**2)})
+        self.add('own','passed',{'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False}})
+        diagnostic={};rows=stage.queue_status(cfg,diagnostic=diagnostic,job_ids=['own'])
+        self.assertTrue(stage.closed_jobs(['own'],rows))
+        self.assertLess(diagnostic['captured_bytes'],2048)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM jobs').fetchone()[0],2)
+
 
 class MetadataOwnedClosure(unittest.TestCase):
     def setUp(self):
