@@ -2242,7 +2242,8 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                 raise NextOrdinaryTick('fresh ordinary tick, no refusal promoted to admission')
             try:
                 with patch.dict(os.environ,{'OPEMOS_QUEUE_HEAVY_ENTRY':'1','XDG_RUNTIME_DIR':str(runtime)}),\
-                     patch.object(q,'SystemdBackend',return_value=types.SimpleNamespace()),\
+                     patch.object(q,'SystemdBackend',return_value=types.SimpleNamespace(
+                         observer_captures=[],observer_capture_receipt=None)),\
                      patch.object(q,'tick',side_effect=tick),\
                      patch.object(q,'monitor_membership_race',side_effect=secondary),\
                      patch.object(q.time,'sleep'),self.assertRaisesRegex(NextOrdinaryTick,'fresh ordinary tick'):
@@ -2250,14 +2251,23 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                 self.assertEqual(len(ticks),2)
                 frames=[json.loads(l)for l in(root/'monitor-failures.log').read_text().splitlines()]
                 retained=next(f for f in frames if f['evidence'].get('kind')=='READONLY_MONITOR_RECHECK_CHURN')
-                self.assertEqual(retained['evidence']['originalMonitorFrame']['firstFailure'],primary.evidence)
+                self.assertEqual(frames[0]['evidence'],primary.evidence)
+                original_proof=retained['evidence']['originalMonitorFrame']
+                original_raw=(q.canonical(frames[0])+'\n').encode()
+                self.assertEqual(original_proof['bytes'],len(original_raw))
+                self.assertEqual(original_proof['sha256'],hashlib.sha256(original_raw).hexdigest())
+                self.assertEqual(original_proof['before']['st_size'],0)
+                self.assertEqual(original_proof['after']['st_size'],len(original_raw))
+                self.assertEqual(Path(original_proof['path']).read_bytes()[:len(original_raw)],original_raw)
+                self.assertTrue(all(c['closed']and not c['UNKNOWN']for c in original_proof['closeOutcomes']))
                 self.assertEqual(retained['evidence']['classificationFailure']['evidence'],secondary_evidence)
                 self.assertIs(retained['operationOrReleaseAuthorized'],False)
                 self.assertEqual([tuple(r)for r in db.execute('SELECT * FROM jobs')],before)
                 unknown=copy.deepcopy(secondary_evidence)
                 unknown['firstFailure']['closeOutcomes'][0]['UNKNOWN']=True
                 with patch.dict(os.environ,{'OPEMOS_QUEUE_HEAVY_ENTRY':'1','XDG_RUNTIME_DIR':str(runtime)}),\
-                     patch.object(q,'SystemdBackend',return_value=types.SimpleNamespace()),\
+                     patch.object(q,'SystemdBackend',return_value=types.SimpleNamespace(
+                         observer_captures=[],observer_capture_receipt=None)),\
                      patch.object(q,'tick',side_effect=primary)as failed_tick,\
                      patch.object(q,'monitor_membership_race',side_effect=q.PoolAdmissionFailure('unknown close',unknown)),\
                      self.assertRaises(q.PoolAdmissionFailure):
