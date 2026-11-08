@@ -38,6 +38,28 @@ def digest(path):
     return h.hexdigest()
 
 
+def safe_tree(output, path, name, member, base=None, parents=(), preserve_file_links=False):
+    path = Path(path); base = path.resolve() if base is None else base
+    actual = path.resolve(strict=True)
+    need(actual == base or actual.is_relative_to(base), 'input link escapes its download/source root')
+    info = actual.stat()
+    need(stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode), 'regular input tree only')
+    if preserve_file_links and path.is_symlink() and stat.S_ISREG(info.st_mode):
+        link = Path(os.readlink(path))
+        need(not link.is_absolute(), 'relative contained toolchain file link required')
+        item = tarfile.TarInfo(name); item.type = tarfile.SYMTYPE
+        item.linkname = str(link); item.mode = stat.S_IMODE(info.st_mode)
+        output.addfile(member(item))
+    elif stat.S_ISDIR(info.st_mode):
+        need(actual not in parents, 'cyclic input directory link')
+        output.add(path, arcname=name, recursive=False, filter=member)
+        for child in sorted(path.iterdir()):
+            safe_tree(output, child, name+'/'+child.name, member, base,
+                      (*parents, actual), preserve_file_links)
+    else:
+        output.add(path, arcname=name, recursive=False, filter=member)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--source', required=True)
@@ -94,7 +116,7 @@ def main():
     expanded = 0; count = 0
     def member(info):
         nonlocal expanded,count
-        need(info.isfile() or info.isdir(), 'regular input member after toolchain dereference')
+        need(info.isfile() or info.isdir() or info.issym(), 'regular input or contained toolchain file link')
         if info.isfile(): expanded += info.size
         count += 1
         need(count <= 250000, 'finite source/toolchain file inventory')
@@ -106,17 +128,6 @@ def main():
     with source_tar.open('xb') as output:
         subprocess.run(['git','archive','--format=tar','--prefix=source/',args.source],
                        stdout=output,check=True,timeout=120)
-    def safe_tree(output,path,name,base=None,parents=()):
-        path=Path(path);base=path.resolve()if base is None else base
-        actual=path.resolve(strict=True)
-        need(actual==base or actual.is_relative_to(base), 'input link escapes its download/source root')
-        info=actual.stat()
-        need(stat.S_ISDIR(info.st_mode)or stat.S_ISREG(info.st_mode), 'regular input tree only')
-        if stat.S_ISDIR(info.st_mode):
-            need(actual not in parents, 'cyclic input directory link')
-            output.add(path,arcname=name,recursive=False,filter=member)
-            for child in sorted(path.iterdir()):safe_tree(output,child,name+'/'+child.name,base,(*parents,actual))
-        else:output.add(path,arcname=name,recursive=False,filter=member)
     with tarfile.open(archive,'x',dereference=True) as output:
         # Preserve only safe source symlinks as DATA. The guest extractor
         # refuses absolute/escaping links before any build script executes.
@@ -133,8 +144,10 @@ def main():
                 output.addfile(info, candidate.extractfile(info) if info.isfile() else None)
         for name,path in [('core',args.core),('appliance/fedora-builder.qcow2',args.appliance),
                           ('node',node),('rust',rust),('cargo',cargo),('npm',npm),('cache/tauri',tauri)]:
-            safe_tree(output,path,name)
-        for file in sorted(debs.glob('*.deb')): safe_tree(output,file,'debs/'+file.name,base=debs.resolve())
+            # npm's CLI requires modules relative to its real package path.
+            # Flattening bin/npm into a regular file changes that Node context.
+            safe_tree(output,path,name,member,preserve_file_links=(name=='node'))
+        for file in sorted(debs.glob('*.deb')): safe_tree(output,file,'debs/'+file.name,member,base=debs.resolve())
     # This role is source input, never an executable/package success receipt.
     value = {'kind':'UBUNTU_GUEST_SOURCE_INPUT_V1','repository':'CorniiDog/OPEMOS.EXE',
              'source_commit':args.source,'producer_run_id':os.environ['GITHUB_RUN_ID'],

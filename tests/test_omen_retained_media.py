@@ -27,6 +27,48 @@ import types
 
 
 class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
+    def test_actual_node_cli_relative_module_survives_producer_and_guest_extraction(self):
+        """Real tar and Node execution; no npm download or guest acceptance."""
+        import tarfile
+        import ubuntu_guest_build as guest
+        spec=importlib.util.spec_from_file_location('source_input_cli_fixture',
+            SOURCE.parent/'prepare_ubuntu_source_inputs.py')
+        producer=importlib.util.module_from_spec(spec);spec.loader.exec_module(producer)
+        node=shutil.which('node');self.assertIsNotNone(node,'hosted Node runtime required')
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);tool=root/'downloaded-node'
+            (tool/'bin').mkdir(parents=True)
+            (tool/'lib/node_modules/npm/bin').mkdir(parents=True)
+            (tool/'lib/node_modules/npm/lib').mkdir()
+            cli=tool/'lib/node_modules/npm/bin/npm-cli.js'
+            cli.write_text("require('../lib/cli.js').run()\n");cli.chmod(0o755)
+            (tool/'lib/node_modules/npm/lib/cli.js').write_text(
+                "exports.run=()=>process.stdout.write('actual-relative-cli\\n')\n")
+            (tool/'bin/npm').symlink_to('../lib/node_modules/npm/bin/npm-cli.js')
+            for preserve in (False,True):
+                archive=root/('fixed.tar' if preserve else 'flattened.tar')
+                with tarfile.open(archive,'x',dereference=True) as out:
+                    producer.safe_tree(out,tool,'node',lambda item:item,
+                                       preserve_file_links=preserve)
+                with tarfile.open(archive) as source:
+                    self.assertEqual(source.getmember('node/bin/npm').issym(),preserve)
+                workspace=root/('fixed' if preserve else 'flattened')
+                guest.extract_inputs(archive,workspace,1048576)
+                result=subprocess.run([node,str(workspace/'node/bin/npm')],
+                                      capture_output=True,timeout=10)
+                if preserve:
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertEqual(result.stdout,b'actual-relative-cli\n')
+                    self.assertEqual(result.stderr,b'')
+                else:
+                    self.assertNotEqual(result.returncode,0)
+                    self.assertIn(b'MODULE_NOT_FOUND',result.stderr)
+            outside=root/'outside.js';outside.write_text('not admitted')
+            (tool/'bin/escape').symlink_to('../../outside.js')
+            with tarfile.open(root/'refused.tar','x',dereference=True) as out,\
+                    self.assertRaisesRegex(ValueError,'input link escapes'):
+                producer.safe_tree(out,tool,'node',lambda item:item,preserve_file_links=True)
+
     @unittest.skipUnless(os.getuid() == 0 and shutil.which('apt-get') and shutil.which('dpkg-deb'),
                          'real protected Root APT cache regression')
     def test_actual_offline_apt_local_archive_cache_without_installing_on_test_host(self):
