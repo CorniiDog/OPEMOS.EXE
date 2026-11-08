@@ -664,6 +664,32 @@ def transact(operation):
             if first is None:raise ValueError('Actual pointer output/socket closure failed')
 
 
+def native_control_bound(control,window,birth):
+    """Keep the actual provider PID distinct from its native window/app root."""
+    pid=control['pid']
+    need(type(pid)is int and pid>1,'positive native control provider PID')
+    if pid==window['pid']:
+        return {'kind':'SAME_NATIVE_WINDOW_PROCESS','pid':pid}
+    proof=control.get('nativeProcessOwner',{});chain=proof.get('chain')
+    need(window['pid']==birth['pid']and control.get('window_pid')==window['pid']and
+         proof.get('kind')=='ACTUAL_NATIVE_PROVIDER_APP_ANCESTRY'and proof.get('pid')==pid and
+         proof.get('app_pid')==birth['pid']and proof.get('app_start_ticks')==birth['start_ticks']and
+         proof.get('inherited_nonce')==birth['inherited_nonce']and type(proof.get('uid'))is int and proof['uid']>=0 and
+         type(chain)is list and 2<=len(chain)<=32,'native provider bound to original app/window/nonce/birth')
+    need(all(type(row)is dict and type(row.get('pid'))is int and row['pid']>1 and
+             type(row.get('ppid'))is int and row['ppid']>0 and
+             type(row.get('start_ticks'))is str and row['start_ticks'].isdigit()and
+             int(row['start_ticks'])>=int(birth['start_ticks'])and
+             row.get('uids')==[proof['uid']]*4 for row in chain),
+         'complete native provider process birth and uniform UID evidence')
+    need(chain[0]['pid']==pid and chain[-1]['pid']==birth['pid']and
+         chain[-1]['start_ticks']==birth['start_ticks']and
+         len({row['pid']for row in chain})==len(chain)and
+         all(row['ppid']==parent['pid']for row,parent in zip(chain,chain[1:])),
+         'complete ordered native provider ancestry to original app')
+    return proof
+
+
 class RobotPipeline:
     """The normal job produces observations; the existing Robot child sends input."""
     ACTIONS=('chooser-open','chooser-confirm-exact-input','Build',
@@ -771,7 +797,8 @@ class RobotPipeline:
         native=p.app if window is None else window;prefix='robot-'+str(len(self.actions)+1)
         before=self.capture(prefix+'-before')
         raw=p.target(label,list(roles),window);control=raw['value']
-        need(control['pid']==self.birth['pid']and control['window_id']==native['window_id']and
+        ownership=native_control_bound(control,native,self.birth)
+        need(control['window_id']==native['window_id']and
              control['visible']is True and control['enabled']is True and
              control['hitObservation']=='native-same-control-unoccluded',
              'fresh native unoccluded same app/window target')
@@ -782,7 +809,7 @@ class RobotPipeline:
         cid=control['nativeAccessibleId']or(control['role']+':'+control['label'])
         target={'control_id':cid,'role':control['role'],'app_process':self.birth,
             'window_id':native['window_id'],'visible':True,'enabled':True,'rect':rect(control['rect']),
-            'hit_observation':control['hitObservation']}
+            'hit_observation':control['hitObservation'],'native_process_owner':ownership}
         self.controls[name]={'control_id':cid,'role':control['role']}
         destination=self.destination_admission(app)
         observation={'schema':1,'identity':self.identity,'session':self.session,'app':app,'target':target,
@@ -955,7 +982,8 @@ class Pipeline:
             return self.robot_click(self,name,label,roles,window)
         target=self.target(label,list(roles),window);control=target['value'];point=control['point']
         native=self.app if window is None else window
-        need(control['pid']==native['pid']and control['window_id']==native['window_id']and
+        native_control_bound(control,native,self.ready['process'])
+        need(control['window_id']==native['window_id']and
              control['enabled']is True and control['visible']is True and control['readOnlyObservation']is True,
              'current genuine native control process/window/state')
         before=frame(self.q,self.root/(str(len(self.actions)).zfill(3)+'-'+name+'-before.png'),self.cfg['display'])

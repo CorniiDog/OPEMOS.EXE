@@ -34,6 +34,9 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
         A same-nonce sibling and an app child with another nonce must refuse.
         """
         import select
+        import copy
+        from unittest import mock
+        import connection_control as control
         import observer_guest as observer
         nonce = 'd' * 32
         child_code = 'import sys; sys.stdin.buffer.read()'
@@ -77,7 +80,7 @@ finally:
             with self.assertRaises(RuntimeError):
                 observer.native_process_owner(0, birth)
 
-            window = {'pid': parent.pid, 'window_id': 456, 'rect': [0, 0, 200, 200]}
+            window = {'pid': parent.pid, 'window_id': 456, 'rect': [0, 0, 200, 200], 'title': 'Actual app'}
             states = {key: key for key in ('enabled', 'sensitive', 'visible', 'showing', 'defunct', 'screen')}
             component = types.SimpleNamespace(get_extents=lambda _: types.SimpleNamespace(
                 x=10, y=10, width=80, height=20))
@@ -94,7 +97,46 @@ finally:
             target = observer.observed_control(desktop, window, 'Choose recovery image',
                 ['push button'], states, [1600, 900], hit_test=lambda *_: [456], owner_check=owner)
             self.assertEqual(target['nativeProcessOwner']['chain'], proof['chain'])
+            self.assertEqual(target['pid'], child)
+            self.assertEqual(target['window_pid'], parent.pid)
             self.assertEqual(target['point'], {'x': 50, 'y': 20})
+            self.assertEqual(control.native_control_bound(target, window, birth), proof)
+            bad = []
+            for key, value in [('pid', 0), ('window_pid', sibling.pid)]:
+                bad.append({**target, key: value})
+            for key, value in [('app_start_ticks', '0'), ('inherited_nonce', 'f'*32)]:
+                bad.append({**target, 'nativeProcessOwner': {**proof, key: value}})
+            wrong_uid = copy.deepcopy(target)
+            wrong_uid['nativeProcessOwner']['chain'][0]['uids'][1] += 1
+            bad.append(wrong_uid)
+            skipped_parent = copy.deepcopy(target)
+            skipped_parent['nativeProcessOwner']['chain'][0]['ppid'] = sibling.pid
+            bad.append(skipped_parent)
+            # Exercise both maintained host consumers up to their next guarded
+            # boundary; no mocked capture or destination is GUI acceptance.
+            class NextGuard(RuntimeError): pass
+            pipeline = object.__new__(control.Pipeline)
+            pipeline.robot_click = None; pipeline.app = window
+            pipeline.ready = {'process': birth}; pipeline.q = mock.Mock()
+            pipeline.cfg = {'display': [1600, 900]}; pipeline.root = Path('/unused')
+            pipeline.actions = []
+            robot = object.__new__(control.RobotPipeline)
+            robot.birth = birth; robot.actions = []; robot.controls = {}
+            robot.capture = lambda _: {'ref': 'before', 'capture_id': 'one'}
+            robot.destination_admission = mock.Mock(side_effect=NextGuard('destination'))
+            for value in [target, *bad]:
+                pipeline.target = lambda *_, current=value: {'value': current}
+                robot.destination_admission.reset_mock()
+                with mock.patch.object(control, 'frame', side_effect=NextGuard('capture')) as capture:
+                    expected = NextGuard if value is target else RuntimeError
+                    with self.assertRaises(expected):
+                        pipeline.click('diagnostic-button', 'Choose recovery image')
+                    self.assertEqual(capture.called, value is target)
+                with self.assertRaises(expected):
+                    robot.click(pipeline, robot.ACTIONS[0], 'Choose recovery image', ['push button'], None)
+                self.assertEqual(robot.destination_admission.called, value is target)
+                self.assertEqual(pipeline.actions, [])
+                pipeline.q.call.assert_not_called()
             self.assertIn('Choose recovery image',
                 observer.observed_names(desktop, window, states, owner)['names'])
             with self.assertRaisesRegex(RuntimeError, 'native target actual process owner'):

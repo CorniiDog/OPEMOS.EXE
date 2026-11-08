@@ -72,7 +72,8 @@ def native_process_owner(pid,birth):
                 'native provider same real/effective/saved/filesystem UID')
         require(b'OPROBOT_NONCE='+nonce.encode()in(proc/'environ').read_bytes().split(b'\0'),
                 'native provider inherited original launch nonce')
-        return {'pid':current,'ppid':int(fields[1]),'start_ticks':fields[19]}
+        return {'pid':current,'ppid':int(fields[1]),'start_ticks':fields[19],
+                'uids':[int(value)for value in uid]}
     chain=[];current=pid
     for _ in range(32):
         require(current>1 and current not in [row['pid']for row in chain],
@@ -86,7 +87,7 @@ def native_process_owner(pid,birth):
     require(all(cut(row['pid'])==row for row in chain),'native provider ancestry unchanged')
     return {'kind':'ACTUAL_NATIVE_PROVIDER_APP_ANCESTRY','pid':pid,
             'app_pid':birth['pid'],'app_start_ticks':birth['start_ticks'],
-            'inherited_nonce':nonce,'chain':chain}
+            'inherited_nonce':nonce,'uid':os.getuid(),'chain':chain}
 
 
 def launched_window_matches(windows, expected_title, nonce, expected):
@@ -272,7 +273,7 @@ def observed_control(desktop,window,label,roles,states,screen,probe=False,hit_te
             attributes=node.get_attributes()
             identifier=node.get_accessible_id()if hasattr(node,'get_accessible_id')else None
             matches.append({'label':node.get_name(),'role':node.get_role_name(),'rect':rect,
-                'pid':window['pid'],'window_id':window['window_id'],'point':point,
+                'pid':provider,'window_pid':window['pid'],'window_id':window['window_id'],'point':point,
                 'nativeAccessibleId':identifier,'nativeAttributes':attributes,
                 'nativeProcessOwner':ownership,
                 'nativeWindowHitChain':hit,'hitObservation':None if hit is None else 'native-same-control-unoccluded',
