@@ -591,7 +591,7 @@ sys.stdin.buffer.read(1);stop.set();t.join(2);assert not t.is_alive()
                 self.assertNotEqual(identity['pid'],identity['tid'])
                 reaper=threading.Thread(target=server.wait);reaper.start()
                 body=r'''
-import os,sys,json,copy
+import os,sys,json,copy,errno
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0,sys.argv[1]);import provision_observer_rule as m
@@ -615,17 +615,36 @@ with patch.object(m,'cmd')as command:
   except RuntimeError:pass
   else:raise AssertionError('changed owner accepted: '+key)
  command.assert_not_called()
+ # ESRCH before an owned disconnect is still a failed identity check. It
+ # must not be translated into authority to disconnect an unknown task.
+ read_text=Path.read_text
+ def lost_before(path,*args,**kwargs):
+  if path==Path('/proc')/str(leader)/'stat':raise ProcessLookupError(errno.ESRCH,'pre-disconnect task lost')
+  return read_text(path,*args,**kwargs)
+ with patch.object(Path,'read_text',lost_before):
+  try:m.detach(owner)
+  except ProcessLookupError:pass
+  else:raise AssertionError('pre-disconnect ESRCH accepted')
+ command.assert_not_called()
 calls=[]
+detached=False;exit_reads=set()
 def disconnect(argv,**kwargs):
+ global detached
  assert argv==['/usr/bin/sudo','-n','/usr/bin/qemu-nbd','--disconnect',m.NODE]
  calls.append(argv);os.write(exit_fd,b'x');(sysfs/'pid').unlink()
+ detached=True
  return {'numeric':0,'stdout':'','stderr':''}
+def exited_stat(path,*args,**kwargs):
+ if detached and path in (Path('/proc')/str(leader)/'stat',Path('/proc')/str(tid)/'stat'):
+  exit_reads.add(str(path));raise ProcessLookupError(errno.ESRCH,'post-disconnect proc exit')
+ return read_text(path,*args,**kwargs)
 # Only the kernel/device transport is modeled. The spawned Root payload and
 # client thread really exit/reap, and the ordinary reader polls the real PIDFD.
 before=set(os.listdir('/proc/self/fd'))
-with patch.object(m,'cmd',side_effect=disconnect),patch.object(m,'idle',return_value={'sysfs_pid_absent':True}):
+with patch.object(m,'cmd',side_effect=disconnect),patch.object(m,'idle',return_value={'sysfs_pid_absent':True}),patch.object(Path,'read_text',exited_stat):
  closed=m.detach(owner)
 assert len(calls)==1 and closed['original_pidfd_exited']and closed['pid_absent']and closed['client_task_absent']
+assert exit_reads=={str(Path('/proc')/str(pid)/'stat')for pid in(leader,tid)}
 assert set(os.listdir('/proc/self/fd'))==before
 print(json.dumps({'realTaskProcessJoin':True,'ordinaryReader':1000,'rootPayload':0,
                   'nativePIDFDExit':True,'NBDDeviceModeled':True}))

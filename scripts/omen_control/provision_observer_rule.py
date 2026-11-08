@@ -140,11 +140,11 @@ def detach(owner):
             need(associated in('',str(owner['sysfs_pid'])),
                  'NBD association replaced after owned disconnect')
             try:birth=(proc/'stat').read_text().rsplit(')',1)[1].split()[19]
-            except FileNotFoundError:birth=None
+            except (FileNotFoundError,ProcessLookupError):birth=None
             need(birth is None or birth==owner['start_ticks'],'NBD PID reused during exact closure observation')
             try:
                 thread_birth=(Path('/proc')/str(owner['sysfs_pid'])/'stat').read_text().rsplit(')',1)[1].split()[19]
-            except FileNotFoundError:thread_birth=None
+            except (FileNotFoundError,ProcessLookupError):thread_birth=None
             need(thread_birth is None or thread_birth==owner['sysfs_start_ticks'],
                  'NBD client task reused during exact closure observation')
             gone=birth is None and thread_birth is None and bool(exited.poll(0))
