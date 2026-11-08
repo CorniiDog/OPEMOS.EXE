@@ -732,6 +732,8 @@ def main():
                 if 'GUI'not in result:
                     result['partialGUIActions']=pipeline.actions
                     result['partialNativeObservations']=pipeline.observations
+                    if hasattr(pipeline,'last_received_native_frame'):
+                        result['last_received_native_frame']=pipeline.last_received_native_frame
         need(result['GUI']['output']['value']['bytes']>0,'actual completed guest output required')
         result['effects'].append('actual-visible-GUI-Build-and-virtual-USB-write')
         # The complete owned-VM finalizer below runs on both success and fault.

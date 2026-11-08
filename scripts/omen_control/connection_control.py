@@ -923,6 +923,11 @@ class Pipeline:
         request={'nonce':self.binding['nonce'],'sequence':self.sequence,'kind':kind,**operands}
         self.observer.sendall((json.dumps(request,separators=(',',':'))+'\n').encode())
         response=observer_line(self.observer,1048576)
+        # Keep the bounded reply even if authentication rejects it. This is
+        # diagnostic data and never supplies an accepted native observation.
+        self.last_received_native_frame={'response':response,'diagnosticOnly':True,
+            'expected':{'nonce':request['nonce'],'sequence':self.sequence,
+                        'request_kind':kind,'process':self.ready['process']}}
         need(time.monotonic()<self.end and response.get('kind')=='NATIVE_OBSERVATION' and
              response.get('nonce')==request['nonce'] and response.get('sequence')==self.sequence and
              response.get('request_kind')==kind and response.get('process')==self.ready['process'],

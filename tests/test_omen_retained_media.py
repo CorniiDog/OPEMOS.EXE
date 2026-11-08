@@ -27,6 +27,139 @@ import types
 
 
 class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
+    def test_native_child_control_requires_actual_original_app_ancestry(self):
+        """Real process family and nonce checks; the accessible tree is modeled.
+
+        This tests provider ownership, not a graphical click or guest result.
+        A same-nonce sibling and an app child with another nonce must refuse.
+        """
+        import select
+        import observer_guest as observer
+        nonce = 'd' * 32
+        child_code = 'import sys; sys.stdin.buffer.read()'
+        parent_code = '''import json,os,subprocess,sys
+children=[]
+try:
+ for nonce in (os.environ['OPROBOT_NONCE'],'e'*32):
+  children.append(subprocess.Popen([sys.executable,'-I','-B','-c',sys.argv[1]],
+   env={**os.environ,'OPROBOT_NONCE':nonce},stdin=subprocess.PIPE,
+   stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL))
+ print(json.dumps([p.pid for p in children]),flush=True)
+ sys.stdin.buffer.read()
+finally:
+ for p in children:p.stdin.close()
+ for p in children:p.wait(timeout=5)
+'''
+        env = {**os.environ, 'OPROBOT_NONCE': nonce}
+        parent = subprocess.Popen([sys.executable, '-I', '-B', '-c', parent_code, child_code],
+            env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        sibling = subprocess.Popen([sys.executable, '-I', '-B', '-c', child_code],
+            env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            self.assertTrue(select.select([parent.stdout], [], [], 5)[0])
+            child, wrong_nonce = json.loads(parent.stdout.readline())
+            birth = observer.proc_identity(parent.pid)
+            # Wait for exec: Popen returning in the parent does not prove the
+            # child's final environment has replaced its inherited pre-exec one.
+            end = time.monotonic() + 5
+            while b'OPROBOT_NONCE='+('e'*32).encode() not in (
+                    Path('/proc')/str(wrong_nonce)/'environ').read_bytes().split(b'\0'):
+                self.assertLess(time.monotonic(), end); time.sleep(.01)
+            proof = observer.native_process_owner(child, birth)
+            self.assertEqual([p['pid'] for p in proof['chain']], [child, parent.pid])
+            self.assertEqual(proof['app_start_ticks'], birth['start_ticks'])
+            self.assertEqual(observer.native_process_owner(parent.pid, birth)['pid'], parent.pid)
+            for pid, bound in [(wrong_nonce, birth), (sibling.pid, birth),
+                               (child, {**birth, 'start_ticks': '0'}),
+                               (child, {**birth, 'inherited_nonce': 'f'*32})]:
+                with self.subTest(pid=pid, anchor=bound), self.assertRaises(RuntimeError):
+                    observer.native_process_owner(pid, bound)
+            with self.assertRaises(RuntimeError):
+                observer.native_process_owner(0, birth)
+
+            window = {'pid': parent.pid, 'window_id': 456, 'rect': [0, 0, 200, 200]}
+            states = {key: key for key in ('enabled', 'sensitive', 'visible', 'showing', 'defunct', 'screen')}
+            component = types.SimpleNamespace(get_extents=lambda _: types.SimpleNamespace(
+                x=10, y=10, width=80, height=20))
+            def accessible(pid, label, children=()):
+                return types.SimpleNamespace(get_process_id=lambda: pid, get_name=lambda: label,
+                    get_role_name=lambda: 'push button', get_child_count=lambda: len(children),
+                    get_child_at_index=lambda i: children[i],
+                    get_state_set=lambda: types.SimpleNamespace(contains=lambda k: k != 'defunct'),
+                    get_component_iface=lambda: component, get_attributes=lambda: [])
+            node = accessible(child, 'Choose recovery image')
+            app = accessible(parent.pid, '', [node])
+            desktop = types.SimpleNamespace(get_child_count=lambda: 1, get_child_at_index=lambda _: app)
+            owner = lambda pid, _: observer.native_process_owner(pid, birth)
+            target = observer.observed_control(desktop, window, 'Choose recovery image',
+                ['push button'], states, [1600, 900], hit_test=lambda *_: [456], owner_check=owner)
+            self.assertEqual(target['nativeProcessOwner']['chain'], proof['chain'])
+            self.assertEqual(target['point'], {'x': 50, 'y': 20})
+            self.assertIn('Choose recovery image',
+                observer.observed_names(desktop, window, states, owner)['names'])
+            with self.assertRaisesRegex(RuntimeError, 'native target actual process owner'):
+                observer.observed_control(desktop, window, 'Choose recovery image',
+                    ['push button'], states, [1600, 900])
+            with self.assertRaisesRegex(RuntimeError, 'occluded'):
+                observer.observed_control(desktop, window, 'Choose recovery image',
+                    ['push button'], states, [1600, 900], hit_test=lambda *_: [999], owner_check=owner)
+            node.get_process_id = lambda: sibling.pid
+            with self.assertRaises(RuntimeError):
+                observer.observed_control(desktop, window, 'Choose recovery image',
+                    ['push button'], states, [1600, 900], owner_check=owner)
+        finally:
+            for process in (parent, sibling):
+                _, errors = process.communicate(timeout=10)
+                self.assertEqual(process.returncode, 0, errors.decode('utf-8', 'replace'))
+
+    def test_rejected_native_reply_is_retained_before_any_pointer(self):
+        """Real bounded transport, modeled guest identity; no GUI acceptance."""
+        import socket
+        from unittest import mock
+        import connection_control as control
+        nonce = 'a' * 32; source = 'b' * 40; digest = 'c' * 64
+        birth = {'pid': 123, 'start_ticks': '789',
+            'inherited_nonce': nonce, 'exe_sha256': digest}
+        valid = {'kind': 'NATIVE_OBSERVATION', 'nonce': nonce, 'sequence': 1,
+            'request_kind': 'CONTROL', 'process': birth, 'value': {'available': False}}
+        faults = [('valid', valid, None),
+            ('post-READY-refusal', {'kind': 'BOOTSTRAP_REFUSED', 'nonce': nonce,
+                'phase': 'native_app_and_observer', 'numeric': 1,
+                'observer_log_base64': 'bW9kZWxlZCBmYWlsdXJl'}, RuntimeError)]
+        for key, value in [('nonce', 'd' * 32), ('sequence', 2),
+                           ('request_kind', 'WINDOWS'), ('process', {**birth, 'start_ticks': '790'})]:
+            faults.append((key, {**valid, key: value}, RuntimeError))
+        faults.append(('not-an-object', ['untrusted frame'], AttributeError))
+        for name, response, error in faults:
+            with self.subTest(frame=name), tempfile.TemporaryDirectory() as temp:
+                left, right = socket.socketpair()
+                try:
+                    left.settimeout(2); right.settimeout(2)
+                    right.sendall((json.dumps(response) + '\n').encode())
+                    qmp = mock.Mock()
+                    binding = {'nonce': nonce, 'artifact_source': source, 'package_sha256': digest}
+                    guest = {'nonce': nonce, 'source_commit': source, 'package_sha256': digest,
+                        'native_executable_sha256': digest, 'whole_seconds': 10, 'display': [1600, 900]}
+                    ready = {'nonce': nonce, 'process': birth, 'app': {'pid': 123, 'window_id': 456}}
+                    pipeline = control.Pipeline(binding, guest, qmp, left, ready, Path(temp))
+                    with mock.patch.object(control, 'process'):
+                        if error is None:
+                            self.assertEqual(pipeline.request('CONTROL'), response)
+                            self.assertEqual(len(pipeline.observations), 1)
+                        else:
+                            with self.assertRaises(error):
+                                pipeline.click('chooser-open', 'Choose recovery image')
+                            self.assertEqual(pipeline.actions, [])
+                            self.assertEqual(pipeline.observations, [])
+                            self.assertEqual(list(Path(temp).iterdir()), [])
+                    self.assertEqual(pipeline.last_received_native_frame['response'], response)
+                    self.assertTrue(pipeline.last_received_native_frame['diagnosticOnly'])
+                    self.assertEqual(pipeline.last_received_native_frame['expected'],
+                        {'nonce': nonce, 'sequence': 1, 'request_kind': 'CONTROL', 'process': birth})
+                    qmp.call.assert_not_called()
+                finally:
+                    left.close(); right.close()
+
     def test_normal_robot_uses_same_nested_guest_display_as_pipeline(self):
         """The actual job passes the outer admission config to RobotPipeline.
 

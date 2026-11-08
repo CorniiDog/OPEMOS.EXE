@@ -53,6 +53,42 @@ def proc_identity(pid, expected=None):
             'inherited_nonce':inherited_nonce}
 
 
+def native_process_owner(pid,birth):
+    """Bind a native accessibility provider to this actual app process tree.
+
+    A web control can be exported by the app's child rather than its X11 PID.
+    Its ancestry, UID and inherited launch nonce are kernel observations, not
+    permission inferred from the control's label or rectangle.
+    """
+    require(type(pid)is int and pid>1,'native provider PID')
+    nonce=birth['inherited_nonce']
+    require(type(nonce)is str and re.fullmatch('[0-9a-f]{32}',nonce),'native provider launch nonce')
+    def cut(current):
+        proc=Path('/proc')/str(current)
+        raw=(proc/'stat').read_text();fields=raw[raw.rfind(')')+2:].split()
+        uid=next(line.split()[1:]for line in(proc/'status').read_text().splitlines()
+                 if line.startswith('Uid:'))
+        require(len(uid)==4 and all(int(value)==os.getuid()for value in uid),
+                'native provider same real/effective/saved/filesystem UID')
+        require(b'OPROBOT_NONCE='+nonce.encode()in(proc/'environ').read_bytes().split(b'\0'),
+                'native provider inherited original launch nonce')
+        return {'pid':current,'ppid':int(fields[1]),'start_ticks':fields[19]}
+    chain=[];current=pid
+    for _ in range(32):
+        require(current>1 and current not in [row['pid']for row in chain],
+                'native provider actual app ancestry')
+        row=cut(current);chain.append(row)
+        if current==birth['pid']:
+            require(row['start_ticks']==birth['start_ticks'],'original app PID/start unchanged')
+            break
+        current=row['ppid']
+    else:require(False,'finite native provider ancestry')
+    require(all(cut(row['pid'])==row for row in chain),'native provider ancestry unchanged')
+    return {'kind':'ACTUAL_NATIVE_PROVIDER_APP_ANCESTRY','pid':pid,
+            'app_pid':birth['pid'],'app_start_ticks':birth['start_ticks'],
+            'inherited_nonce':nonce,'chain':chain}
+
+
 def launched_window_matches(windows, expected_title, nonce, expected):
     """Select this launch before requiring a unique native window.
 
@@ -199,7 +235,7 @@ def accessible_descendants(root):
             if child is not None:pending.append((child,depth+1))
 
 
-def observed_control(desktop,window,label,roles,states,screen,probe=False,hit_test=None):
+def observed_control(desktop,window,label,roles,states,screen,probe=False,hit_test=None,owner_check=None):
     """Fresh PID/window-owned native target geometry, without AX/DOM activation."""
     require(type(label)is str and 0<len(label)<=512 and roles
             and set(roles)<={'push button','entry','text','check box','list item','menu item','combo box'},
@@ -218,7 +254,11 @@ def observed_control(desktop,window,label,roles,states,screen,probe=False,hit_te
             if not all(state.contains(states[k])for k in('enabled','sensitive','visible','showing')):
                 continue
             if state.contains(states['defunct']):continue
-            require(node.get_process_id()==window['pid'],'native target actual process owner')
+            provider=node.get_process_id()
+            ownership={'kind':'SAME_NATIVE_WINDOW_PROCESS','pid':provider}
+            if provider!=window['pid']:
+                require(owner_check is not None,'native target actual process owner')
+                ownership=owner_check(provider,window['pid'])
             component=node.get_component_iface();require(component is not None,'native component geometry')
             box=component.get_extents(states['screen'])
             rect=[box.x,box.y,box.width,box.height];wx,wy,ww,wh=window['rect'];sw,sh=screen
@@ -234,6 +274,7 @@ def observed_control(desktop,window,label,roles,states,screen,probe=False,hit_te
             matches.append({'label':node.get_name(),'role':node.get_role_name(),'rect':rect,
                 'pid':window['pid'],'window_id':window['window_id'],'point':point,
                 'nativeAccessibleId':identifier,'nativeAttributes':attributes,
+                'nativeProcessOwner':ownership,
                 'nativeWindowHitChain':hit,'hitObservation':None if hit is None else 'native-same-control-unoccluded',
                 'enabled':True,'visible':True,'readOnlyObservation':True})
     if probe and not matches:return {'available':False,'readOnlyObservation':True}
@@ -241,7 +282,7 @@ def observed_control(desktop,window,label,roles,states,screen,probe=False,hit_te
     return matches[0]
 
 
-def observed_names(desktop,window,states):
+def observed_names(desktop,window,states,owner_check=None):
     """Visible native names in the original app, never editable/secret values."""
     count=desktop.get_child_count();require(type(count)is int and 0<=count<=4096,'bounded native desktop')
     names=[]
@@ -249,7 +290,11 @@ def observed_names(desktop,window,states):
         app=desktop.get_child_at_index(index)
         if app is None or app.get_process_id()!=window['pid']:continue
         for node in accessible_descendants(app):
-            if node.get_process_id()!=window['pid']or node.get_role_name()in('password text','entry'):continue
+            if node.get_role_name()in('password text','entry'):continue
+            provider=node.get_process_id()
+            if provider!=window['pid']:
+                if owner_check is None:continue
+                owner_check(provider,window['pid'])
             state=node.get_state_set()
             if not state.contains(states['visible'])or not state.contains(states['showing'])or state.contains(states['defunct']):continue
             component=node.get_component_iface()
@@ -342,6 +387,14 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
     states={key:getattr(Atspi.StateType,name)for key,name in
             [('enabled','ENABLED'),('sensitive','SENSITIVE'),('visible','VISIBLE'),('showing','SHOWING'),('defunct','DEFUNCT')]}
     states['screen']=Atspi.CoordType.SCREEN
+    def owner_check(pid,window_pid):
+        # Keep the existing exact-PID rule for separately owned native chooser
+        # transients. Child-provider support is confined to the verified app.
+        require(window_pid==birth['pid'],'native child provider belongs to original app window')
+        try:return native_process_owner(pid,birth)
+        except (RuntimeError,FileNotFoundError,ProcessLookupError) as error:
+            raise RuntimeError('native provider pid='+str(pid)+' window_pid='+str(window_pid)+
+                               ' refused: '+str(error))from error
     def emit(value):
         wire=(json.dumps(value,sort_keys=True,separators=(',',':'))+'\n').encode()
         require(len(wire)<=1048576 and os.write(port,wire)==len(wire),'bounded native observation channel')
@@ -392,18 +445,18 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
             window=next((w for w in owned if w['window_id']==request['window_id']),None)
             require(window is not None,'mapped original app or native transient window')
             value=observed_control(desktop,window,request['label'],request['roles'],states,cfg['display'],
-                probe=request.get('probe')is True,hit_test=x.hit_window_chain)
+                probe=request.get('probe')is True,hit_test=x.hit_window_chain,owner_check=owner_check)
         elif kind=='WINDOWS':value={'windows':owned}
         elif kind=='UI_STATE':
             # Read the actual mapped main/companion/chooser windows. No app
             # command, DOM mutation or accessibility activation is permitted.
             value={'windows':owned,'namesByWindow':[
-                {'window_id':w['window_id'],'names':observed_names(desktop,w,states)['names']}
+                {'window_id':w['window_id'],'names':observed_names(desktop,w,states,owner_check)['names']}
                 for w in owned]}
         elif kind=='NAMES':
             window=next((w for w in owned if w['window_id']==request['window_id']),None)
             require(window is not None,'original mapped app/native transient for visible names')
-            value=observed_names(desktop,window,states)
+            value=observed_names(desktop,window,states,owner_check)
         elif kind=='FILE':value=file_observation(request['role'])
         elif kind=='USB':
             matches=[]
