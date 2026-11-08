@@ -307,7 +307,7 @@ class Engine:
             except Exception as secondary:self.source_failure['collection_error']=type(secondary).__name__
             raise
         finally:
-            fcntl.flock(lock,fcntl.LOCK_UN);os.close(lock)
+            fcntl.flock(lock,fcntl.LOCK_UN);lock.close()
 
     def transaction(self,kind,subject,expected_producer=None,candidate_archive=None):
         candidate=None if expected_producer is None else {'descriptor':expected_producer,'archive':candidate_archive}

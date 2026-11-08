@@ -104,6 +104,83 @@ class IndependentOutcomes(unittest.TestCase):
                 with self.assertRaises(FileNotFoundError):self.engine.platform(platform)
         self.assertEqual(called,['macos','windows'])
 
+class SourceBuildLockLifecycle(unittest.TestCase):
+    """Real owned stream/flock; planner, queue and VM facts are modeled."""
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
+        self.env=patch.dict(os.environ,{'GITHUB_REPOSITORY':M.REPO,
+            'GITHUB_RUN_ID':'101','GITHUB_RUN_ATTEMPT':'2','OPEMOS_SOURCE_SHA':'a'*40,
+            'OPEMOS_ROBOT_REPORT_DIR':str(self.root/'public')})
+        self.env.start();self.engine=M.Engine(self.root/'private');self.handles=[]
+        self.stage=M.modules();self.storage=self.root/'storage';self.storage.mkdir(mode=0o700)
+        (self.storage/'.receipts').mkdir(mode=0o700)
+        M.dump(self.storage/self.stage['MARKER'],
+               {'schema':1,'uid':os.getuid(),'purpose':'OPEMOS CI copies only'})
+        self.lock_path=self.storage/('run-101-2-'+'b'*32)/'.lock'
+        self.expected={'source_commit':'d'*40}
+        self.admission={'path':'modeled-admission','sha256':'c'*64}
+        self.job={'id':'modeled-source-job','owner':'exe','platform':'ubuntu',
+            'resources':['opemos-ubuntu-gui-virtual-usb'],'cores':1,'memory':1024,
+            'approval':self.admission}
+        self.cfg={'enabled':True,'version':1,'artifact_root':str(self.storage),
+            'dispatcher_mode':'join-existing','vm_admission_limits':{'max_vm_bytes':60000000000,
+                'max_cpu':10,'max_memory_bytes':34359738368},'wait_seconds':30,
+            'max_input_bytes':1024,'result_contract':{'max_bytes':1048576}}
+        self.request=dict(self.engine.context,nonce='b'*32)
+        self.prepared={'available':True,'operation_scope':'NORMAL_UBUNTU_SOURCE_BUILD_ONLY',
+            'expected_source_input':self.expected,'config':'modeled-config',
+            'operand':{'hardware_scope':'virtual-only','inventory_vm_id':'OPEMOS-Ubuntu-Agent-UI',
+                'runtime_admission':self.admission,'inputs':[],'manifest':'modeled-manifest',
+                'job_ids':[self.job['id']]},
+            'plan':{'source_commit':'a'*40,'nonce':'b'*32},
+            'staging_path':str(self.lock_path.parent)}
+        owned_lock=self.stage['owned_lock'];root_guard=self.stage['root_guard']
+        def acquire(path):
+            handle=owned_lock(path);self.handles.append((handle,handle.fileno()));return handle
+        self.stage.update(ROOT=self.storage,owned_lock=acquire,
+            root_guard=lambda:root_guard(self.storage),
+            load_pinned=lambda ref:self.cfg if ref=='modeled-config' else
+                {'sourceBuildEnabled':True} if ref==self.admission else {'jobs':[self.job]},
+            absolute_manifest=lambda value:value,verify_original_operand=lambda *args:None,
+            queue_status=lambda config:{})
+        self.engine.stage=self.stage
+    def tearDown(self):
+        for handle,_ in self.handles:handle.close()
+        self.env.stop();self.temp.cleanup()
+    def invoke(self):
+        with patch.object(self.engine,'request',return_value=(
+                self.request,self.prepared,self.root/'private')):
+            return self.engine.build_source(self.expected,{'opaque':'modeled source input'})
+    def assert_closed_and_released(self):
+        import fcntl
+        self.assertEqual(len(self.handles),1);handle,fd=self.handles[0]
+        self.assertTrue(handle.closed)
+        with self.assertRaises(OSError):os.fstat(fd)
+        with self.stage['owned_lock'](self.lock_path) as again:
+            fcntl.flock(again,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    def test_submit_failure_keeps_first_and_closes_actual_owned_stream(self):
+        import fcntl
+        first=ValueError('modeled exact source refusal before submission')
+        def submit(*args):
+            with open(self.lock_path) as contender,self.assertRaises(BlockingIOError):
+                fcntl.flock(contender,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            raise first
+        self.stage['queue_call']=submit
+        with patch.object(M,'hook',side_effect=FileNotFoundError('no guest result')),\
+                self.assertRaises(ValueError) as caught:self.invoke()
+        self.assertIs(caught.exception,first)
+        self.assertEqual(self.engine.source_failure['queue_job_id'],self.job['id'])
+        self.assert_closed_and_released()
+    def test_collection_failure_after_closed_job_keeps_first_and_releases_lock(self):
+        first=FileNotFoundError('modeled current guest result absent')
+        self.stage['queue_call']=lambda *args:{'submitted':True}
+        self.stage['wait_jobs']=lambda *args:{self.job['id']:{'state':'passed',
+            'result':{'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False}}}}
+        with patch.object(M,'hook',side_effect=first),\
+                self.assertRaises(FileNotFoundError) as caught:self.invoke()
+        self.assertIs(caught.exception,first)
+        self.assert_closed_and_released()
+
 class HostedRunnerGuard(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name);self.previous=Path.cwd();os.chdir(self.root)
