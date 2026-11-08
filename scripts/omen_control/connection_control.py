@@ -675,7 +675,8 @@ def native_control_bound(control,window,birth):
          proof.get('kind')=='ACTUAL_NATIVE_PROVIDER_APP_ANCESTRY'and proof.get('pid')==pid and
          proof.get('app_pid')==birth['pid']and proof.get('app_start_ticks')==birth['start_ticks']and
          proof.get('inherited_nonce')==birth['inherited_nonce']and type(proof.get('uid'))is int and proof['uid']>=0 and
-         type(chain)is list and 2<=len(chain)<=32,'native provider bound to original app/window/nonce/birth')
+         type(chain)is list and 2<=len(chain)<=32,
+         'current genuine native control process/window/state: provider not bound to original app/nonce/birth')
     need(all(type(row)is dict and type(row.get('pid'))is int and row['pid']>1 and
              type(row.get('ppid'))is int and row['ppid']>0 and
              type(row.get('start_ticks'))is str and row['start_ticks'].isdigit()and
