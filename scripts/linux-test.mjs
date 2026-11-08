@@ -27,7 +27,9 @@ export function linuxTestPlan({ platform, arch, env, args }) {
   const config = args[0] === "build-debian12"
     ? "tauri.linux-debian12-test.conf.json"
     : "tauri.linux-test.conf.json";
-  return [build ? "build" : "dev", ...(build ? ["--debug", "--bundles", "deb,appimage"] : []),
+  // Tauri's default error-only logging discards linuxdeploy's captured stderr.
+  // Keep the actual packaging cause in the guest's existing bounded build log.
+  return [build ? "build" : "dev", ...(build ? ["--verbose", "--debug", "--bundles", "deb,appimage"] : []),
     "--config", path.join(root, "src-tauri", config)];
 }
 

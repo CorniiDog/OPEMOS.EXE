@@ -6,18 +6,18 @@ import { linuxTestEnvironment, linuxTestPlan } from "../scripts/linux-test.mjs";
 const valid = { platform: "linux", arch: "x64", args: ["build"],
   env: { OPEMOS_EXPERIMENTAL_LINUX: "1", OPEMOS_LINUX_ACCEL: "tcg" } };
 
-test("Linux test packaging is debug-only and needs no graphical session", () => {
+test("Linux test packaging retains bundler diagnostics and needs no graphical session", () => {
   const args = linuxTestPlan(valid);
-  assert.deepEqual(args.slice(0, 4), ["build", "--debug", "--bundles", "deb,appimage"]);
-  assert.equal(args[4], "--config");
-  assert.ok(args[5].endsWith("/src-tauri/tauri.linux-test.conf.json"));
+  assert.deepEqual(args.slice(0, 5), ["build", "--verbose", "--debug", "--bundles", "deb,appimage"]);
+  assert.equal(args[5], "--config");
+  assert.ok(args[6].endsWith("/src-tauri/tauri.linux-test.conf.json"));
   assert.deepEqual(linuxTestPlan({ ...valid, env: { ...valid.env, OPEMOS_LINUX_ACCEL: "kvm" } }), args);
 });
 
 test("Debian 12 packaging selects only the pinned Debian dependency config", () => {
   const args = linuxTestPlan({ ...valid, args: ["build-debian12"] });
-  assert.deepEqual(args.slice(0, 4), ["build", "--debug", "--bundles", "deb,appimage"]);
-  assert.ok(args[5].endsWith("/src-tauri/tauri.linux-debian12-test.conf.json"));
+  assert.deepEqual(args.slice(0, 5), ["build", "--verbose", "--debug", "--bundles", "deb,appimage"]);
+  assert.ok(args[6].endsWith("/src-tauri/tauri.linux-debian12-test.conf.json"));
 });
 
 test("Linux launcher rejects unsupported hosts, implicit opt-ins and CLI overrides", () => {
