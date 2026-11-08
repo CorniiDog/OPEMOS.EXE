@@ -2198,10 +2198,14 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
         secondary=q.PoolAdmissionFailure('actual missing leader during readonly recheck',dict(
             admitted=False,reservationRetained=True,operationOrReleaseAuthorized=False,firstFailure=detail))
         unit='opemos-testq-'+'a'*12+'-'+'b'*32+'.service';inv='c'*32
-        secondary.monitorOriginalRecords=[dict(jobId='original-control',unit=unit,invocation=inv,
+        records=[dict(jobId='original-control',unit=unit,invocation=inv,
             properties=dict(LoadState='loaded',InvocationID=inv,MainPID=str(child.pid),
                 ControlGroup='/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/'+unit),
             reservationRetained=True,operationOrReleaseAuthorized=False)]
+        with patch.object(q,'exact_proc_revalidation_evidence'),\
+             patch.object(q,'boundary_pool_epoch',side_effect=secondary),self.assertRaises(q.PoolAdmissionFailure):
+            q.monitor_proc_revalidation_exit(None,None,{},None,[],[],records)
+        self.assertIs(secondary.monitorOriginalRecords,records)
         secondary_evidence=copy.deepcopy(secondary.evidence)
         self.assertTrue(q.readonly_proc_directory_transition(secondary))
         for fault in ('errno','path','stage','close','unknown-owner'):
