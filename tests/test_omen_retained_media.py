@@ -42,9 +42,12 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
             (tool/'lib/node_modules/npm/lib').mkdir()
             cli=tool/'lib/node_modules/npm/bin/npm-cli.js'
             cli.write_text("require('../lib/cli.js').run()\n");cli.chmod(0o755)
+            npx=tool/'lib/node_modules/npm/bin/npx-cli.js'
+            npx.write_bytes(cli.read_bytes());npx.chmod(0o755)
             (tool/'lib/node_modules/npm/lib/cli.js').write_text(
                 "exports.run=()=>process.stdout.write('actual-relative-cli\\n')\n")
             (tool/'bin/npm').symlink_to('../lib/node_modules/npm/bin/npm-cli.js')
+            (tool/'bin/npx').symlink_to('../lib/node_modules/npm/bin/npx-cli.js')
             for preserve in (False,True):
                 archive=root/('fixed.tar' if preserve else 'flattened.tar')
                 with tarfile.open(archive,'x',dereference=True) as out:
@@ -54,15 +57,16 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                     self.assertEqual(source.getmember('node/bin/npm').issym(),preserve)
                 workspace=root/('fixed' if preserve else 'flattened')
                 guest.extract_inputs(archive,workspace,1048576)
-                result=subprocess.run([node,str(workspace/'node/bin/npm')],
-                                      capture_output=True,timeout=10)
-                if preserve:
-                    self.assertEqual(result.returncode,0,result.stderr)
-                    self.assertEqual(result.stdout,b'actual-relative-cli\n')
-                    self.assertEqual(result.stderr,b'')
-                else:
-                    self.assertNotEqual(result.returncode,0)
-                    self.assertIn(b'MODULE_NOT_FOUND',result.stderr)
+                for command in ('npm','npx'):
+                    result=subprocess.run([node,str(workspace/'node/bin'/command)],
+                                          capture_output=True,timeout=10)
+                    if preserve:
+                        self.assertEqual(result.returncode,0,result.stderr)
+                        self.assertEqual(result.stdout,b'actual-relative-cli\n')
+                        self.assertEqual(result.stderr,b'')
+                    else:
+                        self.assertNotEqual(result.returncode,0)
+                        self.assertIn(b'MODULE_NOT_FOUND',result.stderr)
             outside=root/'outside.js';outside.write_text('not admitted')
             (tool/'bin/escape').symlink_to('../../outside.js')
             with tarfile.open(root/'refused.tar','x',dereference=True) as out,\
