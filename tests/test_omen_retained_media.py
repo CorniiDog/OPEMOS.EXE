@@ -4389,7 +4389,7 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
         import contextlib,errno,importlib.util,sqlite3
         spec=importlib.util.spec_from_file_location('actual_health_sidecar_epoch',SOURCE/'normal_probe.py')
         n=importlib.util.module_from_spec(spec);spec.loader.exec_module(n)
-        for stage in (1,2,3,'churn','owner','symlink','database'):
+        for stage in (1,2,3,('held',1),('held',2),('held',3),'replace','churn','owner','symlink','database'):
             with self.subTest(stage=stage),tempfile.TemporaryDirectory()as tmp:
                 base=Path(tmp);queue=base/'queue';state=queue/'state'
                 state.mkdir(parents=True,mode=0o700);private=base/'private';private.mkdir(mode=0o700)
@@ -4421,7 +4421,12 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                     if Path(name)==wal:
                         opens+=1
                         if opens==stage:wal.unlink()  # Actual removal immediately before open.
-                    return actual_open(name,flags,*args,**kwargs)
+                    fd=actual_open(name,flags,*args,**kwargs)
+                    if Path(name)==wal and(stage==('held',opens)or(stage=='replace'and opens==1)):
+                        wal.unlink()  # Real held inode now has nlink0.
+                        if stage=='replace':
+                            wal.write_bytes(b'');os.chown(wal,1000,1000);wal.chmod(0o600)
+                    return fd
                 actual_file=n.queue_snapshot_file
                 def changed_file(name,cap,optional=False):
                     value=actual_file(name,cap,optional)
@@ -4450,7 +4455,7 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                     else:
                         rows,bindings,config=n.private_queue(b'authenticated current queue',implementation_pin={'typed':'current'})
                         self.assertEqual(rows[0]['id'],'immutable-failed-subject');self.assertEqual(bindings,[])
-                        self.assertGreaterEqual(len(observed),1);self.assertFalse(wal.exists())
+                        self.assertGreaterEqual(len(observed),1);self.assertEqual(wal.exists(),stage=='replace')
                         self.assertEqual(attempts.call_count,1 if stage==1 else 2)
                 self.assertEqual(set(os.listdir('/proc/self/fd')),fds)
                 self.assertEqual(list(private.iterdir()),[])

@@ -307,7 +307,9 @@ def queue_snapshot_file(path,cap,optional=False):
         if optional:return None
         raise
     def custody(s):
-        need(stat.S_ISREG(s.st_mode)and s.st_nlink==1 and
+        # A successful nofollow open can be unlinked before its first fstat.
+        # Zero links permits ONLY a complete recopy, never using those bytes.
+        need(stat.S_ISREG(s.st_mode)and s.st_nlink in((0,1)if optional else(1,))and
              s.st_uid==1000 and 0<=s.st_size<=cap,
              'held current queue data custody '+str(path))
     try:
@@ -320,6 +322,9 @@ def queue_snapshot_file(path,cap,optional=False):
             if optional:raise QueueSnapshotChanged('queue sidecar disappeared')from None
             raise
         custody(named)
+        need(named.st_nlink==1,'held current queue data custody '+str(path))
+        if before.st_nlink==0 or after.st_nlink==0:
+            raise QueueSnapshotChanged('optional queue sidecar unlinked while held')
         if len(raw)!=before.st_size or full9(before)!=full9(after)or full9(before)!=full9(named):
             raise QueueSnapshotChanged('queue data epoch changed during held read')
         return bytes(raw),full9(before)
