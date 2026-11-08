@@ -53,20 +53,26 @@ def proc_identity(pid, expected=None):
             'inherited_nonce':inherited_nonce}
 
 
-def launched_window_matches(windows, expected_title, nonce):
+def launched_window_matches(windows, expected_title, nonce, expected):
     """Select this launch before requiring a unique native window.
 
     Another app in the retained desktop can have the same title. Its window
     cannot become this operation's target. The selected process still passes
     the full executable/PID/start/nonce check before READY or pointer input.
     """
-    matches=[]
+    matches=[];refused=[]
     for window in windows:
         if expected_title.lower() not in window['title'].lower():continue
-        try:env=(Path('/proc')/str(window['pid'])/'environ').read_bytes().split(b'\0')
-        except (FileNotFoundError,ProcessLookupError):continue
-        if b'OPROBOT_NONCE='+nonce.encode() in env:matches.append(window)
-    return matches
+        try:
+            env=(Path('/proc')/str(window['pid'])/'environ').read_bytes().split(b'\0')
+            if b'OPROBOT_NONCE='+nonce.encode() not in env:continue
+            birth=proc_identity(window['pid'],expected)
+            require(birth['inherited_nonce']==nonce,'current launch nonce changed during authentication')
+            matches.append((window,birth))
+        except (FileNotFoundError,ProcessLookupError,RuntimeError) as error:
+            refused.append({'window_id':window['window_id'],'pid':window['pid'],
+                            'reason':str(error)[:256]})
+    return matches,refused
 
 class X11:
     class Attributes(C.Structure):
@@ -430,12 +436,20 @@ def main():
             'exact fresh observer nonce required')
     expected_title=sys.argv[2]
     require(3<=len(expected_title)<=80, 'exact app title fragment required')
+    cfg=pipeline_config(sys.argv[4],sys.argv[5],sys.argv[1])if pipeline else None
+    expected={'bytes':cfg['native_executable_bytes'],'sha256':cfg['native_executable_sha256']}if pipeline else None
+    selected_birth=None;refused=[]
     x=X11();before=[];matches=[];app=None;deadline=time.monotonic()+180
     while time.monotonic()<deadline:
         before=x.windows()
-        matches=launched_window_matches(before,expected_title,sys.argv[1])
+        if pipeline:
+            authenticated,refused=launched_window_matches(before,expected_title,sys.argv[1],expected)
+            matches=[row for row,birth in authenticated]
+        else:matches=[w for w in before if expected_title.lower() in w['title'].lower()]
         if len(matches)==1:
-            app=matches[0];break
+            app=matches[0]
+            if pipeline:selected_birth=authenticated[0][1]
+            break
         time.sleep(.2)
     if app is None:
         # A captured desktop can show an app even when the native identity
@@ -444,15 +458,19 @@ def main():
         print(json.dumps({'kind':'NATIVE_WINDOW_SELECTION_REFUSED',
             'expected_title':expected_title,'match_count':len(matches),
             'mapped_pid_windows':[dict(row,title=row['title'][:96])for row in before[:8]],
+            'current_launch_identity_refusals':refused[:8],
             'display':os.environ.get('DISPLAY'),
             'session_type':os.environ.get('XDG_SESSION_TYPE')},
             sort_keys=True),file=sys.stderr,flush=True)
     require(app is not None, 'unique actual app native X11 window absent')
-    cfg=pipeline_config(sys.argv[4],sys.argv[5],sys.argv[1])if pipeline else None
-    expected={'bytes':cfg['native_executable_bytes'],'sha256':cfg['native_executable_sha256']}if pipeline else None
     birth=proc_identity(app['pid'],expected)
     require(birth['inherited_nonce']==sys.argv[1],
             'native window process did not inherit exact verified-package launch nonce')
+    if pipeline:
+        require(birth==selected_birth,'selected native process changed before READY')
+        mapped=[w for w in x.windows()if w['window_id']==app['window_id']and w['pid']==app['pid']]
+        require(len(mapped)==1,'selected native window/PID changed before READY')
+        app=mapped[0]
     port_custody={'before':os.environ.get('OPROBOT_PORT_BEFORE'),
                   'after':os.environ.get('OPROBOT_PORT_AFTER'),
                   'sudo_numeric':os.environ.get('OPROBOT_PORT_SUDO'),

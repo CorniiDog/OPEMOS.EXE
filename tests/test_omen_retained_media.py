@@ -52,21 +52,33 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
             old = child_with_nonce('a' * 32)
             current = child_with_nonce(nonce)
             unrelated = child_with_nonce(None)
+            wrong = subprocess.Popen(['/usr/bin/cat'], env={**os.environ, 'OPROBOT_NONCE': nonce},
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            children.append(wrong)
+            end = time.monotonic() + 5
+            while (Path('/proc') / str(wrong.pid) / 'exe').resolve() != Path('/usr/bin/cat').resolve():
+                self.assertLess(time.monotonic(), end); time.sleep(.01)
             def window(child, ident):
                 return {'pid': child.pid, 'window_id': ident,
                     'title': 'OPEMOS EXE — Experimental Linux Test',
                     'rect': [116, 69, 760, 800], 'transient_for': None, 'dialog_type': False}
-            rows = [window(old, 8388612), window(current, 12582926), window(unrelated, 31)]
-            self.assertEqual(observer.launched_window_matches(rows, 'OPEMOS EXE', nonce), [rows[1]])
-            self.assertEqual(observer.launched_window_matches(rows, 'OPEMOS EXE', 'c' * 32), [])
-            self.assertEqual(observer.launched_window_matches(rows, 'different app', nonce), [])
-            # A same-nonce ambiguity remains ambiguous; never choose the first.
-            duplicate = child_with_nonce(nonce)
-            self.assertEqual(observer.launched_window_matches(
-                rows + [window(duplicate, 32)], 'OPEMOS EXE', nonce), [rows[1], window(duplicate, 32)])
+            rows = [window(old, 8388612), window(current, 12582926), window(unrelated, 31), window(wrong, 33)]
             native = Path('/proc') / str(current.pid) / 'exe'
             expected = {'native_executable_bytes': native.stat().st_size,
                 'native_executable_sha256': hashlib.sha256(native.read_bytes()).hexdigest()}
+            descriptor = {'bytes': expected['native_executable_bytes'],
+                'sha256': expected['native_executable_sha256']}
+            matches, refused = observer.launched_window_matches(rows, 'OPEMOS EXE', nonce, descriptor)
+            self.assertEqual([row for row, birth in matches], [rows[1]])
+            self.assertEqual(matches[0][1]['inherited_nonce'], nonce)
+            self.assertEqual([row['pid'] for row in refused], [wrong.pid])
+            self.assertEqual(observer.launched_window_matches(rows, 'OPEMOS EXE', 'c' * 32, descriptor)[0], [])
+            self.assertEqual(observer.launched_window_matches(rows, 'different app', nonce, descriptor)[0], [])
+            # Two correctly authenticated current candidates remain ambiguous.
+            duplicate = child_with_nonce(nonce)
+            matches, _ = observer.launched_window_matches(
+                rows + [window(duplicate, 32)], 'OPEMOS EXE', nonce, descriptor)
+            self.assertEqual([row for row, birth in matches], [rows[1], window(duplicate, 32)])
             fake_x = types.SimpleNamespace(windows=lambda: rows)
             with mock.patch.object(observer, 'X11', return_value=fake_x), \
                  mock.patch.object(observer, 'pipeline_config', return_value=expected), \
@@ -77,13 +89,19 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                  mock.patch.object(observer, 'proc_identity', wraps=observer.proc_identity) as identity:
                 with self.assertRaisesRegex(RuntimeError, 'exact disposable virtio observer port custody missing'):
                     observer.main()
-                self.assertEqual(identity.call_count, 1)
+                self.assertEqual(identity.call_count, 3)
                 self.assertEqual(identity.call_args.args[0], current.pid)
                 # The current launch's wrong executable still refuses before READY.
                 with mock.patch.object(observer, 'pipeline_config', return_value={
-                        **expected, 'native_executable_sha256': '0' * 64}):
-                    with self.assertRaisesRegex(RuntimeError, 'actual descriptor-bound native executable hash'):
+                        **expected, 'native_executable_sha256': '0' * 64}), \
+                     mock.patch.object(observer.time, 'monotonic', side_effect=[0, 0, 181]), \
+                     mock.patch.object(observer.time, 'sleep'), \
+                     contextlib.redirect_stderr(io.StringIO()) as diagnostic:
+                    with self.assertRaisesRegex(RuntimeError, 'unique actual app native X11 window absent'):
                         observer.main()
+                    failures = json.loads(diagnostic.getvalue())['current_launch_identity_refusals']
+                    self.assertTrue(any(row['pid'] == current.pid and row['reason'] ==
+                        'actual descriptor-bound native executable hash' for row in failures))
                 with mock.patch.object(fake_x, 'windows', return_value=rows + [window(duplicate, 32)]), \
                      mock.patch.object(observer.time, 'monotonic', side_effect=[0, 0, 181]), \
                      mock.patch.object(observer.time, 'sleep'), \
@@ -91,6 +109,28 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, 'unique actual app native X11 window absent'):
                         observer.main()
                     self.assertEqual(json.loads(diagnostic.getvalue())['match_count'], 2)
+                with mock.patch.object(fake_x, 'windows', side_effect=[rows, [rows[0]]]):
+                    with self.assertRaisesRegex(RuntimeError, 'selected native window/PID changed before READY'):
+                        observer.main()
+                actual_identity = identity._mock_wraps
+                current_reads = []
+                def changed_birth(pid, expected):
+                    value = actual_identity(pid, expected)
+                    if pid == current.pid:
+                        current_reads.append(pid)
+                        if len(current_reads) == 2:
+                            value['start_ticks'] = str(int(value['start_ticks']) + 1)
+                    return value
+                with mock.patch.object(observer, 'proc_identity', side_effect=changed_birth):
+                    with self.assertRaisesRegex(RuntimeError, 'selected native process changed before READY'):
+                        observer.main()
+                with mock.patch.object(observer.sys, 'argv', ['observer_guest.py', nonce, 'OPEMOS EXE']), \
+                     mock.patch.object(observer.time, 'monotonic', side_effect=[0, 0, 181]), \
+                     mock.patch.object(observer.time, 'sleep'), \
+                     contextlib.redirect_stderr(io.StringIO()) as diagnostic:
+                    with self.assertRaisesRegex(RuntimeError, 'unique actual app native X11 window absent'):
+                        observer.main()
+                    self.assertEqual(json.loads(diagnostic.getvalue())['match_count'], len(rows))
         finally:
             for child in children:
                 stdout, stderr = child.communicate(timeout=5)
