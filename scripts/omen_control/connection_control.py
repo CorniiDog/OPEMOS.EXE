@@ -685,7 +685,9 @@ class RobotPipeline:
             'inventory_vm_id':config['inventory_vm_id'],'runtime_instance_id':b['vm_name'],
             'queue_job_ids':[config['queue_job_id']],'original_source':config['original_source'],
             'executable':d}
-        width,height=config['display']
+        # The normal job keeps GUI geometry in guest_operation, which is the
+        # Pipeline config already used for native targets and QMP screenshots.
+        width,height=pipeline.cfg['display']
         display={'id':r['display_connection'],'width':width,'height':height,'scale':1,
             'coordinate_width':width,'coordinate_height':height,'origin_x':0,'origin_y':0,
             'coordinate_space':'physical-pixels'}

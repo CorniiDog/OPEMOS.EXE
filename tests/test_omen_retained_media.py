@@ -27,6 +27,42 @@ import types
 
 
 class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
+    def test_normal_robot_uses_same_nested_guest_display_as_pipeline(self):
+        """The actual job passes the outer admission config to RobotPipeline.
+
+        Its geometry belongs to guest_operation; no duplicate top-level field
+        is produced. This is a configuration regression, not GUI acceptance.
+        """
+        import connection_control as control
+        nonce = 'a' * 32; source = 'b' * 40; digest = 'c' * 64
+        for geometry in ([1600, 900], [1366, 768]):
+            with self.subTest(display=geometry), tempfile.TemporaryDirectory() as temp:
+                guest = {'nonce': nonce, 'source_commit': source,
+                    'package_sha256': digest, 'native_executable_sha256': digest,
+                    'whole_seconds': 7200, 'display': geometry}
+                config = {'source_commit': 'd' * 40, 'run_id': '42447367373',
+                    'attempt': '5', 'inventory_vm_id': 'ubuntu',
+                    'queue_job_id': 'ubuntu-build-write-' + nonce,
+                    'original_source': {'source_commit': source},
+                    'candidate': {'descriptor': {'sha256': digest}},
+                    'programRoot': temp, 'normalPolicy': {'programSHA256': {
+                        'connection_control.py': 'e' * 64, 'observer_guest.py': 'f' * 64}},
+                    'guest_operation': guest}
+                binding = {'nonce': nonce, 'artifact_source': source,
+                    'package_sha256': digest, 'host_boot_id': str(uuid.uuid4()),
+                    'vm_name': 'opemos-robot-ubuntu-' + nonce}
+                ready = {'nonce': nonce, 'guest_uid': 1000,
+                    'guest_architecture': 'x86_64', 'guest_boot_id': str(uuid.uuid4()),
+                    'display_connection': ':0', 'app': {'pid': 123, 'window_id': 456},
+                    'process': {'pid': 123, 'start_ticks': '789',
+                        'inherited_nonce': nonce, 'exe_sha256': digest}}
+                pipeline = control.Pipeline(binding, guest, None, None, ready, Path(temp))
+                self.assertNotIn('display', config)
+                robot = control.RobotPipeline(pipeline, config, temp, None)
+                display = robot.session['display']
+                self.assertEqual([display['width'], display['height']], pipeline.cfg['display'])
+                self.assertEqual([display['coordinate_width'], display['coordinate_height']], geometry)
+
     def test_native_window_selection_uses_real_current_launch_before_unique_title(self):
         """The actual observer main must ignore another real process's title.
 
