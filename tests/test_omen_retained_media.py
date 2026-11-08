@@ -27,6 +27,72 @@ import types
 
 
 class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
+    def test_actual_png_client_paint_precedes_native_target_query(self):
+        """Real PNG decode/custody; QMP and the guest window are modeled.
+
+        A colourful desktop around a blank client must not permit the target
+        query. This proves readiness ordering, not a guest click or GUI pass.
+        """
+        import struct
+        import zlib
+        import connection_control as control
+        from unittest import mock
+        width=height=12;window={'rect':[2,2,8,8]}
+        def png(painted):
+            def chunk(kind,data):return(struct.pack('>I',len(data))+kind+data+
+                struct.pack('>I',zlib.crc32(kind+data)&0xffffffff))
+            rows=[]
+            for y in range(height):
+                row=bytearray()
+                for x in range(width):
+                    pixel=(11,17,24,255)if 2<=x<10 and 2<=y<10 else(x*17,y*17,200,255)
+                    if painted and (x,y)==(6,6):pixel=(200,210,220,255)
+                    row.extend(pixel)
+                rows.append(b'\0'+row)
+            return(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',width,height,8,6,0,0,0))+
+                chunk(b'IDAT',zlib.compress(b''.join(rows)))+chunk(b'IEND',b''))
+        payloads=[png(False),png(True)];calls=[]
+        class TargetReached(RuntimeError):pass
+        with tempfile.TemporaryDirectory()as tmp:
+            root=Path(tmp)
+            def qmp(name,args):
+                self.assertEqual(name,'screendump');self.assertEqual(args['format'],'png')
+                path=Path(args['filename']);self.assertFalse(path.exists())
+                fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+                try:os.write(fd,payloads[len(calls)])
+                finally:os.close(fd)
+                calls.append((name,path))
+            def target(*args):
+                self.assertEqual(len(calls),2)
+                record=json.loads((root/'robot-1-before-capture.json').read_bytes())
+                self.assertTrue(record['acquired'])
+                retained=robot.files[record['frame_ref']]
+                self.assertEqual(Path(retained['path']).read_bytes(),payloads[1])
+                raise TargetReached('fresh native target after paint')
+            pipeline=types.SimpleNamespace(root=root,cfg={'display':[width,height]},
+                end=time.monotonic()+5,q=types.SimpleNamespace(call=qmp),app=window,target=target)
+            robot=object.__new__(control.RobotPipeline)
+            robot.p=pipeline;robot.actions={};robot.files={};robot.clock={};robot.session={}
+            with self.assertRaisesRegex(TargetReached,'fresh native target after paint'):
+                robot.click(pipeline,robot.ACTIONS[0],'Choose Image',['push button'],None)
+            self.assertEqual((root/'robot-1-before.png').read_bytes(),payloads[0])
+            self.assertEqual([name for name,_ in calls],['screendump','screendump'])
+            for path in (calls[0][1],calls[1][1]):
+                raw=path.read_bytes();value=dict(path=str(path),bytes=len(raw),
+                    sha256=hashlib.sha256(raw).hexdigest(),width=width,height=height)
+                self.assertEqual(control.painted_client(value,window),path==calls[1][1])
+                with self.assertRaisesRegex(RuntimeError,'client inside actual frame'):
+                    control.painted_client(value,{'rect':[-1,2,8,8]})
+            # A blank client cannot reset the original deadline or send input.
+            pipeline.end=3
+            with mock.patch.object(control.time,'monotonic',side_effect=[1,1,2,2,3]), \
+                 mock.patch.object(control.time,'sleep'), \
+                 mock.patch.object(control,'frame',return_value={'bytes':1})as frames, \
+                 mock.patch.object(control,'painted_client',return_value=False), \
+                 self.assertRaisesRegex(RuntimeError,'deadline waiting for painted'):
+                robot.capture('still-blank',window)
+            self.assertEqual(frames.call_count,1)
+
     def test_native_child_control_requires_actual_original_app_ancestry(self):
         """Real process family and nonce checks; the accessible tree is modeled.
 
@@ -135,7 +201,7 @@ finally:
             self.assertEqual(robot.birth, {'pid': parent.pid, 'start': int(birth['start_ticks'])})
             self.assertNotIn('start_ticks', robot.birth)
             self.assertNotIn('inherited_nonce', robot.birth)
-            robot.capture = lambda _: {'ref': 'before', 'capture_id': 'one'}
+            robot.capture = lambda *args: {'ref': 'before', 'capture_id': 'one'}
             robot.destination_admission = mock.Mock(side_effect=NextGuard('destination'))
             for value in [target, *bad]:
                 pipeline.target = lambda *_, current=value: {'value': current}

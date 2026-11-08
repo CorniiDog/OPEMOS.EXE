@@ -134,6 +134,46 @@ def frame(q,path,display=None):
     return {'path':str(path),'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),
             'width':width,'height':height}
 
+def painted_client(value,window):
+    """Inspect this captured frame, excluding the native window's border.
+
+    A mapped but uniformly blank client is not ready for a pointer target.
+    Colour variation is only a readiness prerequisite, never target authority.
+    Use the installed libpng decoder already required by the QEMU host.
+    """
+    import ctypes as c
+    class Image(c.Structure):
+        _fields_=[('opaque',c.c_void_p)]+[(name,c.c_uint32)for name in
+            ('version','width','height','format','flags','colormap_entries','warning_or_error')]+[
+            ('message',c.c_char*64)]
+    width,height=value['width'],value['height']
+    need(width*height<=4*1024*1024,'bounded actual frame decode')
+    rect=window['rect'];need(len(rect)==4 and all(type(n)is int for n in rect),'native client rectangle')
+    x,y,w,h=rect
+    need(0<=x<x+w<=width and 0<=y<y+h<=height and w>4 and h>4,'native client inside actual frame')
+    raw=held(value['path'],16*1024*1024)
+    need(len(raw)==value['bytes']and hashlib.sha256(raw).hexdigest()==value['sha256'],
+         'same captured PNG for paint observation')
+    lib=c.CDLL('libpng16.so.16')
+    lib.png_image_begin_read_from_memory.argtypes=[c.POINTER(Image),c.c_void_p,c.c_size_t]
+    lib.png_image_begin_read_from_memory.restype=c.c_int
+    lib.png_image_finish_read.argtypes=[c.POINTER(Image),c.c_void_p,c.c_void_p,c.c_int32,c.c_void_p]
+    lib.png_image_finish_read.restype=c.c_int
+    lib.png_image_free.argtypes=[c.POINTER(Image)];lib.png_image_free.restype=None
+    image=Image();image.version=1;source=c.create_string_buffer(raw)
+    try:
+        need(lib.png_image_begin_read_from_memory(c.byref(image),source,len(raw))==1,
+             'decode actual PNG header')
+        need((image.width,image.height)==(width,height),'same decoded PNG geometry')
+        image.format=3 # libpng simplified API: 8-bit RGBA
+        pixels=c.create_string_buffer(width*height*4)
+        need(lib.png_image_finish_read(c.byref(image),None,pixels,0,None)==1,'decode actual PNG pixels')
+        data=pixels.raw;left=x+2;right=x+w-2;top=y+2;bottom=y+h-2
+        first=data[(top*width+left)*4:(top*width+left)*4+4]
+        blank=first*(right-left)
+        return any(data[(row*width+left)*4:(row*width+right)*4]!=blank for row in range(top,bottom))
+    finally:lib.png_image_free(c.byref(image))
+
 def observer_line(s,cap=65536,end=None):
     b=bytearray()
     while not b.endswith(b'\n'):
@@ -797,9 +837,20 @@ class RobotPipeline:
     def put(self,ref,value,kind):
         path=self.p.root/(ref+'.json');save(path,value);return self.retain(ref,path,kind)
 
-    def capture(self,prefix):
+    def capture(self,prefix,window=None):
         import uuid
-        tick=time.monotonic_ns();value=frame(self.p.q,self.p.root/(prefix+'.png'),self.p.cfg['display'])
+        end=min(self.p.end,time.monotonic()+25);attempt=0;total=0
+        while True:
+            need(time.monotonic()<end,'original deadline waiting for painted native client')
+            suffix=''if attempt==0 else '-paint-'+str(attempt).zfill(3)
+            tick=time.monotonic_ns()
+            value=frame(self.p.q,self.p.root/(prefix+suffix+'.png'),self.p.cfg['display'])
+            total+=value['bytes'];need(total<=16*1024*1024,'bounded retained paint frames')
+            painted=window is None or painted_client(value,window)
+            need(time.monotonic()<end,'original deadline after actual paint observation')
+            if painted:break
+            attempt+=1
+            time.sleep(min(.2,max(0,end-time.monotonic())))
         ref=prefix+'-png';self.retain(ref,value['path'],'screenshot')
         record={'capture_id':uuid.uuid4().hex,'clock':self.clock,'tick':tick,
             'frame_ref':ref,'frame_sha256':value['sha256'],'session':self.session,'acquired':True}
@@ -858,7 +909,7 @@ class RobotPipeline:
         import uuid
         need(name==self.ACTIONS[len(self.actions)],'five actual canonical actions in order')
         native=p.app if window is None else window;prefix='robot-'+str(len(self.actions)+1)
-        before=self.capture(prefix+'-before')
+        before=self.capture(prefix+'-before',native)
         raw=p.target(label,list(roles),window);control=raw['value']
         ownership=native_control_bound(control,native,p.ready['process'])
         need(control['window_id']==native['window_id']and
