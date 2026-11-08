@@ -144,8 +144,12 @@ def observer_line(s,cap=65536):
 def next_native_event(s,nonce,receipt):
     row=observer_line(s)
     if row.get('kind')=='BOOTSTRAP_REFUSED':
+        # Retain the bounded original event even when its binding is invalid;
+        # this diagnostic field never supplies a successful native result.
+        receipt['received_guest_bootstrap_refusal']=row
         need(row.get('nonce')==nonce and
-             row.get('phase') in ('verified_package','native_app_and_observer') and
+             row.get('phase') in ('verified_package','guest_display',
+                                  'guest_prerequisites','native_app_and_observer') and
              type(row.get('numeric')) is int and row['numeric']>0,
              'malformed or foreign typed guest bootstrap refusal')
         receipt['typed_guest_bootstrap_refusal']=row

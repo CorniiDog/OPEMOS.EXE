@@ -356,10 +356,18 @@ def qemu_arguments(C,code,vars_out,overlay,package,observer):
          C['observer_iso']['source_commit']==operation_input(C)['descriptor']['source_commit'],
          'same actual source/nonce readonly medium before QEMU')
     serial=nonce[:20]
+    display_device='virtio-vga'
     if not source_build(C):
         need(C['guest_operation']['nonce']==nonce and
              C['guest_operation']['input_carrier_serial']==serial,
              'same GUI input carrier identity')
+        display=C['guest_operation']['display']
+        need(type(display)is list and len(display)==2 and
+             all(type(value)is int and value>0 for value in display),
+             'same positive guest display dimensions')
+        # Advertise the operation's mode in EDID before the guest XRandR
+        # selector runs instead of relying on the default 1280x800 EDID.
+        display_device+=f',id=display,xres={display[0]},yres={display[1]}'
     name='opemos-robot-ubuntu-'+nonce
     argv=['/usr/bin/qemu-system-x86_64','-name',name,'-machine','q35,accel=kvm',
           '-cpu','host','-smbios','type=1,product=opemos-robot-ubuntu-'+nonce,'-smp',str(C['cores']),'-m',str(C['guest_memory_bytes']//1048576),
@@ -371,7 +379,7 @@ def qemu_arguments(C,code,vars_out,overlay,package,observer):
           '-device','ide-cd,id=package-cd,bus=ide.0,unit=0,drive=package,serial='+serial,
           '-drive',f'if=none,id=observer,media=cdrom,format=raw,readonly=on,file={observer}',
           '-device','ide-cd,id=observer-cd,bus=ide.1,unit=0,drive=observer',
-          '-device','virtio-vga','-device','qemu-xhci,id=xhci',
+          '-device',display_device,'-device','qemu-xhci,id=xhci',
           '-device','usb-tablet,bus=xhci.0','-device','usb-kbd,bus=xhci.0',
           '-chardev','socket,path=observer.sock,server=on,wait=off,id=obs',
           '-device','virtio-serial-pci',

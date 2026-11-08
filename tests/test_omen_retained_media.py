@@ -346,6 +346,107 @@ class UbuntuCandidateDiscLayout(unittest.TestCase):
                     capture_output=True, check=True).stdout)
                 self.assertEqual(operation['display'], [1600, 900])
                 self.assertFalse(result['VMOrGUIAcceptance'])
+                if relative == name:
+                    # Exercise the actual generated EXIT trap and its actual
+                    # socket consumer. Only port custody is modeled here.
+                    import base64
+                    import socket
+                    import connection_control as control
+                    trap = script[script.index('on_exit() {'):script.index('\ntrap on_exit EXIT')]
+                    for phase in ('verified_package', 'guest_display',
+                                  'guest_prerequisites', 'native_app_and_observer'):
+                        owned = root / phase; owned.mkdir()
+                        (owned / 'bootstrap.txt').write_text('xrandr: cannot find mode 1600x900\n')
+                        node = owned / 'observer-event.json'
+                        body = ('set -euo pipefail\nowned=' + shlex.quote(str(owned)) +
+                                '\nnode=' + shlex.quote(str(node)) + '\nnonce=' + nonce +
+                                '\nphase=' + phase + '\nport_ready=1\n' + trap +
+                                '\ntrap on_exit EXIT\nexit 1\n')
+                        failed = subprocess.run(['bash', '-c', body], capture_output=True, timeout=10)
+                        self.assertEqual(failed.returncode, 1, failed.stderr)
+                        event = json.loads(node.read_bytes())
+                        left, right = socket.socketpair()
+                        try:
+                            left.sendall(node.read_bytes()); receipt = {}
+                            with self.assertRaisesRegex(RuntimeError, 'exact guest bootstrap refused at ' + phase):
+                                control.next_native_event(right, nonce, receipt)
+                            self.assertEqual(receipt['typed_guest_bootstrap_refusal'], event)
+                            self.assertEqual(receipt['received_guest_bootstrap_refusal'], event)
+                            self.assertIn(b'xrandr: cannot find mode 1600x900',
+                                          base64.b64decode(event['bootstrap_log_base64']))
+                        finally:
+                            left.close(); right.close()
+
+    def test_actual_qemu_advertises_the_operation_display_before_guest_boot(self):
+        """Real QOM properties; no guest OS, backing disk or GUI pass claimed."""
+        import job
+        import connection_control as control
+        qemu = shutil.which('qemu-system-x86_64')
+        self.assertIsNotNone(qemu, 'protected Root metadata CI requires system QEMU')
+        nonce, source = 'e' * 32, 'd' * 40
+        config = {'kind': 'ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1', 'nonce': nonce,
+                  'observer_iso': {'nonce': nonce, 'source_commit': source},
+                  'candidate': {'descriptor': {'source_commit': source}},
+                  'cores': 1, 'guest_memory_bytes': 67108864,
+                  'guest_operation': {'nonce': nonce, 'input_carrier_serial': nonce[:20]}}
+        for display in ([1600, 900], [1920, 1080]):
+            with self.subTest(display=display), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary); root.chmod(0o700)
+                config['guest_operation']['display'] = display
+                actual = job.qemu_arguments(config, 'code', 'vars', 'cow', 'carrier', 'observer')
+                device = next(arg for arg in actual if arg.startswith('virtio-vga'))
+                socket_path = root / 'qmp.sock'
+                child = subprocess.Popen([qemu, '-machine', 'q35,accel=tcg', '-nodefaults',
+                    '-m', '64', '-device', device, '-display', 'none', '-monitor', 'none',
+                    '-serial', 'none', '-nic', 'none', '-S', '-qmp',
+                    'unix:' + str(socket_path) + ',server=on,wait=off'],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    umask=0o077)
+                channel = None
+                try:
+                    end = time.monotonic() + 10
+                    while not socket_path.exists() and child.poll() is None and time.monotonic() < end:
+                        time.sleep(.02)
+                    self.assertTrue(socket_path.exists(), 'actual QEMU did not expose QMP')
+                    channel = control.QMP(control.connect_owned(socket_path, child.pid, timeout=5))
+                    for prop, value in zip(('xres', 'yres'), display):
+                        self.assertEqual(channel.call('qom-get',
+                            {'path': '/machine/peripheral/display', 'property': prop}), value)
+                    channel.call('quit'); channel.close(); channel = None
+                    stdout, stderr = child.communicate(timeout=5)
+                    self.assertEqual(child.returncode, 0, stderr)
+                    self.assertEqual(stdout, b'')
+                finally:
+                    if channel is not None: channel.close()
+                    if child.poll() is None:
+                        child.terminate()
+                        try: child.wait(timeout=5)
+                        except subprocess.TimeoutExpired: child.kill(); child.wait(timeout=5)
+                    child.stdout.close(); child.stderr.close()
+        for display in ([True, 900], ['1600', 900], [1600, 0], [1600]):
+            config['guest_operation']['display'] = display
+            with self.assertRaisesRegex(RuntimeError, 'same positive guest display dimensions'):
+                job.qemu_arguments(config, 'code', 'vars', 'cow', 'carrier', 'observer')
+
+    def test_bootstrap_refusal_keeps_invalid_event_without_accepting_its_binding(self):
+        import socket
+        import connection_control as control
+        nonce = 'a' * 32
+        valid = {'kind': 'BOOTSTRAP_REFUSED', 'nonce': nonce,
+                 'phase': 'guest_display', 'numeric': 1}
+        for field, value in (('nonce', 'b' * 32), ('phase', 'unknown_future_phase'),
+                             ('numeric', 0), ('numeric', True), ('numeric', '1')):
+            event = dict(valid, **{field: value})
+            with self.subTest(field=field, value=value):
+                left, right = socket.socketpair()
+                try:
+                    left.sendall((json.dumps(event) + '\n').encode()); receipt = {}
+                    with self.assertRaisesRegex(RuntimeError, 'malformed or foreign typed guest bootstrap refusal'):
+                        control.next_native_event(right, nonce, receipt)
+                    self.assertEqual(receipt['received_guest_bootstrap_refusal'], event)
+                    self.assertNotIn('typed_guest_bootstrap_refusal', receipt)
+                finally:
+                    left.close(); right.close()
 
 @unittest.skipUnless(getattr(os, 'geteuid', lambda: -1)() == 0,
                      'actual protected Root filesystem/ISO regression')
