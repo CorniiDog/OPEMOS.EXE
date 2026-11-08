@@ -4351,6 +4351,80 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                         n.private_queue(b'authenticated selected queue source',implementation_pin={'fixture':'separately bound implementation'})
                 self.assertEqual((path.read_bytes(),n.full9(path.stat())),(before,identity))
 
+    @unittest.skipUnless(os.geteuid()==0,'actual Root snapshot of UID1000 SQLite sidecars')
+    def test_full_health_snapshot_recopies_optional_sidecar_races_and_preserves_refusals(self):
+        """Real SQLite/files/ENOENT and production consumer; native pool facts MODELED."""
+        from unittest import mock
+        import contextlib,errno,importlib.util,sqlite3
+        spec=importlib.util.spec_from_file_location('actual_health_sidecar_epoch',SOURCE/'normal_probe.py')
+        n=importlib.util.module_from_spec(spec);spec.loader.exec_module(n)
+        for stage in (1,2,3,'churn','owner','symlink','database'):
+            with self.subTest(stage=stage),tempfile.TemporaryDirectory()as tmp:
+                base=Path(tmp);queue=base/'queue';state=queue/'state'
+                state.mkdir(parents=True,mode=0o700);private=base/'private';private.mkdir(mode=0o700)
+                path=state/'queue.sqlite3';db=sqlite3.connect(path)
+                db.executescript('CREATE TABLE jobs(id TEXT,state TEXT,result TEXT);CREATE TABLE pool_unit_bindings(job_id TEXT,value TEXT);CREATE TABLE config(id INTEGER,value TEXT);')
+                original={'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False},'originalUnknown':'preserved'}
+                db.execute('INSERT INTO jobs VALUES(?,?,?)',('immutable-failed-subject','failed',json.dumps(original)))
+                db.execute('INSERT INTO config VALUES(1,?)',('{"manager":"system"}',));db.commit();db.close()
+                os.chown(path,1000,1000);path.chmod(0o600)
+                before=path.read_bytes();identity=n.full9(path.stat());wal=state/'queue.sqlite3-wal'
+                wal.write_bytes(b'');os.chown(wal,1000,1000);wal.chmod(0o600)
+                if stage=='owner':os.chown(wal,1001,1001)
+                if stage=='symlink':wal.unlink();wal.symlink_to(path)
+                if stage=='database':path.unlink()
+                observed=[];self_test=self
+                class Backend:
+                    def __init__(self,root,cfg):
+                        self_test.assertEqual(root,state);self_test.assertEqual(cfg['manager'],'system')
+                    def validate_pool(self,rows):
+                        self_test.assertEqual(rows,[{'id':'immutable-failed-subject','state':'failed','result':json.dumps(original)}])
+                        observed.append(rows)
+                        return {'admitted':True,'unknownReservationsRetained':[]}
+                q=types.SimpleNamespace(SystemdBackend=Backend,pool_rows=lambda db,rows:[dict(v)for v in rows])
+                @contextlib.contextmanager
+                def selected(raw,pin):yield q
+                actual_open=os.open;opens=0
+                def raced_open(name,flags,*args,**kwargs):
+                    nonlocal opens
+                    if Path(name)==wal:
+                        opens+=1
+                        if opens==stage:wal.unlink()  # Actual removal immediately before open.
+                    return actual_open(name,flags,*args,**kwargs)
+                actual_file=n.queue_snapshot_file
+                def changed_file(name,cap,optional=False):
+                    value=actual_file(name,cap,optional)
+                    if Path(name)==wal and stage=='churn':
+                        if wal.exists():wal.unlink()
+                        else:wal.write_bytes(b'');os.chown(wal,1000,1000);wal.chmod(0o600)
+                    return value
+                fds=set(os.listdir('/proc/self/fd'))
+                with mock.patch.object(n,'QUEUE',queue),mock.patch.object(n,'PRIVATE_DIR',private), \
+                     mock.patch.object(n,'health_queue',side_effect=selected), \
+                     mock.patch.object(n.os,'open',side_effect=raced_open), \
+                     mock.patch.object(n,'queue_snapshot_file',side_effect=changed_file), \
+                     mock.patch.object(n,'private_snapshot_once',wraps=n.private_snapshot_once)as attempts:
+                    if stage=='churn':
+                        with self.assertRaises(n.QueueSnapshotChanged):n.private_queue(b'authenticated current queue',implementation_pin={'typed':'current'})
+                        self.assertEqual(attempts.call_count,3);self.assertEqual(observed,[])
+                    elif stage=='owner':
+                        with self.assertRaisesRegex(RuntimeError,'held current queue data custody'):n.private_queue(b'authenticated current queue',implementation_pin={'typed':'current'})
+                        self.assertEqual(attempts.call_count,1)
+                    elif stage=='symlink':
+                        with self.assertRaises(OSError)as caught:n.private_queue(b'authenticated current queue',implementation_pin={'typed':'current'})
+                        self.assertEqual(caught.exception.errno,errno.ELOOP);self.assertEqual(attempts.call_count,1)
+                    elif stage=='database':
+                        with self.assertRaises(FileNotFoundError):n.private_queue(b'authenticated current queue',implementation_pin={'typed':'current'})
+                        self.assertEqual(attempts.call_count,1)
+                    else:
+                        rows,bindings,config=n.private_queue(b'authenticated current queue',implementation_pin={'typed':'current'})
+                        self.assertEqual(rows[0]['id'],'immutable-failed-subject');self.assertEqual(bindings,[])
+                        self.assertGreaterEqual(len(observed),1);self.assertFalse(wal.exists())
+                        self.assertEqual(attempts.call_count,1 if stage==1 else 2)
+                self.assertEqual(set(os.listdir('/proc/self/fd')),fds)
+                self.assertEqual(list(private.iterdir()),[])
+                if stage!='database':self.assertEqual((path.read_bytes(),n.full9(path.stat())),(before,identity))
+
     def modules(self):
         import importlib.util
         values=[]

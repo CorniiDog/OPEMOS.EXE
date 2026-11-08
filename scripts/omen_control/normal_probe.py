@@ -295,7 +295,49 @@ def health_queue(source_raw,implementation_pin=None):
             if old is missing:sys.modules.pop(name,None)
             else:sys.modules[name]=old
 
+class QueueSnapshotChanged(RuntimeError):
+    """Only a concurrently changing canonical data epoch may be read again."""
+
+
+def queue_snapshot_file(path,cap,optional=False):
+    # SQLite may remove WAL/cache sidecars after any existence check. Open the
+    # actual descriptor first; this is data, never executable source custody.
+    try:fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    except FileNotFoundError:
+        if optional:return None
+        raise
+    def custody(s):
+        need(stat.S_ISREG(s.st_mode)and s.st_nlink==1 and
+             s.st_uid==1000 and 0<=s.st_size<=cap,
+             'held current queue data custody '+str(path))
+    try:
+        before=os.fstat(fd);custody(before);raw=bytearray()
+        while block:=os.read(fd,min(65536,cap+1-len(raw))):
+            raw.extend(block);need(len(raw)<=cap,'bounded held queue data')
+        after=os.fstat(fd);custody(after)
+        try:named=os.stat(path,follow_symlinks=False)
+        except FileNotFoundError:
+            if optional:raise QueueSnapshotChanged('queue sidecar disappeared')from None
+            raise
+        custody(named)
+        if len(raw)!=before.st_size or full9(before)!=full9(after)or full9(before)!=full9(named):
+            raise QueueSnapshotChanged('queue data epoch changed during held read')
+        return bytes(raw),full9(before)
+    finally:os.close(fd)
+
+
 def private_snapshot(validate=None):
+    # Recopy the complete epoch on a known SQLite-data race only. All source,
+    # owner, native, pool, SQL and UNKNOWN failures keep their original refusal.
+    end=time.monotonic()+2
+    for attempt in range(3):
+        try:return private_snapshot_once(validate)
+        except QueueSnapshotChanged:
+            if attempt==2 or time.monotonic()>=end:raise
+            time.sleep(min(.01,max(0,end-time.monotonic())))
+
+
+def private_snapshot_once(validate=None):
     """One held canonical/WAL epoch; SQL is private-only and never writes live state."""
     state=QUEUE/'state'; names=['queue.sqlite3','queue.sqlite3-wal',
                                 'queue.sqlite3-shm','queue.sqlite3-journal']
@@ -303,8 +345,9 @@ def private_snapshot(validate=None):
     initial={};payload={}
     for name,limit in zip(names,limits):
         path=state/name
-        if not os.path.lexists(path):initial[name]=None;continue
-        raw,identity=held(path,limit,1000)
+        value=queue_snapshot_file(path,limit,optional=name!='queue.sqlite3')
+        if value is None:initial[name]=None;continue
+        raw,identity=value
         initial[name]={'full9':identity,'sha256':sha(raw)};payload[name]=raw
     need(initial['queue.sqlite3'] is not None and
          initial['queue.sqlite3-journal'] is None,
@@ -313,12 +356,10 @@ def private_snapshot(validate=None):
     # invalidates the snapshot, including sidecar appearance/disappearance.
     for name,limit in zip(names,limits):
         path=state/name
-        if initial[name] is None:
-            need(not os.path.lexists(path),'queue sidecar appeared')
-        else:
-            raw,identity=held(path,limit,1000)
-            need(identity==initial[name]['full9'] and sha(raw)==initial[name]['sha256'],
-                 'queue source changed before private SQL')
+        value=queue_snapshot_file(path,limit,optional=name!='queue.sqlite3')
+        current=None if value is None else {'full9':value[1],'sha256':sha(value[0])}
+        if current!=initial[name]:
+            raise QueueSnapshotChanged('queue source changed before private SQL')
     temp=Path(tempfile.mkdtemp(prefix='runner21-probe-',dir=PRIVATE_DIR))
     try:
         os.chmod(temp,0o700)
@@ -346,12 +387,10 @@ def private_snapshot(validate=None):
     finally:shutil.rmtree(temp)
     for name,limit in zip(names,limits):
         path=state/name
-        if initial[name] is None:
-            need(not os.path.lexists(path),'queue sidecar changed after private SQL')
-        else:
-            raw,identity=held(path,limit,1000)
-            need(identity==initial[name]['full9'] and sha(raw)==initial[name]['sha256'],
-                 'queue source changed after private SQL')
+        value=queue_snapshot_file(path,limit,optional=name!='queue.sqlite3')
+        current=None if value is None else {'full9':value[1],'sha256':sha(value[0])}
+        if current!=initial[name]:
+            raise QueueSnapshotChanged('queue source changed after private SQL')
     return rows,bindings,config
 
 def private_queue(source_raw,observer_capture=None,pool_capture=None,implementation_pin=None):
