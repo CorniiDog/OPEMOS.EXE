@@ -335,6 +335,7 @@ def private_snapshot(validate=None):
         except QueueSnapshotChanged:
             if attempt==2 or time.monotonic()>=end:raise
             time.sleep(min(.01,max(0,end-time.monotonic())))
+            if time.monotonic()>=end:raise
 
 
 def private_snapshot_once(validate=None):

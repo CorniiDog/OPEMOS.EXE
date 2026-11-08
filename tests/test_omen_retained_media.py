@@ -4424,6 +4424,14 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                 self.assertEqual(set(os.listdir('/proc/self/fd')),fds)
                 self.assertEqual(list(private.iterdir()),[])
                 if stage!='database':self.assertEqual((path.read_bytes(),n.full9(path.stat())),(before,identity))
+        # The retry sleep cannot start another copy at/after its original
+        # horizon. Only the budget clock is modeled; no native proof is edited.
+        changed=n.QueueSnapshotChanged('actual data epoch changed')
+        with mock.patch.object(n,'private_snapshot_once',side_effect=changed)as copies, \
+             mock.patch.object(n.time,'monotonic',side_effect=[1.0,2.999,2.999,3.0]), \
+             mock.patch.object(n.time,'sleep'):
+            with self.assertRaises(n.QueueSnapshotChanged)as caught:n.private_snapshot()
+            self.assertIs(caught.exception,changed);self.assertEqual(copies.call_count,1)
 
     def modules(self):
         import importlib.util
