@@ -1047,6 +1047,78 @@ def observe_queue_libvirt(request,deadline=None,captures=None,terminal_implement
 
 
 
+def authenticated_control_window(spec):
+    """Only the installed Root connection grant can exceed a one-day job.
+
+    This reads immutable data, never controller or candidate executable code.
+    VM jobs and ordinary user approvals retain their existing timeout bound.
+    """
+    import stat
+    match = re.fullmatch('root-github-robot-control-([0-9a-f]{32})', spec.get('id', ''))
+    require(match is not None, 'exact Root connection identity')
+    nonce = match[1]
+    release = Path('/var/lib/opemos-robot-control-r1/releases') / nonce
+    require(spec.get('owner') == 'root' and spec.get('platform') == 'controlplane' and
+            spec.get('cores') == 1 and spec.get('memory') == GIB and
+            spec.get('resources') == ['opemos-robot-controlplane'] and
+            spec.get('depends_on') == [] and spec.get('requires_success') is True and
+            not any(k in spec for k in ('libvirt_domain', 'nvidia_readiness')) and
+            spec.get('cwd') == str(release) and spec.get('command') ==
+            ['/usr/bin/python3', str(release / 'launch.py'), str(release / 'lease.json'),
+             '/run/user/1000/opemos-robot-control-' + nonce],
+            'Root connection only; no VM or alternate command')
+    fields = ('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink',
+              'st_size','st_mtime_ns','st_ctime_ns')
+    def held(pin, leaf, parse=True):
+        path = release / leaf
+        require(type(pin) is dict and pin.get('path') == str(path),
+                'same immutable Root connection leaf')
+        for parent in path.parents:
+            st = parent.lstat()
+            require(stat.S_ISDIR(st.st_mode) and st.st_uid == st.st_gid == 0 and
+                    not st.st_mode & 0o022, 'Root connection ancestor custody')
+        st = path.lstat()
+        complete = dict(pin, identity={k:getattr(st,k) for k in fields})
+        require(0 < st.st_size <= (1048576 if not parse else 65536),
+                'bounded complete Root connection input')
+        return collected_read(complete, 0, 0o444, parse)
+    pins = spec.get('files')
+    programs = ('control.py','connection_host.py','host_engine.py','launch.py')
+    require(type(pins) is list and len(pins) == 5 and
+            {p.get('path') for p in pins} == {str(release / n) for n in (*programs,'lease.json')},
+            'complete original Root connection files')
+    by_name = {Path(p['path']).name:p for p in pins}
+    for name in programs:
+        held(by_name[name], name, False)
+    lease = held(by_name['lease.json'], 'lease.json')
+    approval = held(spec.get('approval'), 'control-approval.json')
+    expected = dict(kind='ROOT_CONFINED_GITHUB_RUNNER_ADMISSION',exactRuntimeAuthorized=True,
+        owner='root',repository='CorniiDog/OPEMOS.EXE',runnerId=21,cores=1,memoryBytes=GIB,
+        swapBytes=0,wallSeconds=spec.get('timeout_seconds'),vmAdmission=False,
+        originalsImmutable=True,sourceApprovalRequiredForWorkflow=True)
+    require(approval == expected, 'exact Root connection approval, never a user label')
+    require(lease.get('kind') == 'OPEMOS_ROBOT_FIXED_CONTROL_LEASE' and
+            lease.get('runtimeAuthorized') is True and lease.get('runnerId') == 21 and
+            lease.get('repository') == approval['repository'] and
+            lease.get('connection_proof_authorized') is False,
+            'Root connection lease without VM authority')
+    pin = lease.get('connection_fixed_policy')
+    require(type(pin) is dict and set(pin) == {'path','sha256'}, 'fixed connection policy pin')
+    # The fixed policy pin carries no byte count. Derive it from the held
+    # immutable leaf; the expected SHA still comes only from the Root lease.
+    policy = held(dict(pin, bytes=(release/'fixed-policy.json').lstat().st_size), 'fixed-policy.json')
+    start, end = policy.get('notBefore'), policy.get('expiresAt')
+    require(type(start) is int and type(end) is int and 100 < end-start <= 7*86400 and
+            end-start == spec['timeout_seconds'] and policy.get('runtimeAuthorized') is True and
+            policy.get('repository') == approval['repository'] and
+            policy.get('sourceCommit') == lease.get('engine_source_commit') and
+            re.fullmatch('[0-9a-f]{40}', policy.get('sourceCommit','')) and
+            policy.get('queueSourceSHA256') == lease.get('connection_queue_sha256') and
+            re.fullmatch('[0-9a-f]{64}', policy.get('queueSourceSHA256','')),
+            'same finite Root source/queue/connection window')
+    return start, end
+
+
 def normalize_job(row, base):
     require(type(row) is dict, "Job must be an object")
     allowed = {"id", "platform", "owner", "command", "cwd", "files", "cores", "memory",
@@ -1071,7 +1143,7 @@ def normalize_job(row, base):
     cores = row.get("cores")
     require(type(cores) is int and cores > 0, "cores must be a positive integer")
     timeout = row.get("timeout_seconds")
-    require(type(timeout) is int and 1 <= timeout <= 86400, "Explicit bounded timeout required (1..86400s)")
+    require(type(timeout) is int and 1 <= timeout <= 7*86400, "Explicit finite timeout required")
     resources = row.get("resources", [])
     deps = row.get("depends_on", [])
     for values in (resources, deps):
@@ -1086,6 +1158,10 @@ def normalize_job(row, base):
                 cwd=str(cwd), files=pins, cores=cores, memory=memory(row["memory"]),
                 timeout_seconds=timeout, resources=resources, depends_on=deps,
                 requires_success=success, approval=approved)
+    if timeout > 86400:
+        require(not any(k in row for k in ('libvirt_domain','nvidia_readiness')),
+                'extended connection is never VM or GPU admission')
+        authenticated_control_window(result)
     if "libvirt_domain" in row:
         result["libvirt_domain"]=normalize_libvirt_domain(row["libvirt_domain"],base)
         require(cores==4 and result["memory"]==LIBVIRT_RESERVATION_MEMORY and NVIDIA_RESOURCE in resources,"Exact4CPU10GiB libvirt GPU job split2+8")

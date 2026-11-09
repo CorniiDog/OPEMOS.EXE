@@ -23,16 +23,19 @@ def snapshot(normal,qraw,end,cuts):
   except(FileNotFoundError,RuntimeError)as e:
    if not transient_snapshot(e,normal.QUEUE)or time.monotonic()>=end:raise
    cuts.append(dict(type=type(e).__name__,reason=str(e),readOnly=True));time.sleep(.2)
-def generation(row,binding,state,p,origins,controller_boot):
+def generation(row,binding,state,p,origins,controller_boot,queue=None):
  need(state['kind']=='RUNNER21_AUTO_RECOVERY_STATE_V1'and state['inflight']is None,'protected controller has no in-flight operation')
  # Current protected lease/source files plus the exact canonical binding and
  # live manager/PIDFD are authority. Historical tick/report formatting is data.
  tx=row['id'].removeprefix('root-github-robot-control-');need(re.fullmatch('[0-9a-f]{32}',tx)is not None,'exact automatic control nonce')
  s=json.loads(row['spec']);root='/var/lib/opemos-robot-control-r1/releases/'+tx
- need(s['id']==row['id']and s['owner']=='root'and s['platform']=='controlplane'and s['cores']==1 and s['memory']==1073741824 and s['resources']==['opemos-robot-controlplane']and s['timeout_seconds']==21600 and s['depends_on']==[],'only exact normal 1CPU/1GiB control job, no VM/build')
+ need(s['id']==row['id']and s['owner']=='root'and s['platform']=='controlplane'and s['cores']==1 and s['memory']==1073741824 and s['resources']==['opemos-robot-controlplane']and s['depends_on']==[],'only exact normal 1CPU/1GiB control job, no VM/build')
+ if s['timeout_seconds']!=21600:
+  need(queue is not None,'authenticated current queue for finite Root connection')
+  queue.authenticated_control_window(s)
  need(s['cwd']==root and s['command']==['/usr/bin/python3',root+'/launch.py',root+'/lease.json','/run/user/1000/opemos-robot-control-'+tx],'whole source-pinned original launch command/nonce')
- files=s['files'];expected={'control.py':p['controlBrokerSHA256'],'connection_host.py':p['privatePeerSHA256'],'host_engine.py':'685de3f64d1ae8cbb1d16ea96ca4830a030679e8d083287a3abaca55414b0505','launch.py':'1d726ad0533fd8d2fee32bbe0d10aa65d69013351abdb3ced901b7e3ba5fd9f9'}
- need(len(files)==5 and {f['path']for f in files}=={root+'/'+n for n in(*expected,'lease.json')},'exact five normal generated source roles')
+ files=s['files'];expected={'control.py':p['controlBrokerSHA256'],'connection_host.py':p['privatePeerSHA256']}
+ need(len(files)==5 and {f['path']for f in files}=={root+'/'+n for n in(*expected,'host_engine.py','launch.py','lease.json')},'exact five normal generated source roles')
  for f in files:
   if Path(f['path']).name in expected:need(f['sha256']==expected[Path(f['path']).name],'exact current implementation source graph')
  need(binding['job_id']==row['id']and binding['unit']==row['unit']and binding['memory']==1073741824 and binding['cpus']==[0]and re.fullmatch('[0-9a-f]{32}',binding['invocation'])is not None,'canonical source/resource/unit binding')
@@ -74,7 +77,7 @@ def execute(data):
   ref=data['installedSources'][n];raw=source_bytes(ref);need(hashlib.sha256(raw).hexdigest()==p[k],'exact installed normal helper source');mods[n]=module(raw,ref['path'])
  N=mods['normal_probe'];N.REMOTE_POLICY=p;C=mods['normal_cycle'];ref=data['installedSources']['signalOwner'];raw=source_bytes(ref);owner=module(raw,ref['path'])
  before=set(os.listdir('/proc/self/fd'));_,_,qraw=N.local_sources(p);transients=[];rows,binds,cfg=snapshot(N,qraw,time.monotonic()+8,transients);row,foreign,unknown=N.classify_rows(rows,binds,p);need(row and not foreign and not unknown,'sole authenticated normal generation; preserve foreign work')
- bb=[b for b in binds if b['job_id']==row['id']];need(len(bb)==1,'one canonical binding');binding=json.loads(bb[0]['value']);tx,spec,origin=generation(row,binding,data['recoveryState'],p,data['controllerOrigins'],data['controllerBoot'])
+ bb=[b for b in binds if b['job_id']==row['id']];need(len(bb)==1,'one canonical binding');binding=json.loads(bb[0]['value']);Q=module(qraw,str(N.QUEUE/'test_queue.py'));tx,spec,origin=generation(row,binding,data['recoveryState'],p,data['controllerOrigins'],data['controllerBoot'],Q)
  for f in spec['files']:
   raw,_=N.held(Path(f['path']),1048576,0);need(len(raw)==f['bytes']and N.sha(raw)==f['sha256'],'actual immutable per-generation source/lease bytes')
  lease=json.loads(N.held(Path(spec['command'][2]),65536,0)[0]);need(lease['kind']=='OPEMOS_ROBOT_FIXED_CONTROL_LEASE'and lease['runtimeAuthorized']is True and lease['runnerId']==21 and lease['repository']=='CorniiDog/OPEMOS.EXE'and lease['engine_source_commit']==p['mainCommit']and lease['connection_queue_sha256']==p['queueSourceSHA256'],'exact current Root normal control lease semantics')

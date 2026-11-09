@@ -61,6 +61,7 @@ class SourceProducerInstallationCustody(unittest.TestCase):
         for enabled in (False,True):
             template={'kind':'ROOT_REVIEWED_ROBOT_CONTROL_MATERIALIZATION_V1','mainCommit':'a'*40,
                 'runnerId':21,'queueSourceSHA256':'b'*64,'queueLoggerSHA256':'c'*64,
+                'approval':{'wallSeconds':21600},
                 'sources':{'control.py':{'hex':control.hex(),'sha256':sha(control)},
                            'job-started.sh':{'hex':hook.hex(),'sha256':sha(hook)}},
                 'engine':{'scripts/omen_ci_stage.py':{'hex':stage.hex(),'sha256':sha(stage)}},
@@ -73,16 +74,20 @@ class SourceProducerInstallationCustody(unittest.TestCase):
             policy={'normalTemplateSHA256':sha(raw),'currentReleaseTx':'d'*32,
                 'normalInstallerSHA256':sha(installer),'mainCommit':'a'*40,'queueSourceSHA256':'b'*64,
                 'queueLoggerSHA256':'c'*64,'controlBrokerSHA256':sha(control),'jobStartedSHA256':sha(hook)}
+            now=int(__import__('time').time());policy.update(expiresUnix=now+3600,renewalAuthorizedUntilUnix=now+7*86400)
+            recovery=dict(inflight='e'*32,epochExpiresUnix=now+6*86400,lastOutcome={'nonce':'e'*32,'action':'CREATE'})
             probe=types.SimpleNamespace(pin_source=lambda *args:(installer,{}))
             # Source custody and predecessor/process facts are modeled here;
             # actual production materialize() and targets() build the payload.
             with mock.patch.object(cycle,'REMOTE_TEMPLATE_HEX',raw.hex(),create=True), \
                  mock.patch.object(cycle,'closed_receipt',return_value={'MODELED_CLOSED_PREDECESSOR':True}):
-                payload,actual_installer=cycle.materialize(policy,probe,'e'*32,{'unit':'opemos-testq-aa-bb.service'}, {})
+                payload,actual_installer=cycle.materialize(policy,probe,'e'*32,{'unit':'opemos-testq-aa-bb.service'}, {},recovery_state=recovery)
             result=json.loads(payload)
             self.assertEqual(set(result['prior']),set(actual_installer.targets(result)))
             self.assertEqual('producerWorkflow'in result['prior'],enabled)
             self.assertEqual(result['transaction'],'e'*32)
+            self.assertEqual(result['policy']['expiresAt'],recovery['epochExpiresUnix'])
+            self.assertEqual(result['approval']['wallSeconds'],result['policy']['expiresAt']-result['policy']['notBefore'])
             self.assertEqual(result['profile']['stage']['sha256'],sha(stage))
             self.assertEqual(template['profile']['stage']['sha256'],'0'*64)
 

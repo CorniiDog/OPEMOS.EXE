@@ -379,7 +379,9 @@ def require_source(payload):
          approval['exactRuntimeAuthorized'] is True and approval['owner']=='root' and
          approval['repository']=='CorniiDog/OPEMOS.EXE' and approval['runnerId']==21 and
          approval['cores']==1 and approval['memoryBytes']==1073741824 and
-         approval['swapBytes']==0 and approval['wallSeconds']==21600 and
+         approval['swapBytes']==0 and type(approval['wallSeconds'])is int and
+         100<approval['wallSeconds']<=7*86400 and
+         approval['wallSeconds']==policy['expiresAt']-policy['notBefore'] and
          approval['vmAdmission'] is False and
          approval['originalsImmutable'] is True and
          approval['sourceApprovalRequiredForWorkflow'] is True,
@@ -569,7 +571,7 @@ def _install_locked(payload,payload_sha,source,engine):
                      '/run/user/1000/opemos-robot-control-'+tx],
           'cwd':str(release),
           'files':[str(release/n) for n in PROGRAMS]+[str(release/'lease.json')],
-          'cores':1,'memory':'1GiB','timeout_seconds':21600,
+          'cores':1,'memory':'1GiB','timeout_seconds':payload['approval']['wallSeconds'],
           'resources':['opemos-robot-controlplane'],'depends_on':[],
           'requires_success':True,
           'approval':{'path':str(approval_path),'sha256':sha(enc(payload['approval']))}}]}

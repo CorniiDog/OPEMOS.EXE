@@ -52,6 +52,33 @@ def control_source_environment(lease):
     return ['--setenv', 'OPEMOS_SOURCE_SHA', policy['sourceCommit']]
 
 
+def wait_listener(child, expires_at):
+    """Keep the absolute grant across spawn; explicitly reap at its boundary."""
+    reason = None
+    try:
+        remaining = expires_at - time.time() - 100
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(child.args, 0)
+        code = child.wait(timeout=remaining)
+    except subprocess.TimeoutExpired:
+        reason = "finite queue lease approaching expiry"
+        os.killpg(child.pid, signal.SIGTERM)
+        try:
+            code = child.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            os.killpg(child.pid, signal.SIGKILL)
+            code = child.wait(timeout=10)
+    return code, reason
+
+
+def run_listener(argv, lease):
+    _, policy, _ = control_policy_bytes(lease)
+    need(policy['expiresAt'] - time.time() > 100,
+         "finite connection shutdown reserve")
+    child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, start_new_session=True)
+    return wait_listener(child, policy['expiresAt'])
+
+
 def main():
     need(os.getuid() == os.geteuid() == 1000, "ordinary owner")
     cg = Path("/proc/self/cgroup").read_text().strip().split("::", 1)[1]
@@ -219,17 +246,9 @@ def main():
             need(controller.poll() is None, "fixed controller exited")
             time.sleep(.1)
         need((socket_dir / "control.sock").is_socket(), "control socket not ready")
-        child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, start_new_session=True)
-        try:
-            code = child.wait(timeout=21500)
-        except subprocess.TimeoutExpired:
-            reason = "finite queue lease approaching expiry"
-            os.killpg(child.pid, signal.SIGTERM)
-            try:
-                code = child.wait(timeout=20)
-            except subprocess.TimeoutExpired:
-                os.killpg(child.pid, signal.SIGKILL)
-                code = child.wait(timeout=10)
+        # Authenticate before spawning. Recompute from the same absolute end
+        # after spawn, so a slow spawn cannot extend the Root grant.
+        code, reason = run_listener(argv, lease)
     finally:
         if controller.poll() is None:
             os.killpg(controller.pid, signal.SIGTERM)

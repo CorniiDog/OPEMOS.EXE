@@ -181,7 +181,9 @@ def control_relation(values,admission,queue):
  active=[r for r in rows if r['state']not in('passed','failed','timed_out','output_limit','blocked')or r['finished']is None]
  p.need(len(active)==1 and active[0]['id']==job and active[0]['state']=='running'and active[0]['started']is not None and active[0]['finished']is None and active[0]['result']is None,'only exact bound running control; all other current rows terminal')
  row=active[0];p.need(set(row)=={'id','spec','state','cpus','unit','started','finished','result'},'genuine private eight-column control row');spec=json.loads(row['spec']);tx=job.removeprefix('root-github-robot-control-');release='/var/lib/opemos-robot-control-r1/releases/'+tx
- p.need(spec['id']==job and spec['owner']=='root'and spec['platform']=='controlplane'and spec['resources']==['opemos-robot-controlplane']and spec['cores']==1 and spec['memory']==1073741824 and spec['timeout_seconds']==21600,'exact non-GPU1CPU1GiB finite control reservation')
+ p.need(spec['id']==job and spec['owner']=='root'and spec['platform']=='controlplane'and spec['resources']==['opemos-robot-controlplane']and spec['cores']==1 and spec['memory']==1073741824,'exact non-GPU1CPU1GiB finite control reservation')
+ if spec['timeout_seconds']!=21600:
+  queue.authenticated_control_window(spec)
  p.need(spec['command']==['/usr/bin/python3',release+'/launch.py',release+'/lease.json','/run/user/1000/opemos-robot-control-'+tx]and spec['cwd']==release,'exact selected normal controller argv/source lineage')
  p.need(job in bindings,'known control must retain keyed immutable binding');bound=json.loads(bindings[job]);p.need(bound['job_id']==job and bound['unit']==row['unit']and bound['specSHA256']==__import__('hashlib').sha256(queue.canonical(spec).encode()).hexdigest()and len(bound['cpus'])==1 and bound['memory']==1073741824,'canonical selected control spec/unit/resource binding')
  return row,bound,spec

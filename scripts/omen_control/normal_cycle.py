@@ -347,7 +347,22 @@ def closed_source_dispatchers(template,row):
          'exact original source identities and fresh actual dispatcher/worker closure')
     return refs
 
-def materialize(policy,probe_module,nonce,old_row,old_manager,dispatchers=None):
+def connection_window(policy,state,nonce,now):
+    """Use the existing Root recovery epoch, independently of a VM job grant."""
+    need(type(now)is int and type(state)is dict and state.get('inflight')==nonce and
+         type(state.get('lastOutcome'))is dict and state['lastOutcome'].get('nonce')==nonce and
+         state['lastOutcome'].get('action')in('CREATE','GRACEFUL_RENEW','RECONCILE_CLOSED'),
+         'actual durable normal connection materialization intent')
+    end=state.get('epochExpiresUnix')
+    need(type(end)is int and type(policy.get('expiresUnix'))is int and
+         type(policy.get('renewalAuthorizedUntilUnix'))is int and
+         policy['expiresUnix']<=end<=policy['renewalAuthorizedUntilUnix'] and
+         100<end-now<=7*86400,
+         'actual finite Root recovery epoch, never a fresh per-observation clock')
+    return now,end
+
+
+def materialize(policy,probe_module,nonce,old_row,old_manager,dispatchers=None,recovery_state=None):
     if 'REMOTE_TEMPLATE_HEX' in globals():
         template_raw=bytes.fromhex(REMOTE_TEMPLATE_HEX)
     else:
@@ -385,9 +400,10 @@ def materialize(policy,probe_module,nonce,old_row,old_manager,dispatchers=None):
                         'liveUID0Absent':True,
                         'closedReceiptHex':enc(receipt).hex(),
                         'closedReceiptSHA256':sha(enc(receipt))}
-    now=int(time.time())
-    fixed=dict(data['policy']);fixed['notBefore']=now;fixed['expiresAt']=now+21600
+    now,end=connection_window(policy,recovery_state,nonce,int(time.time()))
+    fixed=dict(data['policy']);fixed['notBefore']=now;fixed['expiresAt']=end
     data['policy']=fixed
+    data['approval']=dict(data['approval'],wallSeconds=end-now)
     if fixed.get('kind')=='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1':
         # One actual immutable policy pin is generated with the new normal
         # release, then the existing registry/profile consume it consistently.
@@ -445,9 +461,14 @@ def dispatch(tx,policy,probe_module):
              'exact ordinary worker lock')
         fcntl.flock(lockfd,fcntl.LOCK_EX|fcntl.LOCK_NB)
     finally:os.close(lockfd)
+    trigger=module(ROOT/'runner21_recovery.py',policy['recoverySourceSHA256'])
+    state=trigger.validate_state(trigger.read_state())
+    now=int(time.time());end=state['epochExpiresUnix']
+    need(type(end)is int and now<end<=policy['renewalAuthorizedUntilUnix'] and
+         end-now<=7*86400,'dispatcher within actual finite Root recovery epoch')
     unit='opemos-root-robot-dispatcher-'+tx+'.service'
     argv=USER_ENV+['/usr/bin/systemd-run','--user','--unit='+unit,
-           '--property=RuntimeMaxSec=21700','--property=TimeoutStopSec=40',
+           '--property=RuntimeMaxSec='+str(end-now+100),'--property=TimeoutStopSec=40',
            '--property=KillMode=control-group',*DISPATCHER_REENTRY_PROPERTIES,str(QUEUE/'queue.sh'),
            '--queue',str(QUEUE/'state'),'run']
     p=run(argv,timeout=20,cap=65536)
@@ -693,9 +714,28 @@ def main():
         publish_heartbeat(policy,probe_module,nonce)
         phase='RUNNING';new_job=job_id
     else:
+        if action in ('CREATE','GRACEFUL_RENEW','RECONCILE_CLOSED'):
+            recovery_state=trigger.validate_state(trigger.read_state())
+            _,connection_end=connection_window(policy,recovery_state,nonce,int(time.time()))
+            if action=='GRACEFUL_RENEW':
+                need(connection_end>current['control']['leaseExpiresUnix'],
+                     'successor connection must advance the actual epoch before retiring a healthy listener')
         if action=='GRACEFUL_RENEW':
             retire_listener(selected,current,policy)
-            selected,_=wait_terminal(probe_module,policy,job_id,time.monotonic()+180,dispatchers=dispatchers)
+            if dispatcher_closed(dispatchers[0]):
+                # A retired control can be natively exited while its original
+                # dispatcher is already gone. Use the same normal completion
+                # dispatch as RECONCILE_CLOSED, never leave an unwritten row
+                # waiting for a dead worker or change it with direct SQL.
+                finalizer=completion_dispatch_nonce(nonce)
+                dispatch(finalizer,policy,probe_module)
+                context={'lastOutcome':{'controlJobId':job_id,'dispatcherNonce':finalizer}}
+                dispatchers.append(owning_dispatcher(selected,policy,context,starting=True))
+                selected,_=wait_terminal(probe_module,policy,job_id,time.monotonic()+180,
+                    dispatcher_nonce=finalizer,dispatchers=dispatchers)
+            else:
+                selected,_=wait_terminal(probe_module,policy,job_id,time.monotonic()+180,
+                    dispatchers=dispatchers)
         elif action=='RECONCILE_CLOSED':
             need(selected and selected['id']==job_id and
                  selected['state']=='running' and not current['control']['workerAlive'],
@@ -711,7 +751,8 @@ def main():
                  ('passed','failed','timed_out','blocked','unknown','output_limit'),
                  'existing canonical closed predecessor required')
             old_m=manager(selected['unit'])
-            payload,installer=materialize(policy,probe_module,nonce,selected,old_m,dispatchers=dispatchers)
+            payload,installer=materialize(policy,probe_module,nonce,selected,old_m,
+                dispatchers=dispatchers,recovery_state=recovery_state)
             result=install(payload,installer,policy)
             new_job='root-github-robot-control-'+nonce
             need(result['job'].endswith('/robot-control-'+nonce+'/job.json'),

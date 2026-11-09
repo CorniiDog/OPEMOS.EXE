@@ -1492,6 +1492,7 @@ print(json.dumps({'realTaskProcessJoin':True,'ordinaryReader':1000,'rootPayload'
                 file(engine_dir/'scripts/omen_ci_stage.py',engine['scripts/omen_ci_stage.py'])
                 template={'kind':'ROOT_REVIEWED_ROBOT_CONTROL_MATERIALIZATION_V1','mainCommit':'a'*40,
                     'runnerId':21,'queueSourceSHA256':queue_pin['sha256'],'queueLoggerSHA256':logger['sha256'],
+                    'approval':{'wallSeconds':21600},
                     'runnerManifest':manifest,'login':login,
                     'sources':{'control.py':{'hex':control.hex(),'sha256':sha(control)},
                                'job-started.sh':{'hex':hook.hex(),'sha256':sha(hook)}},
@@ -1507,12 +1508,14 @@ print(json.dumps({'realTaskProcessJoin':True,'ordinaryReader':1000,'rootPayload'
                     'normalInstallerSHA256':sha(source),'mainCommit':'a'*40,
                     'queueSourceSHA256':queue_pin['sha256'],'queueLoggerSHA256':logger['sha256'],
                     'controlBrokerSHA256':sha(control),'jobStartedSHA256':sha(hook)}
+                now=int(time.time());policy.update(expiresUnix=now+3600,renewalAuthorizedUntilUnix=now+7*86400)
+                recovery=dict(inflight='e'*32,epochExpiresUnix=now+6*86400,lastOutcome={'nonce':'e'*32,'action':'CREATE'})
                 probe=types.SimpleNamespace(pin_source=lambda *args:(source,{}))
                 with mock.patch.object(cycle,'REMOTE_TEMPLATE_HEX',raw.hex(),create=True), \
                      mock.patch.object(cycle,'CONTROL',root), \
                      mock.patch.object(cycle,'closed_receipt',return_value=closed):
                     payload,installer=cycle.materialize(policy,probe,'e'*32,
-                        {'unit':'opemos-testq-aa-bb.service'}, {})
+                        {'unit':'opemos-testq-aa-bb.service'}, {},recovery_state=recovery)
                 data=json.loads(payload)
                 self.assertEqual(set(data['prior']),set(installer.targets(data)))
                 self.assertEqual('producerWorkflow'in data['prior'],enabled)
@@ -1549,7 +1552,7 @@ print(json.dumps({'realTaskProcessJoin':True,'ordinaryReader':1000,'rootPayload'
                          mock.patch.object(cycle,'CONTROL',root), \
                          mock.patch.object(cycle,'closed_receipt',return_value=closed), \
                          self.assertRaisesRegex(RuntimeError,'same authenticated materialized Stage/profile source'):
-                        cycle.materialize(bad_policy,probe,'e'*32,{'unit':'opemos-testq-aa-bb.service'}, {})
+                        cycle.materialize(bad_policy,probe,'e'*32,{'unit':'opemos-testq-aa-bb.service'}, {},recovery_state=recovery)
                 with mock.patch.object(installer.subprocess,'run',return_value=manager_result):
                     self.assertTrue(installer.preflight(data))
                     if enabled:
@@ -5929,11 +5932,13 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
         import contextlib
         cycle,_=self.modules();nonce='b'*32;old={'id':'root-github-robot-control-'+'a'*32,
                                               'state':'running','unit':'modeled-control.service'}
-        closed=dict(old,state='passed');policy={'normalProbeSHA256':'1'*64,
-            'recoverySourceSHA256':'2'*64,'queueSourceSHA256':'3'*64,'mainCommit':'4'*40}
+        closed=dict(old,state='passed');now=int(time.time());policy={'normalProbeSHA256':'1'*64,
+            'recoverySourceSHA256':'2'*64,'queueSourceSHA256':'3'*64,'mainCommit':'4'*40,
+            'expiresUnix':now+3600,'renewalAuthorizedUntilUnix':now+7*86400}
         wire=cycle.enc(policy);calls=[]
         trigger=types.SimpleNamespace(strict=json.loads,validate_policy=lambda value,now:value,
-            read_state=lambda:{'lastOutcome':{'controlJobId':old['id'],'dispatcherNonce':'a'*32}})
+            validate_state=lambda value:value,read_state=lambda:{'inflight':nonce,'epochExpiresUnix':now+6*86400,
+                'lastOutcome':{'nonce':nonce,'action':'RECONCILE_CLOSED','controlJobId':old['id'],'dispatcherNonce':'a'*32}})
         probe=types.SimpleNamespace(observe=lambda:{})
         with mock.patch.object(cycle.os,'geteuid',return_value=0), \
              mock.patch.object(cycle.sys,'argv',['normal','--normal-cycle','RECONCILE_CLOSED',nonce,cycle.sha(wire),'5'*64]), \
@@ -6408,6 +6413,7 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             queueLoggerSHA256='9'*64,controlBrokerSHA256=cycle.sha(b'control.py'),jobStartedSHA256='8'*64)
         template=dict(kind='ROOT_REVIEWED_ROBOT_CONTROL_MATERIALIZATION_V1',mainCommit=policy['mainCommit'],
             runnerId=21,queueSourceSHA256=policy['queueSourceSHA256'],queueLoggerSHA256=policy['queueLoggerSHA256'],
+            approval={'wallSeconds':21600},
             sources={'control.py':{'hex':b'control.py'.hex(),'sha256':policy['controlBrokerSHA256']},
                      'job-started.sh':{'sha256':policy['jobStartedSHA256']}},
             policy=dict(sourceCommit=policy['mainCommit'],queueSourceSHA256=policy['queueSourceSHA256'],
@@ -6423,7 +6429,9 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
              mock.patch.object(cycle,'REMOTE_TEMPLATE_HEX',raw.hex(),create=True):
             row,_=cycle.wait_terminal(observed,policy,old_id,time.monotonic()+1,dispatchers=[actual])
             source=types.SimpleNamespace(pin_source=lambda *args:(installer,{}))
-            payload,_=cycle.materialize(policy,source,renewal,row,root_closed,dispatchers=[actual])
+            now=int(time.time());policy.update(expiresUnix=now+3600,renewalAuthorizedUntilUnix=now+7*86400)
+            recovery=dict(inflight=renewal,epochExpiresUnix=now+6*86400,lastOutcome={'nonce':renewal,'action':'GRACEFUL_RENEW'})
+            payload,_=cycle.materialize(policy,source,renewal,row,root_closed,dispatchers=[actual],recovery_state=recovery)
         produced=json.loads(payload);closure=json.loads(bytes.fromhex(produced['oldControl']['closedReceiptHex']))
         self.assertEqual(closure['normalDispatchers'],[actual])
         # The immutable deployment's original dispatcher source stays distinct
@@ -6550,6 +6558,131 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             self.assertEqual(state['lastOutcome']['phase'],'RUNNING_RENEWAL_DUE')
             self.assertEqual(observed.call_count,1);saved.assert_called_once()
             self.assertEqual(len(list(Path(directory).glob('resumed-existing-*.json'))),1)
+
+
+class FiniteConnectionEpochTests(unittest.TestCase):
+    def load(self,name):
+        spec=importlib.util.spec_from_file_location('finite_connection_'+name,SOURCE/(name+'.py'))
+        value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value);return value
+
+    def test_actual_epoch_is_shared_by_materialization_and_refresh_not_restarted(self):
+        cycle=self.load('normal_cycle');nonce='e'*32;now=1000
+        policy=dict(expiresUnix=2000,renewalAuthorizedUntilUnix=now+90*86400)
+        state=dict(inflight=nonce,epochExpiresUnix=now+6*86400,
+                   lastOutcome={'nonce':nonce,'action':'CREATE'})
+        self.assertEqual(cycle.connection_window(policy,state,nonce,now),(now,state['epochExpiresUnix']))
+        self.assertEqual(cycle.connection_window(policy,state,nonce,now+3600)[1],state['epochExpiresUnix'])
+        for fault in ('nonce','intent','expired','beyond-horizon','unbounded'):
+            bad=copy.deepcopy(state);p=dict(policy)
+            if fault=='nonce':bad['inflight']='f'*32
+            elif fault=='intent':bad['lastOutcome']['action']='REFRESH_HEARTBEAT'
+            elif fault=='expired':bad['epochExpiresUnix']=now+100
+            elif fault=='beyond-horizon':p['renewalAuthorizedUntilUnix']=bad['epochExpiresUnix']-1
+            else:bad['epochExpiresUnix']=now+7*86400+1
+            with self.subTest(fault=fault),self.assertRaises(RuntimeError):
+                cycle.connection_window(p,bad,nonce,now)
+
+    def test_actual_launcher_authenticates_before_spawn_and_reaps_postspawn_expiry(self):
+        from unittest import mock
+        launch=self.load('launch');argv=['MODELED confined listener'];lease={}
+        for fault in ('tampered','expired'):
+            reader=mock.Mock(side_effect=RuntimeError('Root policy authentication'))if fault=='tampered'else mock.Mock(return_value=(b'',{'expiresAt':1100},'pin'))
+            with mock.patch.object(launch,'control_policy_bytes',reader),mock.patch.object(launch.time,'time',return_value=1000),mock.patch.object(launch.subprocess,'Popen')as spawn:
+                with self.assertRaises(RuntimeError):launch.run_listener(argv,lease)
+                spawn.assert_not_called()
+        for slow,kill in ((False,False),(True,False),(True,True)):
+            child=mock.Mock(pid=999999,args=argv)
+            child.wait.side_effect=[launch.subprocess.TimeoutExpired(argv,20),-9]if kill else [-15 if slow else 0]
+            with mock.patch.object(launch,'control_policy_bytes',return_value=(b'',{'expiresAt':2000},'pin')),mock.patch.object(launch.time,'time',side_effect=[1000,1950 if slow else 1001]),mock.patch.object(launch.subprocess,'Popen',return_value=child)as spawn,mock.patch.object(launch.os,'killpg')as signal:
+                code,reason=launch.run_listener(argv,lease)
+            spawn.assert_called_once();self.assertEqual(code,-9 if kill else -15 if slow else 0)
+            if slow:
+                self.assertTrue(reason);self.assertEqual(signal.call_args_list[0].args,(child.pid,launch.signal.SIGTERM))
+                self.assertEqual(child.wait.call_args_list[-1].kwargs,{'timeout':10 if kill else 20})
+                self.assertEqual(signal.call_count,2 if kill else 1)
+            else:
+                self.assertIsNone(reason);signal.assert_not_called();child.wait.assert_called_once_with(timeout=899)
+
+    @unittest.skipUnless(os.geteuid()==0,'actual immutable Root connection metadata in protected CI')
+    def test_real_root_grant_extends_only_connection_not_vm_or_user_job(self):
+        queue=self.load('test_queue')
+        base=Path('/var/lib/opemos-robot-control-r1/releases')
+        base.mkdir(parents=True,exist_ok=True)
+        for nonce in (uuid.uuid4().hex,uuid.uuid4().hex):
+            root=base/nonce;root.mkdir(mode=0o755);root.chmod(0o755)
+            def leaf(name,value):
+                raw=value if isinstance(value,bytes)else (json.dumps(value,sort_keys=True)+'\n').encode()
+                path=root/name;path.write_bytes(raw);path.chmod(0o444)
+                return dict(path=str(path),sha256=hashlib.sha256(raw).hexdigest())
+            try:
+                duration=6*86400;programs=('control.py','connection_host.py','host_engine.py','launch.py')
+                for name in programs:leaf(name,b'opaque immutable source DATA; never executed')
+                policy=dict(repository='CorniiDog/OPEMOS.EXE',sourceCommit='a'*40,
+                    queueSourceSHA256='b'*64,runtimeAuthorized=True,notBefore=1000,expiresAt=1000+duration,
+                    wholeSeconds=7200)
+                policy_pin=leaf('fixed-policy.json',policy)
+                lease=dict(kind='OPEMOS_ROBOT_FIXED_CONTROL_LEASE',runtimeAuthorized=True,runnerId=21,
+                    repository='CorniiDog/OPEMOS.EXE',connection_proof_authorized=False,
+                    engine_source_commit='a'*40,connection_queue_sha256='b'*64,connection_fixed_policy=policy_pin)
+                leaf('lease.json',lease)
+                approval=dict(kind='ROOT_CONFINED_GITHUB_RUNNER_ADMISSION',exactRuntimeAuthorized=True,
+                    owner='root',repository='CorniiDog/OPEMOS.EXE',runnerId=21,cores=1,memoryBytes=1073741824,
+                    swapBytes=0,wallSeconds=duration,vmAdmission=False,originalsImmutable=True,
+                    sourceApprovalRequiredForWorkflow=True)
+                approval_pin=leaf('control-approval.json',approval)
+                raw=dict(id='root-github-robot-control-'+nonce,owner='root',platform='controlplane',
+                    command=['/usr/bin/python3',str(root/'launch.py'),str(root/'lease.json'),'/run/user/1000/opemos-robot-control-'+nonce],cwd=str(root),
+                    files=[str(root/n)for n in(*programs,'lease.json')],cores=1,memory='1GiB',timeout_seconds=duration,
+                    resources=['opemos-robot-controlplane'],depends_on=[],requires_success=True,approval=approval_pin)
+                normalized=queue.normalize_job(raw,Path('/'))
+                self.assertEqual(queue.authenticated_control_window(normalized),(1000,1000+duration))
+                self.assertEqual(policy['wholeSeconds'],7200)
+                for fault in ('VM','GPU','user','argv','file','duration','counterfeit-approval','source','unowned'):
+                    bad=copy.deepcopy(raw)
+                    if fault=='VM':bad['platform']='linux'
+                    elif fault=='GPU':bad['resources'].append('omen-iommu-group-1')
+                    elif fault=='user':bad['owner']='connor'
+                    elif fault=='argv':bad['command'][1]=str(root/'control.py')
+                    elif fault=='file':bad['files'].pop()
+                    elif fault=='duration':bad['timeout_seconds']+=1
+                    elif fault=='counterfeit-approval':
+                        bad['approval']=leaf('control-approval.json',dict(approval,vmAdmission=True))
+                    elif fault=='source':
+                        changed=leaf('fixed-policy.json',dict(policy,sourceCommit='c'*40))
+                        leaf('lease.json',dict(lease,connection_fixed_policy=changed))
+                    else:os.chown(root/'control-approval.json',1000,1000)
+                    with self.subTest(fault=fault),self.assertRaises((ValueError,RuntimeError)):
+                        queue.normalize_job(bad,Path('/'))
+                    os.chown(root/'control-approval.json',0,0)
+                    leaf('control-approval.json',approval);leaf('fixed-policy.json',policy);leaf('lease.json',lease)
+            finally:shutil.rmtree(root)
+
+
+    def test_planned_renewal_uses_existing_normal_finalizer_when_original_dispatcher_is_gone(self):
+        from unittest import mock
+        cycle=self.load('normal_cycle');nonce='b'*32;now=int(time.time())
+        old=dict(id='root-github-robot-control-'+'a'*32,state='running',unit='modeled-control.service')
+        closed=dict(old,state='passed')
+        policy=dict(normalProbeSHA256='1'*64,recoverySourceSHA256='2'*64,queueSourceSHA256='3'*64,
+                    mainCommit='4'*40,expiresUnix=now+3600,renewalAuthorizedUntilUnix=now+7*86400)
+        state=dict(inflight=nonce,epochExpiresUnix=now+6*86400,
+            lastOutcome={'nonce':nonce,'action':'GRACEFUL_RENEW','controlJobId':old['id'],'dispatcherNonce':'a'*32})
+        trigger=types.SimpleNamespace(strict=json.loads,validate_policy=lambda value,now:value,
+            validate_state=lambda value:value,read_state=lambda:state)
+        probe=types.SimpleNamespace(observe=lambda:{})
+        frame=dict(control={'jobId':old['id'],'leaseExpiresUnix':now+1000})
+        wire=cycle.enc(policy)
+        for old_worker_closed in (False,True):
+            calls=[]
+            with mock.patch.object(cycle.os,'geteuid',return_value=0),mock.patch.object(cycle.sys,'argv',['normal','--normal-cycle','GRACEFUL_RENEW',nonce,cycle.sha(wire),'5'*64]),mock.patch.object(cycle,'REMOTE_POLICY_RAW',wire.hex(),create=True),mock.patch.object(cycle,'module',side_effect=lambda path,digest:probe if path.name=='normal_probe.py'else trigger),mock.patch.object(cycle,'normal_at_use',return_value=frame),mock.patch.object(cycle,'current_rows',return_value=(old,[],[],[])),mock.patch.object(cycle,'owning_dispatcher',side_effect=lambda row,p,s,**kwargs:{'unit':s['lastOutcome']['dispatcherNonce']}),mock.patch.object(cycle,'dispatcher_closed',return_value=old_worker_closed),mock.patch.object(cycle,'retire_listener')as retire,mock.patch.object(cycle,'dispatch',side_effect=lambda value,*args:calls.append(value)),mock.patch.object(cycle,'wait_terminal',return_value=(closed,{}))as waited,mock.patch.object(cycle,'manager',return_value={}),mock.patch.object(cycle,'materialize',return_value=(b'payload',object())),mock.patch.object(cycle,'install',return_value={'job':'/modeled/robot-control-'+nonce+'/job.json'}),mock.patch.object(cycle,'submit'),contextlib.redirect_stdout(io.StringIO()):
+                cycle.main()
+            retire.assert_called_once();self.assertEqual(calls,([cycle.completion_dispatch_nonce(nonce)]if old_worker_closed else [])+[nonce])
+            self.assertEqual(len(waited.call_args.kwargs['dispatchers']),2 if old_worker_closed else 1)
+        # A same-epoch lease is not justification to retire a healthy listener.
+        frame['control']['leaseExpiresUnix']=state['epochExpiresUnix']
+        with mock.patch.object(cycle.os,'geteuid',return_value=0),mock.patch.object(cycle.sys,'argv',['normal','--normal-cycle','GRACEFUL_RENEW',nonce,cycle.sha(wire),'5'*64]),mock.patch.object(cycle,'REMOTE_POLICY_RAW',wire.hex(),create=True),mock.patch.object(cycle,'module',side_effect=lambda path,digest:probe if path.name=='normal_probe.py'else trigger),mock.patch.object(cycle,'normal_at_use',return_value=frame),mock.patch.object(cycle,'current_rows',return_value=(old,[],[],[])),mock.patch.object(cycle,'owning_dispatcher',return_value={'unit':'old'}),mock.patch.object(cycle,'retire_listener')as retire:
+            with self.assertRaisesRegex(RuntimeError,'must advance the actual epoch'):cycle.main()
+            retire.assert_not_called()
 
 
 if __name__ == '__main__': unittest.main()
