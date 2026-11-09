@@ -5712,6 +5712,8 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             'controlJobId':control['jobId'],'dispatcherNonce':'e'*32,
             'numeric':1,'reaped':True,'first':None,'stderrSHA256':'f'*64,'stdoutSHA256':r.sha(b'')}
         before=copy.deepcopy(state)
+        presence={'kind':'ROOT_RUNNER21_PRESENCE_RESULT_V1','connected':True,
+                  'ready':False,'busy':True,'vmAdmission':False,'readbackCurrent':True}
         def execute(current):
             value=copy.deepcopy(before);frame={'reaped':True,'numeric':0,
                 'eof':{'stdout':True,'stderr':True},'first':None,
@@ -5720,16 +5722,20 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                  mock.patch.object(r,'load_code',return_value=b'modeled authenticated probe')as loaded,\
                  mock.patch.object(r,'start_held_python',return_value=object())as spawned,\
                  mock.patch.object(r,'capture',return_value=frame),mock.patch.object(r,'validate_probe'),\
-                 mock.patch.object(r,'write_state')as saved:
+                 mock.patch.object(r,'write_state')as saved,\
+                 mock.patch.object(r,'refresh_current_presence',return_value=dict(presence,busy=current['runnerBusy']))as published:
                 reply=r.run_cycle(policy,value,now)
+                if reply['decision']=='RECONCILED_FAILED_HEARTBEAT_INTENT':published.assert_called_once_with(policy)
                 records=[json.loads(p.read_bytes())for p in Path(directory).glob('failed-heartbeat-*.json')]
             return reply,value,records,saved.call_count,loaded.call_count,spawned.call_count
-        for busy in(True,False):
-            current=copy.deepcopy(probe);current.update(runnerBusy=busy,actionsInProgress=int(busy))
+        for busy,current_heartbeat in((True,True),(True,False),(False,True),(False,False)):
+            current=copy.deepcopy(probe);current.update(runnerBusy=busy,actionsInProgress=int(busy),
+                heartbeatCurrent=current_heartbeat,heartbeatNonce='9'*32 if current_heartbeat else None)
             reply,after,records,writes,loads,spawns=execute(current)
             self.assertEqual(reply['decision'],'RECONCILED_FAILED_HEARTBEAT_INTENT')
             self.assertEqual(reply['effect'],'RECOVERY_BOOKKEEPING_ONLY')
             self.assertFalse(reply['heartbeatPublished']);self.assertFalse(reply['vmAdmission'])
+            self.assertEqual(reply['presence'],dict(presence,busy=busy),'fresh independent connected-only publication without TTL wait')
             self.assertIsNone(after['inflight']);self.assertEqual(after['lastOutcome']['originalOutcome'],before['lastOutcome'])
             self.assertEqual(after['lastOutcome']['dispatcherNonce'],'e'*32)
             self.assertEqual(after['completedCycles'],before['completedCycles']);self.assertEqual(after['totalCycles'],before['totalCycles'])

@@ -951,8 +951,7 @@ def reconcile_failed_heartbeat_intent(policy,state,probe,now,probe_sha):
     if not(nonce is not None and type(old)is dict and old.get('nonce')==nonce and
            old.get('action')=='REFRESH_HEARTBEAT'and old.get('reaped')is True and
            old.get('first')is None and type(old.get('numeric'))is int and
-           old['numeric']>0 and old.get('stdoutSHA256')==sha(b'')and
-           not probe['heartbeatCurrent']):return None
+           old['numeric']>0 and old.get('stdoutSHA256')==sha(b'')):return None
     if not(old.get('controlJobId')==c['jobId']and
            type(old.get('dispatcherNonce'))is str and re.fullmatch(r'[0-9a-f]{32}',old['dispatcherNonce'])and
            c['state']=='running'and c['terminalLifecycle']is None and
@@ -1076,7 +1075,13 @@ def run_cycle(policy, state, now):
             write_state(state)
             return {'decision':'RECONCILED_CLOSED_CREATE' if created_closed else 'RECONCILED_ABSENT_GRACEFUL_RENEW','effect':'RECOVERY_BOOKKEEPING_ONLY' if created_closed else 'NO_EFFECT_PROVEN','nonce':nonce}
     heartbeat_intent=reconcile_failed_heartbeat_intent(policy,state,probe,now,sha(observed['stdout']))
-    if heartbeat_intent is not None:return heartbeat_intent
+    if heartbeat_intent is not None:
+        # A prior still-current heartbeat is metadata, not a reservation on
+        # this known terminated publisher. Keep its failed/unknown outcome,
+        # then refresh independently proven connectivity without claiming VM
+        # readiness or waiting for the old public timestamp to expire.
+        presence=refresh_current_presence(policy)
+        return dict(heartbeat_intent,**({'presence':presence}if presence is not None else {}))
     if state['inflight'] is not None and type(state['lastOutcome']) is dict and \
        state['lastOutcome'].get('action')=='REFRESH_HEARTBEAT':
         nonce=state['inflight']
