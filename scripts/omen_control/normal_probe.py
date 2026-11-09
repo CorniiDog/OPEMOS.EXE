@@ -111,7 +111,22 @@ def gh_json(path,timeout=10):
 def runner21_active_runs(read):
     # Only this reviewed consumer can receive native Runner21 work. Hosted
     # packaging activity is not an assignment frontier for the OMEN owner.
-    return read('repos/CorniiDog/OPEMOS.EXE/actions/workflows/omen-robot.yml/runs?status=in_progress&per_page=100')
+    path='repos/CorniiDog/OPEMOS.EXE/actions/workflows/omen-robot.yml/runs?status=in_progress&per_page=100'
+    for attempt in range(3):
+        active=read(path)
+        total=active.get('total_count')if type(active)is dict else None
+        runs=active.get('workflow_runs')if type(active)is dict else None
+        # GitHub can return a count from just before the final run completed.
+        # Retry only this typed, bounded listing transition, never malformed
+        # ownership data or an incomplete job/runner assignment.
+        transition=(type(total)is int and 0<=total<=100 and type(runs)is list and
+            len(runs)<=100 and len(runs)!=total and
+            all(type(r)is dict and type(r.get('id'))is int and r['id']>0 and
+                r.get('status')=='in_progress'and type(r.get('path'))is str and
+                r['path'].split('@',1)[0]=='.github/workflows/omen-robot.yml'for r in runs)and
+            len({r['id']for r in runs})==len(runs))
+        if not transition or attempt==2:return active
+        time.sleep(.1)
 
 
 def runner21_assigned_jobs(active, read):

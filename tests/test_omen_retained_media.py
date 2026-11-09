@@ -5197,6 +5197,97 @@ print(json.dumps({'ordinaryUID1000':True,'isolatedInstalledQueue':True,'runtimeM
 class NormalRunnerMaterializationTests(unittest.TestCase):
     """Existing R1 programs; OS/GitHub facts modeled, no runtime deployment."""
 
+    def test_actual_current_github_retries_only_bounded_run_frontier_transition(self):
+        from unittest import mock
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('frontier_normal_probe',SOURCE/'normal_probe.py')
+        n=importlib.util.module_from_spec(spec);spec.loader.exec_module(n)
+        first={'total_count':1,'workflow_runs':[]};clear={'total_count':0,'workflow_runs':[]}
+        for listing,expected,reads in (([first,clear],0,2),([first,first,first],None,3),
+                ([{'total_count':'1','workflow_runs':[]}],None,1)):
+            cuts=iter(copy.deepcopy(listing));calls=[]
+            def api(path):
+                if '/workflows/omen-robot.yml/runs?'in path:
+                    calls.append(path);return next(cuts)
+                if '/branches/main'in path:return {'protected':True,'commit':{'sha':'a'*40}}
+                if '/actions/runners?'in path:return {'runners':[{'id':21,'name':'opemos-omen-robot',
+                    'labels':[{'name':'opemos-omen-robot'}],'status':'online','busy':False}]}
+                if '/actions/runs?'in path:return {'total_count':0}
+                if '/actions/variables/'in path:return {'value':'{}'}
+                raise AssertionError(path)
+            with self.subTest(listing=listing),mock.patch.object(n,'gh_json',side_effect=api), \
+                 mock.patch.object(n.time,'sleep')as slept:
+                if expected is None:
+                    with self.assertRaisesRegex(RuntimeError,'bounded complete active workflow-run frontier'):
+                        n.current_github({'mainCommit':'b'*40})
+                else:
+                    frame=n.current_github({'mainCommit':'b'*40})
+                    self.assertEqual(frame['actionsInProgress'],0);self.assertTrue(frame['runnerOnline'])
+                self.assertEqual(len(calls),reads);self.assertEqual(slept.call_count,reads-1)
+        # Complete listings still reach the unchanged per-job UNKNOWN guard.
+        run={'id':42,'status':'in_progress','path':'.github/workflows/omen-robot.yml'}
+        active={'total_count':1,'workflow_runs':[run]}
+        page={'total_count':1,'jobs':[{'id':43,'run_id':42,'status':'in_progress',
+            'labels':['opemos-omen-robot'],'runner_id':None}]}
+        with self.assertRaisesRegex(RuntimeError,'unknown relevant active job runner assignment'):
+            n.runner21_assigned_jobs(active,lambda path:page)
+
+    def test_actual_run_cycle_reconciles_terminated_renewal_only_with_same_live_original(self):
+        """Real normal bookkeeping; native/API facts modeled, not live acceptance."""
+        from unittest import mock
+        _,r=self.modules();policy,state,probe,_,_=self.pending(r);now=int(time.time())
+        policy.update(controlBrokerSHA256='9'*64,priorControlBrokerSHA256='8'*64,
+                      renewalAuthorizedUntilUnix=state['epochExpiresUnix'])
+        c=probe['control'];c.update(jobId='root-github-robot-control-'+'a'*32,state='running',terminalLifecycle=None,reservationRetained=True,
+            leaseExpiresUnix=now+1000,**{k:True for k in('listenerAlive','controllerAlive','workerAlive','ownUnitBound')})
+        probe.update(runnerOnline=True,runnerBusy=False,actionsInProgress=0,
+            controlBrokerSHA256=policy['controlBrokerSHA256'],queueSourceSHA256=policy['queueSourceSHA256'])
+        state['lastOutcome']={'action':'GRACEFUL_RENEW','nonce':state['inflight'],
+            'controlJobId':c['jobId'],'dispatcherNonce':'e'*32,
+            'numeric':1,'reaped':True,'first':None,'stderrSHA256':'f'*64,'stdoutSHA256':r.sha(b'')}
+        before=copy.deepcopy(state)
+        native={'reaped':True,'numeric':0,'eof':{'stdout':True,'stderr':True},
+                'first':None,'stdout':r.canonical(probe),'stderr':b''}
+        with tempfile.TemporaryDirectory()as tmp,mock.patch.object(r,'ROOT',Path(tmp)), \
+             mock.patch.object(r,'load_code',return_value=b'authenticated normal probe'), \
+             mock.patch.object(r,'start_held_python',return_value=object())as spawned, \
+             mock.patch.object(r,'capture',return_value=native),mock.patch.object(r,'validate_probe'), \
+             mock.patch.object(r,'reconcile_running_resume',return_value=None), \
+             mock.patch.object(r,'reconcile_materialized_pending',return_value=None), \
+             mock.patch.object(r,'reconcile_closed_inflight',return_value=None), \
+             mock.patch.object(r,'materialized_control_ready',return_value=False), \
+             mock.patch.object(r,'refresh_current_presence',return_value=None), \
+             mock.patch.object(r,'write_state')as saved:
+            result=r.run_cycle(policy,state,now)
+            record=json.loads(next(Path(tmp).glob('failed-live-renewal-*.json')).read_bytes())
+        self.assertEqual(result['decision'],'RECONCILED_FAILED_LIVE_RENEWAL_INTENT')
+        self.assertIsNone(state['inflight']);self.assertFalse(result['heartbeatPublished'])
+        self.assertEqual(state['lastOutcome']['originalOutcome'],before['lastOutcome'])
+        self.assertEqual(record['before'],before);self.assertFalse(record['queueMutation'])
+        self.assertEqual(spawned.call_count,1,'only fresh readonly health child; no retry/retirement')
+        saved.assert_called_once()
+        for fault in ('different-job','successor','cleanup','native','first','output','expired',
+                      'listener','worker','binding','source','unknown','busy','assigned','guest','broker'):
+            bad=copy.deepcopy(before);v=copy.deepcopy(probe)
+            if fault=='different-job':bad['lastOutcome']['controlJobId']='root-github-robot-control-'+'1'*32
+            elif fault=='successor':v['control']['jobId']='root-github-robot-control-'+bad['inflight'];bad['lastOutcome']['controlJobId']=v['control']['jobId']
+            elif fault=='cleanup':v['control']['state']='terminal_cleanup'
+            elif fault=='native':bad['lastOutcome']['reaped']=False
+            elif fault=='first':bad['lastOutcome']['first']='EOF unknown'
+            elif fault=='output':bad['lastOutcome']['stdoutSHA256']='0'*64
+            elif fault=='expired':v['control']['leaseExpiresUnix']=now
+            elif fault in('listener','worker','binding'):v['control'][{'listener':'listenerAlive','worker':'workerAlive','binding':'ownUnitBound'}[fault]]=False
+            elif fault=='source':v['control']['sourceCommit']='0'*40
+            elif fault=='unknown':v['unknownReservations']=['unclassified']
+            elif fault=='busy':v['runnerBusy']=True
+            elif fault=='assigned':v['actionsInProgress']=1
+            elif fault=='guest':v['guestActive']=True
+            elif fault=='broker':v['controlBrokerSHA256']='0'*64
+            unchanged=copy.deepcopy(bad)
+            with self.subTest(fault=fault):
+                self.assertIsNone(r.reconcile_failed_live_renewal(policy,bad,v,now,'0'*64))
+                self.assertEqual(bad,unchanged,'refusal has no bookkeeping writes')
+
     def test_current_control_lineage_preserves_terminal_history(self):
         import importlib.util
         spec=importlib.util.spec_from_file_location('fixture_r1_history_probe',SOURCE/'normal_probe.py')
@@ -5845,6 +5936,8 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             'controlJobId':control['jobId'],'dispatcherNonce':'e'*32,
             'numeric':1,'reaped':True,'first':None,'stderrSHA256':'f'*64,'stdoutSHA256':r.sha(b'')}
         before=copy.deepcopy(state)
+        presence={'kind':'ROOT_RUNNER21_PRESENCE_RESULT_V1','connected':True,
+                  'ready':False,'busy':True,'vmAdmission':False,'readbackCurrent':True}
         def execute(current):
             value=copy.deepcopy(before);frame={'reaped':True,'numeric':0,
                 'eof':{'stdout':True,'stderr':True},'first':None,
@@ -5853,16 +5946,20 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                  mock.patch.object(r,'load_code',return_value=b'modeled authenticated probe')as loaded,\
                  mock.patch.object(r,'start_held_python',return_value=object())as spawned,\
                  mock.patch.object(r,'capture',return_value=frame),mock.patch.object(r,'validate_probe'),\
-                 mock.patch.object(r,'write_state')as saved:
+                 mock.patch.object(r,'write_state')as saved,\
+                 mock.patch.object(r,'refresh_current_presence',return_value=dict(presence,busy=current['runnerBusy']))as published:
                 reply=r.run_cycle(policy,value,now)
+                if reply['decision']=='RECONCILED_FAILED_HEARTBEAT_INTENT':published.assert_called_once_with(policy)
                 records=[json.loads(p.read_bytes())for p in Path(directory).glob('failed-heartbeat-*.json')]
             return reply,value,records,saved.call_count,loaded.call_count,spawned.call_count
-        for busy in(True,False):
-            current=copy.deepcopy(probe);current.update(runnerBusy=busy,actionsInProgress=int(busy))
+        for busy,current_heartbeat in((True,True),(True,False),(False,True),(False,False)):
+            current=copy.deepcopy(probe);current.update(runnerBusy=busy,actionsInProgress=int(busy),
+                heartbeatCurrent=current_heartbeat,heartbeatNonce='9'*32 if current_heartbeat else None)
             reply,after,records,writes,loads,spawns=execute(current)
             self.assertEqual(reply['decision'],'RECONCILED_FAILED_HEARTBEAT_INTENT')
             self.assertEqual(reply['effect'],'RECOVERY_BOOKKEEPING_ONLY')
             self.assertFalse(reply['heartbeatPublished']);self.assertFalse(reply['vmAdmission'])
+            self.assertEqual(reply['presence'],dict(presence,busy=busy),'fresh independent connected-only publication without TTL wait')
             self.assertIsNone(after['inflight']);self.assertEqual(after['lastOutcome']['originalOutcome'],before['lastOutcome'])
             self.assertEqual(after['lastOutcome']['dispatcherNonce'],'e'*32)
             self.assertEqual(after['completedCycles'],before['completedCycles']);self.assertEqual(after['totalCycles'],before['totalCycles'])

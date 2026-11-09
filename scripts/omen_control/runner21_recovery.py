@@ -940,6 +940,56 @@ def failed_probe(stage, native):
     return error
 
 
+def reconcile_failed_live_renewal(policy,state,probe,now,probe_sha):
+    """Release only a terminated renewal intent whose original owner is live.
+
+    Normal GRACEFUL_RENEW cannot materialize/submit a successor until its
+    original canonical row is CLOSED and its Listener/worker have exited.
+    A fresh complete probe proving that same original row/source/native unit
+    still live therefore rules out completed retirement or materialization.
+    Keep the original failed/unknown outcome; this is not a retry of its nonce,
+    a readiness publication, or a mutation of queue/source/lease/process state.
+    """
+    old=state.get('lastOutcome');nonce=state.get('inflight');c=probe['control']
+    if not(nonce is not None and type(old)is dict and old.get('nonce')==nonce and
+           old.get('action')=='GRACEFUL_RENEW'and old.get('reaped')is True and
+           'first'in old and old['first']is None and type(old.get('numeric'))is int and
+           old['numeric']>0 and old.get('stdoutSHA256')==sha(b'')and
+           type(old.get('stderrSHA256'))is str and re.fullmatch('[0-9a-f]{64}',old['stderrSHA256'])and
+           type(old.get('dispatcherNonce'))is str and re.fullmatch('[0-9a-f]{32}',old['dispatcherNonce'])and
+           old.get('controlJobId')==c['jobId']and
+           c['jobId']!='root-github-robot-control-'+nonce):return None
+    if not(c['state']=='running'and c['terminalLifecycle']is None and
+           c['reservationRetained']is True and type(c['leaseExpiresUnix'])in(int,float)and c['leaseExpiresUnix']>now and
+           all(c[k]is True for k in('listenerAlive','controllerAlive','workerAlive','ownUnitBound'))and
+           probe['runnerOnline']is True and probe['networkReachable']is True and probe['protectedMain']is True and
+           probe['queueKnown']is True and not any(probe[k]for k in
+               ('runnerBusy','actionsInProgress','otherActiveJobs','unknownReservations',
+                'guestActive','gpuLeaseActive','sourceOwnerBusy'))and
+           probe['mainCommit']==c['sourceCommit']==policy['mainCommit']and
+           probe['queueSourceSHA256']==c['queueSourceSHA256']==policy['queueSourceSHA256']and
+           probe['controlBrokerSHA256']==policy['controlBrokerSHA256']):return None
+    # The source-verified canonical lifecycle, not an exception string or an
+    # absent process placeholder, establishes the still-current original owner.
+    before=strict(canonical(state));record={'kind':'ROOT_FAILED_LIVE_RENEWAL_INTENT_DISPOSITION_V1',
+        'atUnix':now,'before':before,'probeSHA256':probe_sha,
+        'originalJobId':c['jobId'],'queueMutation':False,'sourceMutation':False,
+        'heartbeatPublished':False,'vmAdmission':False,
+        'historicalOutcome':'ORIGINAL_FAILED_OR_UNKNOWN_PRESERVED'}
+    raw=canonical(record);path=ROOT/('failed-live-renewal-'+nonce+'-'+sha(raw)[:16]+'.json')
+    fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+    try:write_all(fd,raw);os.fsync(fd)
+    finally:os.close(fd)
+    state['inflight']=None;state['failureCount']=0;state['nextAttemptUnix']=now+1
+    state['lastOutcome']={'action':'GRACEFUL_RENEW','nonce':nonce,'jobId':c['jobId'],
+        'dispatcherNonce':old['dispatcherNonce'],'originalOutcome':old,
+        'reconciledBy':'terminated renewal; same original authenticated live control; normal decision next tick',
+        'disposition':str(path),'dispositionSHA256':sha(raw),'heartbeatPublished':False}
+    write_state(state)
+    return {'decision':'RECONCILED_FAILED_LIVE_RENEWAL_INTENT','effect':'RECOVERY_BOOKKEEPING_ONLY',
+            'nonce':nonce,'jobId':c['jobId'],'heartbeatPublished':False,'vmAdmission':False}
+
+
 def reconcile_failed_heartbeat_intent(policy,state,probe,now,probe_sha):
     """A terminated metadata publisher cannot reserve a control lifecycle action.
 
@@ -951,8 +1001,7 @@ def reconcile_failed_heartbeat_intent(policy,state,probe,now,probe_sha):
     if not(nonce is not None and type(old)is dict and old.get('nonce')==nonce and
            old.get('action')=='REFRESH_HEARTBEAT'and old.get('reaped')is True and
            old.get('first')is None and type(old.get('numeric'))is int and
-           old['numeric']>0 and old.get('stdoutSHA256')==sha(b'')and
-           not probe['heartbeatCurrent']):return None
+           old['numeric']>0 and old.get('stdoutSHA256')==sha(b'')):return None
     if not(old.get('controlJobId')==c['jobId']and
            type(old.get('dispatcherNonce'))is str and re.fullmatch(r'[0-9a-f]{32}',old['dispatcherNonce'])and
            c['state']=='running'and c['terminalLifecycle']is None and
@@ -1075,8 +1124,18 @@ def run_cycle(policy, state, now):
             state['lastOutcome']={'action':old['action'],'nonce':nonce,'reconciledBy':'created control CLOSED/released; no successor/no runtime actors' if created_closed else 'closed predecessor/no successor/no runtime actors','originalOutcome':old,'probeSHA256':sha(observed['stdout'])}
             write_state(state)
             return {'decision':'RECONCILED_CLOSED_CREATE' if created_closed else 'RECONCILED_ABSENT_GRACEFUL_RENEW','effect':'RECOVERY_BOOKKEEPING_ONLY' if created_closed else 'NO_EFFECT_PROVEN','nonce':nonce}
+    renewal_intent=reconcile_failed_live_renewal(policy,state,probe,now,sha(observed['stdout']))
+    if renewal_intent is not None:
+        presence=refresh_current_presence(policy)
+        return dict(renewal_intent,**({'presence':presence}if presence is not None else {}))
     heartbeat_intent=reconcile_failed_heartbeat_intent(policy,state,probe,now,sha(observed['stdout']))
-    if heartbeat_intent is not None:return heartbeat_intent
+    if heartbeat_intent is not None:
+        # A prior still-current heartbeat is metadata, not a reservation on
+        # this known terminated publisher. Keep its failed/unknown outcome,
+        # then refresh independently proven connectivity without claiming VM
+        # readiness or waiting for the old public timestamp to expire.
+        presence=refresh_current_presence(policy)
+        return dict(heartbeat_intent,**({'presence':presence}if presence is not None else {}))
     if state['inflight'] is not None and type(state['lastOutcome']) is dict and \
        state['lastOutcome'].get('action')=='REFRESH_HEARTBEAT':
         nonce=state['inflight']
