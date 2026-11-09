@@ -3856,17 +3856,35 @@ def readonly_proc_directory_transition(error):
     # an unclassified/foreign missing process into a monitoring continuation.
     records=getattr(error,'monitorOriginalRecords',None)
     if type(records)is not list or not 0<len(records)<=1024:return False
-    matches=[]
+    # This is a secondary READONLY cut, after the original canonical/source/
+    # invocation checks. A missing task has no proven identity. Do not infer
+    # ownership from its PID or require it to be a service MainPID. Bind every
+    # saved original manager record to the same complete reservation set;
+    # retain all reservations and repeat only observation. The next ordinary
+    # tick must still obtain a complete positive proof before any effect.
+    expected=e.get('recordedReservations')
+    if type(expected)is not list or not 0<len(expected)<=10:return False
+    reserved=[]
+    for value in expected:
+        if type(value)is not dict:return False
+        unit=value.get('unit');inv=value.get('invocation')
+        if (type(unit)is not str or re.fullmatch(r'opemos-testq-[0-9a-f]{12}-[0-9a-f]{32}\.service',unit)is None or
+                type(inv)is not str or re.fullmatch('[0-9a-f]{32}',inv)is None):return False
+        reserved.append((unit,inv))
+    if len({unit for unit,inv in reserved})!=len(reserved):return False
+    original=[]
     for record in records:
-        if type(record)is not dict or type(record.get('properties'))is not dict:continue
+        if type(record)is not dict or type(record.get('properties'))is not dict:return False
         props=record['properties'];unit=record.get('unit');inv=record.get('invocation')
-        if (type(unit)is str and re.fullmatch(r'opemos-testq-[0-9a-f]{12}-[0-9a-f]{32}\.service',unit)and
+        if not(type(record.get('jobId'))is str and record['jobId']and
+                type(unit)is str and re.fullmatch(r'opemos-testq-[0-9a-f]{12}-[0-9a-f]{32}\.service',unit)and
                 type(inv)is str and re.fullmatch('[0-9a-f]{32}',inv)and
                 record.get('reservationRetained')is True and record.get('operationOrReleaseAuthorized')is False and
                 props.get('LoadState')=='loaded'and props.get('InvocationID')==inv and
-                props.get('MainPID')==str(typed['tid'])and
-                props.get('ControlGroup')=='/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/'+unit):matches.append(record)
-    if len(matches)!=1:return False
+                type(props.get('MainPID'))is str and props['MainPID'].isdecimal()and
+                props.get('ControlGroup')in('','/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/'+unit)):return False
+        original.append((unit,inv))
+    if sorted(original)!=sorted(reserved):return False
     closes=failure.get('closeOutcomes')
     return (type(closes)is list and 0<len(closes)<=1024 and
             any(c.get('label')=='proc-root'for c in closes if type(c)is dict)and

@@ -2296,12 +2296,27 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
             properties=dict(LoadState='loaded',InvocationID=inv,MainPID=str(child.pid),
                 ControlGroup='/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/'+unit),
             reservationRetained=True,operationOrReleaseAuthorized=False)]
+        reservations=[dict(unit=unit,invocation=inv,cpus=[0],memory=1024**3,
+                           resources=['control'])]
+        secondary.evidence['recordedReservations']=reservations
         with patch.object(q,'exact_proc_revalidation_evidence'),\
              patch.object(q,'boundary_pool_epoch',side_effect=secondary),self.assertRaises(q.PoolAdmissionFailure):
             q.monitor_proc_revalidation_exit(None,None,{},None,[],[],records)
         self.assertIs(secondary.monitorOriginalRecords,records)
         secondary_evidence=copy.deepcopy(secondary.evidence)
         self.assertTrue(q.readonly_proc_directory_transition(secondary))
+        # Actual vanished process is NOT the live control MainPID. The second
+        # original GUI unit is terminal/empty; neither incomplete cut releases
+        # it. Manager/source/lease inputs modeled; proc disappearance is real.
+        records[0]['properties']['MainPID']=str(os.getpid())
+        guiunit='opemos-testq-'+'a'*12+'-'+'d'*32+'.service';guiinv='e'*32
+        records.append(dict(jobId='original-gui',unit=guiunit,invocation=guiinv,
+            properties=dict(LoadState='loaded',InvocationID=guiinv,MainPID='0',ControlGroup=''),
+            reservationRetained=True,operationOrReleaseAuthorized=False))
+        reservations.append(dict(unit=guiunit,invocation=guiinv,cpus=[1],memory=1024**3,
+                                 resources=['gui']))
+        self.assertTrue(q.readonly_proc_directory_transition(secondary))
+        secondary_evidence=copy.deepcopy(secondary.evidence)
         for fault in ('errno','path','stage','close','unknown-owner'):
             bad=copy.deepcopy(secondary.evidence)
             if fault=='errno':bad['firstFailure']['firstFailure']['errno']=13
@@ -2314,14 +2329,26 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
         foreign=q.PoolAdmissionFailure('unbound missing main',copy.deepcopy(secondary.evidence))
         self.assertFalse(q.readonly_proc_directory_transition(foreign))
         foreign.monitorOriginalRecords=copy.deepcopy(secondary.monitorOriginalRecords)
-        foreign.monitorOriginalRecords[0]['properties']['MainPID']='1'
+        foreign.monitorOriginalRecords[0]['properties']['ControlGroup']='/foreign'
         self.assertFalse(q.readonly_proc_directory_transition(foreign))
+        for fault in ('missing-record','extra-record','invocation','released','unknown-pid','duplicate-reservation'):
+            refused=q.PoolAdmissionFailure('unbound original record',copy.deepcopy(secondary.evidence))
+            refused.monitorOriginalRecords=copy.deepcopy(records)
+            if fault=='missing-record':refused.monitorOriginalRecords.pop()
+            elif fault=='extra-record':refused.monitorOriginalRecords.append(copy.deepcopy(records[0]))
+            elif fault=='invocation':refused.monitorOriginalRecords[0]['invocation']='f'*32
+            elif fault=='released':refused.monitorOriginalRecords[0]['reservationRetained']=False
+            elif fault=='unknown-pid':refused.monitorOriginalRecords[0]['properties']['MainPID']='UNKNOWN'
+            else:refused.evidence['recordedReservations'].append(copy.deepcopy(reservations[0]))
+            self.assertFalse(q.readonly_proc_directory_transition(refused))
         with tempfile.TemporaryDirectory(prefix='opemos-physical-monitor-recheck-')as tmp:
             root,db=q.connect(Path(tmp)/'state');runtime=Path(tmp)/'runtime';runtime.mkdir()
             heavy=os.open(runtime/'opemos-heavy.lock',os.O_RDWR|os.O_CREAT|os.O_EXCL,0o600)
             fcntl.flock(heavy,fcntl.LOCK_EX|fcntl.LOCK_NB)
             db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',('original-control','{}','running',
                 '[0]','original-unit',time.time(),None,None));db.commit()
+            db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',('original-gui','{}','running',
+                '[1]','original-gui-unit',time.time(),None,None));db.commit()
             before=[tuple(r)for r in db.execute('SELECT * FROM jobs')]
             primary=q.PoolAdmissionFailure('original exited task during planned renewal',dict(
                 admitted=False,reservationRetained=True,operationOrReleaseAuthorized=False,
