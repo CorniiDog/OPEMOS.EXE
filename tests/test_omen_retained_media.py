@@ -6636,6 +6636,16 @@ class FiniteConnectionEpochTests(unittest.TestCase):
                     resources=['opemos-robot-controlplane'],depends_on=[],requires_success=True,approval=approval_pin)
                 normalized=queue.normalize_job(raw,Path('/'))
                 self.assertEqual(queue.authenticated_control_window(normalized),(1000,1000+duration))
+                preflight=self.load('libvirt_preflight')
+                binding=dict(job_id=normalized['id'],unit='opemos-testq-modeled.service',
+                    specSHA256=hashlib.sha256(queue.canonical(normalized).encode()).hexdigest(),cpus=[0],memory=1073741824)
+                row=dict(id=normalized['id'],spec=queue.canonical(normalized),state='running',cpus='[0]',
+                    unit=binding['unit'],started=1,finished=None,result=None)
+                values=dict(rows=[row],bindings=[(row['id'],json.dumps(binding))],config=[('modeled','one')])
+                # The actual control-relation consumer accepts the authenticated
+                # duration; these modeled rows do not claim native liveness.
+                observed=preflight.control_relation(values,{'jobId':row['id']},queue)
+                self.assertEqual(observed[2]['timeout_seconds'],duration)
                 self.assertEqual(policy['wholeSeconds'],7200)
                 for fault in ('VM','GPU','user','argv','file','duration','counterfeit-approval','source','unowned'):
                     bad=copy.deepcopy(raw)
