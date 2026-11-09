@@ -142,7 +142,8 @@ def validate_policy(p, now):
             'notBeforeUnix','expiresUnix','renewalAuthorizedUntilUnix',
             'maxTotalCycles','maxCycles','renewLeadSeconds',
             'maxBackoffSeconds'}
-    need(type(p) is dict and set(p) in (keys,keys|{'healthImplementationDefinitionPin'}) and p['kind']=='ROOT_RUNNER21_AUTO_RECOVERY_V1'
+    optional={'healthImplementationDefinitionPin','normalInstallerSourcePin'}
+    need(type(p) is dict and keys<=set(p)<=keys|optional and p['kind']=='ROOT_RUNNER21_AUTO_RECOVERY_V1'
          and p['enabled'] is True and p['sourceAccepted'] is True and
          p['runtimeAuthorized'] is True and p['repository']=='CorniiDog/OPEMOS.EXE'
          and p['runnerId']==RUNNER_ID and p['scope']==SOURCE_SCOPE,
@@ -151,6 +152,16 @@ def validate_policy(p, now):
          re.fullmatch(r'[0-9a-f]{32}',p['currentReleaseTx']) and
          all(re.fullmatch(r'[0-9a-f]{64}',p[k]) for k in keys if k.endswith('SHA256')),
          'exact current Main and complete source pins')
+    if 'normalInstallerSourcePin'in p:
+        pin=p['normalInstallerSourcePin'];fields={'st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns'}
+        need(type(pin)is dict and set(pin)=={'path','bytes','sha256','identity'}and
+             type(pin['path'])is str and re.fullmatch('/var/lib/opemos-robot-control-r1/releases/[0-9a-f]{32}/install_remote\\.py',pin['path'])and
+             type(pin['bytes'])is int and 0<pin['bytes']<=1048576 and pin['sha256']==p['normalInstallerSHA256']and
+             type(pin['identity'])is dict and set(pin['identity'])==fields and
+             all(type(v)is int for v in pin['identity'].values())and
+             pin['identity']['st_uid']==pin['identity']['st_gid']==0 and pin['identity']['st_nlink']==1 and
+             stat.S_ISREG(pin['identity']['st_mode'])and stat.S_IMODE(pin['identity']['st_mode'])==0o444 and
+             pin['identity']['st_size']==pin['bytes'],'Root immutable actual installer source pin')
     if not(p['mainCommit']==REVIEWED_MAIN and p['queueSourceSHA256']==REVIEWED_QUEUE):
         current_controller_definition(p)
     need(type(p['notBeforeUnix']) is int and type(p['expiresUnix']) is int and

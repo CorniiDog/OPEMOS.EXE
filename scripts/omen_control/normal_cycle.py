@@ -371,10 +371,13 @@ def materialize(policy,probe_module,nonce,old_row,old_manager,dispatchers=None,r
          'exact Root approved current normal payload template')
     template=json.loads(template_raw)
     tx=policy['currentReleaseTx']
-    installer_raw,_=probe_module.pin_source(
-        CONTROL/'releases'/tx/'install_remote.py',policy['normalInstallerSHA256'],0)
+    installer_path=CONTROL/'releases'/tx/'install_remote.py'
+    if policy.get('normalInstallerSourcePin')is None:
+        installer_raw,_=probe_module.pin_source(installer_path,policy['normalInstallerSHA256'],0)
+    else:
+        installer_raw,_,installer_path=probe_module.installed_normal_installer(policy)
     installer=types.ModuleType('reviewed_normal_installer')
-    installer.__file__=str(CONTROL/'releases'/tx/'install_remote.py')
+    installer.__file__=str(installer_path)
     exec(compile(installer_raw,installer.__file__,'exec'),installer.__dict__)
     if dispatchers is not None and not all(ref['queueSourceSHA256']==policy['queueSourceSHA256']for ref in dispatchers):
         need(dispatchers==closed_source_dispatchers(template,old_row),

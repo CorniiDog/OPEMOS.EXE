@@ -59,6 +59,24 @@ def pin_source(path,digest,uid=None):
     need(sha(raw)==digest,'CURRENT_SOURCE_DRIFT '+str(path))
     return raw,identity
 
+def installed_normal_installer(p):
+    """The reviewed installer role may advance without copying an old lease."""
+    pin=p.get('normalInstallerSourcePin')
+    path=CONTROL/'releases'/p['currentReleaseTx']/'install_remote.py'
+    if pin is not None:
+        need(type(pin)is dict and set(pin)=={'path','bytes','sha256','identity'}and
+             type(pin['path'])is str and re.fullmatch(
+             '/var/lib/opemos-robot-control-r1/releases/[0-9a-f]{32}/install_remote\\.py',pin['path'])and
+             pin['sha256']==p['normalInstallerSHA256'],'same protected installer source role')
+        path=Path(pin['path'])
+    raw,identity=pin_source(path,p['normalInstallerSHA256'],0)
+    if pin is not None:
+        need(identity==pin['identity']and len(raw)==pin['bytes']and
+             identity['st_gid']==0 and stat.S_IMODE(identity['st_mode'])==0o444 and
+             identity['st_nlink']==1,'actual immutable installer source full9/bytes')
+    return raw,identity,path
+
+
 def local_sources(p):
     tx=p['currentReleaseTx']
     need(type(tx) is str and re.fullmatch(r'[0-9a-f]{32}',tx),
@@ -72,13 +90,14 @@ def local_sources(p):
         'jobStartedSHA256':CONTROL/'guard/job-started.sh',
         'jobGuardSHA256':CONTROL/'guard/job_guard.py',
         'privatePeerSHA256':release/'connection_host.py',
-        'normalInstallerSHA256':release/'install_remote.py',
     }
     out={};queue_source=None
     for key,path in mappings.items():
         raw,full=pin_source(path,p[key],0 if path.is_relative_to(CONTROL) else 1000)
         out[key]={'sha256':sha(raw),'full9':full}
         if key=='queueSourceSHA256':queue_source=raw
+    raw,full,_=installed_normal_installer(p)
+    out['normalInstallerSHA256']={'sha256':sha(raw),'full9':full}
     lease_raw,lease_identity=pin_source(release/'lease.json',p['currentReleaseLeaseSHA256'],0)
     out['currentReleaseLease']={'sha256':sha(lease_raw),'full9':lease_identity}
     lease=json.loads(lease_raw)

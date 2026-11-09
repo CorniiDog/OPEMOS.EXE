@@ -6761,4 +6761,52 @@ class FiniteConnectionEpochTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'original whole pool observation deadline'):backend.validate_pool([])
 
 
+    @unittest.skipUnless(os.geteuid()==0,'immutable Root source role in protected CI')
+    def test_new_installer_role_reaches_real_materializer_without_old_lease_copy(self):
+        from unittest import mock
+        cycle=self.load('normal_cycle');normal=self.load('normal_probe')
+        base=Path('/var/lib/opemos-robot-control-r1/releases');base.mkdir(parents=True,exist_ok=True)
+        source_root=base/uuid.uuid4().hex;source_root.mkdir(mode=0o755);source_root.chmod(0o755)
+        try:
+            path=source_root/'install_remote.py'
+            # Source-body fixture; no installation or process effect is modeled
+            # as accepted. The real reader, compile and materializer run.
+            body=b'def targets():return {}\ndef full(path):raise AssertionError("no targets")\n'
+            path.write_bytes(body);path.chmod(0o444)
+            pin=dict(path=str(path),bytes=len(body),sha256=normal.sha(body),identity=normal.full9(path.stat()))
+            now=int(time.time());nonce='e'*32
+            policy=dict(currentReleaseTx='d'*32,normalInstallerSHA256=pin['sha256'],normalInstallerSourcePin=pin,
+                mainCommit='a'*40,queueSourceSHA256='b'*64,queueLoggerSHA256='c'*64,
+                controlBrokerSHA256=normal.sha(b'control'),jobStartedSHA256=normal.sha(b'hook'),
+                expiresUnix=now+3600,renewalAuthorizedUntilUnix=now+7*86400)
+            raw,identity,actual_path=normal.installed_normal_installer(policy)
+            self.assertEqual((raw,identity,actual_path),(body,pin['identity'],path))
+            template=dict(kind='ROOT_REVIEWED_ROBOT_CONTROL_MATERIALIZATION_V1',mainCommit=policy['mainCommit'],
+                runnerId=21,queueSourceSHA256=policy['queueSourceSHA256'],queueLoggerSHA256=policy['queueLoggerSHA256'],
+                sources={'control.py':{'hex':b'control'.hex(),'sha256':policy['controlBrokerSHA256']},
+                    'job-started.sh':{'sha256':policy['jobStartedSHA256']}},approval={'wallSeconds':21600},
+                policy=dict(sourceCommit=policy['mainCommit'],queueSourceSHA256=policy['queueSourceSHA256'],queueLoggerSHA256=policy['queueLoggerSHA256']))
+            wire=cycle.enc(template);policy['normalTemplateSHA256']=cycle.sha(wire)
+            state=dict(inflight=nonce,epochExpiresUnix=now+6*86400,lastOutcome={'action':'CREATE','nonce':nonce})
+            probe=types.SimpleNamespace(installed_normal_installer=normal.installed_normal_installer,
+                pin_source=lambda *a:(_ for _ in ()).throw(AssertionError('old immutable release is not the new installer')))
+            with mock.patch.object(cycle,'REMOTE_TEMPLATE_HEX',wire.hex(),create=True),mock.patch.object(cycle,'closed_receipt',return_value={'MODELED_CLOSED':True}):
+                result,installer=cycle.materialize(policy,probe,nonce,{'unit':'modeled'}, {},recovery_state=state)
+            self.assertEqual(installer.__file__,str(path));self.assertEqual(json.loads(result)['policy']['expiresAt'],state['epochExpiresUnix'])
+            self.assertFalse((source_root/'lease.json').exists())
+            for fault in('hash','epoch','owner','alias'):
+                bad=copy.deepcopy(policy)
+                if fault=='hash':bad['normalInstallerSourcePin']['sha256']='0'*64
+                elif fault=='epoch':bad['normalInstallerSourcePin']['identity']['st_mtime_ns']+=1
+                elif fault=='owner':os.chown(path,1000,1000)
+                else:
+                    path.unlink();path.symlink_to(SOURCE/'install_remote.py')
+                with self.subTest(fault=fault),self.assertRaises((RuntimeError,OSError)):
+                    normal.installed_normal_installer(bad)
+                if path.is_symlink():path.unlink();path.write_bytes(body);path.chmod(0o444)
+                if fault=='owner':os.chown(path,0,0)
+                pin['identity']=normal.full9(path.stat());policy['normalInstallerSourcePin']=copy.deepcopy(pin)
+        finally:shutil.rmtree(source_root)
+
+
 if __name__ == '__main__': unittest.main()
