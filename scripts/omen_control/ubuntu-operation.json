@@ -70,7 +70,7 @@
             "confirmation": "Destructive-intent phrase",
             "open": "Open",
             "review": "Review & Write Selected USB\u2026",
-            "select_folder": "Select",
+            "select_folder": "Open",
             "usb_target": "Detected removable USB drives",
             "write": "Write & Verify USB",
             "write_success": "USB writing, flush and full readback completed; UDisks confirmed safe removal of the selected drive."
