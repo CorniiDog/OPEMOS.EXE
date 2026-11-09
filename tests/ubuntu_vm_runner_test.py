@@ -1084,23 +1084,66 @@ class RunnerTest(unittest.TestCase):
         p.click=click
         def request(kind,**args):
             self.assertEqual(kind,'CHOOSER_LOCATION');n=args['prefix_length'];queries[n]=queries.get(n,0)+1
+            if n==0:return {'value':dict(readOnlyObservation=True,pid=731,window_id=482,
+                requestedPrefixCharacters=0,keyboardFocusMatches=True)}
             # QMP already ACKed; native GTK consumes this character later.
             if queries[n]>1:committed[0]=n
             return {'value':dict(available=True,readOnlyObservation=True,pid=731,window_id=482,
                 requestedPrefixCharacters=n,committedCharacters=committed[0],
-                declaredPrefixMatched=committed[0]>=n,exactDeclaredInput=committed[0]==3)}
+                declaredPrefixMatched=committed[0]>=n,exactDeclaredInput=committed[0]==3,
+                keyboardFocusMatches=True)}
         p.request=request
         with patch.object(sender.time,'monotonic',side_effect=lambda:clock[0]),patch.object(sender.time,'sleep',side_effect=lambda seconds:clock.__setitem__(0,clock[0]+seconds)):
             p.choose('chooser-open','Choose','/ab','Open')
         self.assertEqual([e[1]for e in events if e[0]=='pointer'],['chooser-open','chooser-confirm-exact-input'])
-        self.assertEqual(queries,{1:2,2:2,3:2});self.assertEqual(p.end,30)
+        self.assertEqual(queries,{0:5,1:2,2:2,3:2});self.assertEqual(p.end,30)
         # A late/wrong native value cannot obtain a pointer confirmation or a
         # fresh deadline, despite every preceding keyboard ACK succeeding.
-        p.end=clock[0]+.05;p.request=lambda *a,**k:{'value':{'available':False}}
+        p.end=clock[0]+.05;p.request=lambda *a,**k:{'value':{'available':False,'keyboardFocusMatches':True}}
         with patch.object(sender.time,'monotonic',side_effect=lambda:clock[0]),patch.object(sender.time,'sleep',side_effect=lambda seconds:clock.__setitem__(0,clock[0]+seconds)):
             with self.assertRaisesRegex(RuntimeError,'native chooser text not consumed'):
                 p.chooser_location(dialog,1)
         self.assertEqual([e[1]for e in events if e[0]=='pointer'].count('chooser-confirm-exact-input'),1)
+        # A separate upgrade prompt can own keyboard focus while GTK still
+        # reports its old entry FOCUSED. Never deliver even the next key to it.
+        events.clear();p.end=clock[0]+30
+        p.request=lambda *a,**k:{'value':dict(readOnlyObservation=True,pid=731,window_id=482,
+            requestedPrefixCharacters=0,keyboardFocusMatches=False)}
+        with self.assertRaisesRegex(RuntimeError,'keyboard focus left'):
+            p.choose('chooser-open','Choose','/ab','Open')
+        self.assertEqual(events,[('pointer','chooser-open')])
+        # Losing focus after one consumed character also stops before the next
+        # chord, without retrying the old key or confirming an incomplete path.
+        events.clear();committed[0]=0;queries.clear()
+        def interrupted(kind,**args):
+            raw=request(kind,**args)
+            if committed[0]==1:raw['value']['keyboardFocusMatches']=False
+            return raw
+        p.request=interrupted
+        with patch.object(sender.time,'monotonic',side_effect=lambda:clock[0]),patch.object(sender.time,'sleep',side_effect=lambda seconds:clock.__setitem__(0,clock[0]+seconds)):
+            with self.assertRaisesRegex(RuntimeError,'keyboard focus left'):
+                p.choose('chooser-open','Choose','/ab','Open')
+        self.assertEqual([e for e in events if e[0]=='character'],[('character','slash')])
+        self.assertNotIn(('pointer','chooser-confirm-exact-input'),events)
+
+    def test_virtual_usb_X11_keyboard_focus_uses_actual_focus_ancestor_not_stale_ATSPI_flag(self):
+        spec=importlib.util.spec_from_file_location('native_focus_observer',
+            Path(__file__).resolve().parents[1]/'scripts/omen_control/observer_guest.py')
+        observer=importlib.util.module_from_spec(spec);spec.loader.exec_module(observer)
+        # Execute the production ctypes ABI/ancestry walk. X11 facts modeled;
+        # the foreign focus, PointerRoot and a cyclic tree must not be a chooser.
+        x=object.__new__(observer.X11);x.d=None;x.root=2
+        for focus,parents,expected in((484,{484:483,483:482,482:2},[484,483,482]),
+                (999,{999:2},[999]),(1,{},[]),(0,{},[])):
+            def focused(display,window,revert):window._obj.value=focus;return 1
+            def tree(display,current,root,parent,children,count):
+                parent._obj.value=parents[current];return 1
+            x.x=SimpleNamespace(XGetInputFocus=focused,XQueryTree=tree)
+            self.assertEqual(x.keyboard_focus_chain(),expected)
+        x.x=SimpleNamespace(XGetInputFocus=lambda d,w,r:setattr(w._obj,'value',484),
+            XQueryTree=lambda d,c,r,p,ch,n:(setattr(p._obj,'value',484)or 1))
+        with self.assertRaisesRegex(RuntimeError,'bounded native keyboard focus ancestry'):
+            x.keyboard_focus_chain()
 
     def test_virtual_usb_native_chooser_compares_only_declared_nonsecret_focused_location(self):
         spec=importlib.util.spec_from_file_location('native_chooser_observer',
@@ -1140,11 +1183,17 @@ class RunnerTest(unittest.TestCase):
                 return SimpleNamespace(start_offset=obj.selection[0],end_offset=obj.selection[1])
         entry=Node();app=Node([entry]);app.role='application';app.flags=set();desktop=Node([app])
         window=dict(dialog_type=True,pid=731,window_id=482,rect=[0,0,400,300])
-        actual=observer.observed_chooser_location(desktop,window,declared,len(declared),states,TextAPI)
+        for focus_chain in([], [999], [1000,999]):
+            reads.clear()
+            focus=observer.observed_chooser_location(desktop,window,declared,0,states,TextAPI,
+                focus_chain=focus_chain)
+            self.assertFalse(focus['keyboardFocusMatches']);self.assertFalse(focus['available'])
+            self.assertEqual(reads,[]) # no stale AT-SPI text read from an unfocused chooser
+        actual=observer.observed_chooser_location(desktop,window,declared,len(declared),states,TextAPI,focus_chain=[482])
         self.assertTrue(actual['exactDeclaredInput']);self.assertEqual(actual['committedCharacters'],len(declared))
         self.assertNotIn(declared,str(actual));self.assertTrue(actual['readOnlyObservation'])
         entry.selection=(6,len(declared));entry.caret=len(declared)
-        actual=observer.observed_chooser_location(desktop,window,declared,7,states,TextAPI)
+        actual=observer.observed_chooser_location(desktop,window,declared,7,states,TextAPI,focus_chain=[482])
         self.assertEqual(actual['committedCharacters'],6) # autocomplete is not typed consumption
         self.assertEqual(set(calls),{'count','range','caret','selections','selection'})
         # This fixture now reproduces the actual GUI8 method collision.
@@ -1156,11 +1205,11 @@ class RunnerTest(unittest.TestCase):
         # require every declared character before the sender can click Select.
         folder='/home/opemosgui/opemos-robot-fixture/output'
         entry.value=folder+'/';entry.caret=len(entry.value);entry.selection=(len(folder),len(entry.value))
-        actual=observer.observed_chooser_location(desktop,window,folder,len(folder),states,TextAPI,role='output_directory')
+        actual=observer.observed_chooser_location(desktop,window,folder,len(folder),states,TextAPI,focus_chain=[482],role='output_directory')
         self.assertTrue(actual['exactDeclaredInput']);self.assertTrue(actual['directorySeparatorCompletion'])
         self.assertEqual(actual['committedCharacters'],len(folder))
         entry.selection=None
-        actual=observer.observed_chooser_location(desktop,window,folder,len(folder),states,TextAPI,role='output_directory')
+        actual=observer.observed_chooser_location(desktop,window,folder,len(folder),states,TextAPI,focus_chain=[482],role='output_directory')
         self.assertEqual(actual['nativeCommittedCharacters'],len(folder)+1)
         self.assertEqual(actual['committedCharacters'],len(folder))
         entry.selection=(len(folder),len(entry.value))
@@ -1170,30 +1219,30 @@ class RunnerTest(unittest.TestCase):
         p=object.__new__(sender.Pipeline);p.cfg={'input_path':folder,'output_directory':folder}
         p.end=time.monotonic()+5;p.app={'pid':731,'window_id':481}
         p.request=lambda kind,**args:{'value':observer.observed_chooser_location(desktop,window,
-            p.cfg[args['role']],args['prefix_length'],states,TextAPI,role=args['role'])}
+            p.cfg[args['role']],args['prefix_length'],states,TextAPI,focus_chain=[482],role=args['role'])}
         self.assertTrue(p.chooser_location(window,len(folder),'output_directory')['value']['exactDeclaredInput'])
         with self.assertRaisesRegex(RuntimeError,'complete declared chooser location before pointer'):
             p.chooser_location(window,len(folder),'input_path')
         entry.selection=(len(folder)-1,len(entry.value))
-        actual=observer.observed_chooser_location(desktop,window,folder,len(folder),states,TextAPI,role='output_directory')
+        actual=observer.observed_chooser_location(desktop,window,folder,len(folder),states,TextAPI,focus_chain=[482],role='output_directory')
         self.assertLess(actual['committedCharacters'],len(folder))
         for suffix in('/','//','/child','/../other'):
             entry.value=folder+suffix;entry.caret=len(folder);entry.selection=(len(folder),len(entry.value))
-            file_value=observer.observed_chooser_location(desktop,window,folder,len(folder),states,TextAPI)
-            directory_value=observer.observed_chooser_location(desktop,window,folder,len(folder),states,TextAPI,role='output_directory')
+            file_value=observer.observed_chooser_location(desktop,window,folder,len(folder),states,TextAPI,focus_chain=[482])
+            directory_value=observer.observed_chooser_location(desktop,window,folder,len(folder),states,TextAPI,focus_chain=[482],role='output_directory')
             self.assertFalse(file_value['exactDeclaredInput'])
             self.assertEqual(directory_value['exactDeclaredInput'],suffix=='/')
         with self.assertRaises(RuntimeError):
-            observer.observed_chooser_location(desktop,window,folder,len(folder),states,TextAPI,role='other')
+            observer.observed_chooser_location(desktop,window,folder,len(folder),states,TextAPI,focus_chain=[482],role='other')
         entry.value='/other/image.img';entry.caret=len(entry.value);entry.selection=None
-        self.assertFalse(observer.observed_chooser_location(desktop,window,declared,len(declared),states,TextAPI)['declaredPrefixMatched'])
+        self.assertFalse(observer.observed_chooser_location(desktop,window,declared,len(declared),states,TextAPI,focus_chain=[482])['declaredPrefixMatched'])
         for fault in('password','foreign','hidden','unfocused'):
             entry.role='entry';entry.pid=731;entry.flags={'visible','showing','focused','editable'};reads.clear()
             if fault=='password':entry.role='password text'
             elif fault=='foreign':entry.pid=732
             elif fault=='hidden':entry.flags.remove('showing')
             else:entry.flags.remove('focused')
-            self.assertFalse(observer.observed_chooser_location(desktop,window,declared,1,states,TextAPI)['available'])
+            self.assertFalse(observer.observed_chooser_location(desktop,window,declared,1,states,TextAPI,focus_chain=[482])['available'])
             self.assertEqual(reads,[])
 
 

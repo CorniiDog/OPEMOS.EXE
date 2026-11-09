@@ -2038,6 +2038,55 @@ print(json.dumps({'realUID1000':True,'sourceRecipeMaterialized':True,'actualRead
             with self.assertRaisesRegex(RuntimeError,'ancestry'):
                 module.write_guest_source_files(second,work)
 
+    def test_real_ext4_GUI_autostart_mask_preserves_original_and_refuses_foreign_targets(self):
+        """Real offline ext4 mutation/readback, not guest popup/GUI acceptance."""
+        import configparser
+        module=self.load('provision_observer_rule')
+        with tempfile.TemporaryDirectory()as temp:
+            root=Path(temp);original=root/'original.raw';cow=root/'disposable.raw'
+            with original.open('xb')as output:output.truncate(16*1024**2)
+            subprocess.run(['/usr/sbin/mkfs.ext4','-F','-q',str(original)],check=True)
+            module.NODE=str(original)
+            for directory in('/etc','/etc/xdg','/etc/xdg/autostart'):
+                module.debugfs('mkdir '+directory,True)
+                module.debugfs('sif '+directory+' mode 040755',True)
+            source=root/'notifier.desktop'
+            old=b'[Desktop Entry]\nType=Application\nExec=update-notifier\nX-GNOME-Autostart-Delay=60\n'
+            source.write_bytes(old)
+            target='/etc/xdg/autostart/update-notifier.desktop'
+            module.debugfs('write '+str(source)+' '+target,True)
+            module.debugfs('sif '+target+' mode 0100644',True)
+            neighbor='/etc/xdg/autostart/unrelated.desktop'
+            module.debugfs('write '+str(source)+' '+neighbor,True)
+            module.debugfs('sif '+neighbor+' mode 0100644',True)
+            original_sha=hashlib.sha256(original.read_bytes()).hexdigest()
+            shutil.copyfile(original,cow);module.NODE=str(cow)
+            config={'kind':'ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1'}
+            work=root/'work';work.mkdir(mode=0o700)
+            result=module.mask_guest_update_notifier(config,work)
+            self.assertTrue(result['readback']);self.assertEqual(result['original'],old.decode())
+            parsed=configparser.ConfigParser()
+            parsed.read_string(module.debugfs('cat '+target)['stdout'])
+            self.assertTrue(parsed['Desktop Entry'].getboolean('Hidden'))
+            self.assertNotIn('Exec',parsed['Desktop Entry'])
+            self.assertEqual(module.debugfs('cat '+neighbor)['stdout'].encode(),old)
+            self.assertEqual(hashlib.sha256(original.read_bytes()).hexdigest(),original_sha)
+            for fault in('source-build','writable-parent','writable-file','wrong-uid','wrong-exec'):
+                shutil.copyfile(original,cow);work=root/fault;work.mkdir(mode=0o700)
+                bad=dict(config)
+                if fault=='source-build':bad['kind']='ROOT_ADMITTED_UBUNTU_SOURCE_BUILD_V1'
+                elif fault=='writable-parent':module.debugfs('sif /etc/xdg/autostart mode 040777',True)
+                elif fault=='writable-file':module.debugfs('sif '+target+' mode 0100666',True)
+                elif fault=='wrong-uid':module.debugfs('sif '+target+' uid 1000',True)
+                else:
+                    source.write_bytes(old.replace(b'Exec=update-notifier',b'Exec=unrelated-app'))
+                    module.debugfs('rm '+target,True)
+                    module.debugfs('write '+str(source)+' '+target,True)
+                    module.debugfs('sif '+target+' mode 0100644',True)
+                before=hashlib.sha256(cow.read_bytes()).hexdigest()
+                with self.assertRaises(RuntimeError):module.mask_guest_update_notifier(bad,work)
+                self.assertEqual(hashlib.sha256(cow.read_bytes()).hexdigest(),before)
+
     def test_workflow_grant_authenticates_body_and_input_programs(self):
         import base64
         module=self.load('job_guard')

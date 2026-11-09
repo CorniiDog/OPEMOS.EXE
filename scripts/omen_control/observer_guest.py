@@ -145,6 +145,8 @@ class X11:
         self.x.XGetWindowProperty.restype=C.c_int
         self.x.XGetTransientForHint.argtypes=[C.c_void_p,C.c_ulong,C.POINTER(C.c_ulong)]
         self.x.XGetTransientForHint.restype=C.c_int
+        self.x.XGetInputFocus.argtypes=[C.c_void_p,C.POINTER(C.c_ulong),C.POINTER(C.c_int)]
+        self.x.XGetInputFocus.restype=C.c_int
         self.x.XFree.argtypes=[C.c_void_p];self.x.XCloseDisplay.argtypes=[C.c_void_p]
         self.root=self.x.XDefaultRootWindow(self.d)
         self.pid_atom=self.atom('_NET_WM_PID')
@@ -220,6 +222,22 @@ class X11:
             require(child.value not in seen,'native child window cycle')
             seen.append(int(child.value));window=child.value
         require(False,'native window hit depth bound')
+
+
+    def keyboard_focus_chain(self):
+        window=C.c_ulong();revert=C.c_int()
+        self.x.XGetInputFocus(self.d,C.byref(window),C.byref(revert))
+        current=int(window.value);chain=[]
+        while current not in(0,1,self.root):
+            require(len(chain)<32 and current not in chain,'bounded native keyboard focus ancestry')
+            chain.append(current)
+            root=C.c_ulong();parent=C.c_ulong();children=C.POINTER(C.c_ulong)();count=C.c_uint()
+            require(self.x.XQueryTree(self.d,current,C.byref(root),C.byref(parent),
+                    C.byref(children),C.byref(count)),'native keyboard focus ancestry observation')
+            try:current=int(parent.value)
+            finally:
+                if children:self.x.XFree(children)
+        return chain
 
 
 def accessible_descendants(root,defunct_state):
@@ -320,7 +338,7 @@ def observed_names(desktop,window,states,owner_check=None):
     return {'names':names,'pid':window['pid'],'window_id':window['window_id'],'readOnlyObservation':True}
 
 
-def observed_chooser_location(desktop,window,declared,prefix_length,states,text_api,*,role='input_path'):
+def observed_chooser_location(desktop,window,declared,prefix_length,states,text_api,*,role='input_path',focus_chain):
     """Read only the focused native chooser entry for the declared target.
 
     Return comparisons and offsets, never arbitrary editable/password contents.
@@ -329,11 +347,18 @@ def observed_chooser_location(desktop,window,declared,prefix_length,states,text_
     require(window.get('dialog_type') is True and type(window.get('pid')) is int,
             'actual native chooser dialog')
     require(type(declared)is str and 0<len(declared)<=512 and
-            type(prefix_length)is int and 0<prefix_length<=len(declared),
+            type(prefix_length)is int and 0<=prefix_length<=len(declared),
             'declared image prefix only')
     require(role in('input_path','output_directory')and
             (role!='output_directory'or not declared.endswith('/')),
             'declared file or canonical output directory role')
+    require(type(focus_chain)is list and len(focus_chain)<=32 and
+            all(type(value)is int and value>1 for value in focus_chain) and
+            len(focus_chain)==len(set(focus_chain)),'native keyboard focus ancestry')
+    context=dict(window_id=window['window_id'],pid=window['pid'],
+                 requestedPrefixCharacters=prefix_length,readOnlyObservation=True,
+                 keyboardFocusMatches=window['window_id'] in focus_chain,keyboardFocusChain=focus_chain)
+    if not context['keyboardFocusMatches']:return dict(context,available=False)
     count=desktop.get_child_count();require(type(count)is int and 0<=count<=4096,'bounded native desktop')
     matches=[]
     for index in range(count):
@@ -366,13 +391,12 @@ def observed_chooser_location(desktop,window,declared,prefix_length,states,text_
             # representation; image paths and all other suffixes stay exact.
             directory_completion=role=='output_directory'and value==declared+'/'
             if directory_completion:committed=min(committed,len(declared))
-            matches.append(dict(available=True,window_id=window['window_id'],pid=window['pid'],
-                requestedPrefixCharacters=prefix_length,observedCharacters=length,committedCharacters=committed,
+            matches.append(dict(context,available=True,observedCharacters=length,committedCharacters=committed,
                 nativeCommittedCharacters=native_committed,directorySeparatorCompletion=directory_completion,
                 declaredPrefixMatched=value.startswith(declared[:prefix_length]),
-                exactDeclaredInput=value==declared or directory_completion,readOnlyObservation=True))
+                exactDeclaredInput=value==declared or directory_completion))
     require(len(matches)<=1,'one focused same-dialog native location entry')
-    return matches[0]if matches else dict(available=False,readOnlyObservation=True)
+    return matches[0]if matches else dict(context,available=False)
 
 
 def mounted_input(cfg):
@@ -517,7 +541,8 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
             window=next((w for w in owned if w['window_id']==request['window_id']),None)
             require(window is not None and window['pid']==birth['pid'],'original app native chooser only')
             role=request['role'];require(role in ('input_path','output_directory'),'declared image/output location only')
-            value=observed_chooser_location(desktop,window,cfg[role],request['prefix_length'],states,Atspi.Text,role=role)
+            value=observed_chooser_location(desktop,window,cfg[role],request['prefix_length'],states,Atspi.Text,
+                role=role,focus_chain=x.keyboard_focus_chain())
         elif kind=='UI_STATE':
             # Read the actual mapped main/companion/chooser windows. No app
             # command, DOM mutation or accessibility activation is permitted.

@@ -310,6 +310,47 @@ def write_guest_source_files(config,root):
     return result
 
 
+def mask_guest_update_notifier(config,root):
+    """Disable ambient upgrade popups only in this not-yet-booted GUI COW."""
+    need(config['kind']=='ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1',
+         'update notifier mask is only for the disposable GUI guest')
+    target='/etc/xdg/autostart/update-notifier.desktop'
+    for directory in('/etc','/etc/xdg','/etc/xdg/autostart'):
+        meta=debugfs('stat '+directory)['stdout']
+        need(re.search(r'Type:\s*directory\s+Mode:\s*0?755\b',meta) and
+             re.search(r'User:\s*0\s+Group:\s*0',meta),'protected guest autostart ancestry')
+    meta=debugfs('stat '+target)['stdout']
+    need(re.search(r'Type:\s*regular\s+Mode:\s*0?644\b',meta) and
+         re.search(r'User:\s*0\s+Group:\s*0',meta) and
+         re.search(r'Links:\s*1\b',meta),'original guest update notifier custody')
+    original=debugfs('cat '+target,cap=8192)['stdout']
+    import configparser
+    desktop=configparser.ConfigParser(interpolation=None)
+    desktop.read_string(original)
+    need(desktop['Desktop Entry'].get('Type')=='Application' and
+         desktop['Desktop Entry'].get('Exec') in('update-notifier','/usr/bin/update-notifier'),
+         'exact original Ubuntu update notifier, no arbitrary autostart target')
+    raw=b'[Desktop Entry]\nType=Application\nName=Update Notifier\nHidden=true\n'
+    source=root/'guest-update-notifier-mask.new'
+    fd=os.open(source,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)
+    try:need(os.write(fd,raw)==len(raw),'short guest autostart mask write');os.fsync(fd)
+    finally:os.close(fd)
+    debugfs('rm '+target,True)
+    written=debugfs('write '+str(source)+' '+target,True)
+    need(re.fullmatch(r'Allocated inode: [0-9]+\n?',written['stdout']),
+         'fresh guest autostart mask allocation')
+    for field,value in(('uid','0'),('gid','0'),('mode','0100644')):
+        debugfs('sif '+target+' '+field+' '+value,True)
+    need(debugfs('cat '+target)['stdout'].encode()==raw,'whole guest autostart mask readback')
+    meta=debugfs('stat '+target)['stdout']
+    need(re.search(r'Type:\s*regular\s+Mode:\s*0?644\b',meta) and
+         re.search(r'User:\s*0\s+Group:\s*0',meta) and
+         re.search(r'Links:\s*1\b',meta),'guest autostart mask custody after write')
+    return {'path':target,'original':original,'originalSHA256':hashlib.sha256(original.encode()).hexdigest(),
+            'maskSHA256':hashlib.sha256(raw).hexdigest(),'readback':True,
+            'scope':'fresh disposable GUI COW before first boot; original backing unchanged'}
+
+
 def main():
     resource.setrlimit(resource.RLIMIT_FSIZE,(4_000_000_000,4_000_000_000))
     def deadline(_signal,_frame):
@@ -435,6 +476,8 @@ def main():
                            'uid':0,'gid':0,'mode':'0644','readback':True}
         if c['kind']=='ROOT_ADMITTED_UBUNTU_SOURCE_BUILD_V1'or 'guest_prerequisites'in c:
             out['guest_source_build_files']=write_guest_source_files(c,root)
+        if c['kind']=='ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1':
+            out['guest_update_notifier_mask']=mask_guest_update_notifier(c,root)
         out['write_detach']=detach(owner,record_disconnect);owner=None
         out['cow_after']={'identity':job.sig(cow.lstat()),'sha256':sha(cow)}
         before=out['cow_before']['identity'];after=out['cow_after']['identity']

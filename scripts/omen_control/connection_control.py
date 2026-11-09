@@ -1156,12 +1156,14 @@ class Pipeline:
         time.sleep(min(delivery_seconds,remaining))
         need(time.monotonic()<self.end,'original keyboard deadline after release interval')
 
-    def text(self,value,after_character=None):
+    def text(self,value,after_character=None,before_key=None):
         need(type(value)is str and 0<len(value)<=512 and re.fullmatch('[A-Za-z0-9 /_.-]+',value),
              'declared ASCII image/folder/confirmation only')
+        if before_key is not None:before_key()
         self.key('a',('ctrl',))
         for index,character in enumerate(value,1):
             code={' ':'spc','.':'dot','-':'minus','/':'slash','_':'minus'}.get(character,character.lower())
+            if before_key is not None:before_key()
             self.key(code,('shift',)if character.isupper()or character=='_'else())
             if after_character is not None:after_character(index)
 
@@ -1171,6 +1173,7 @@ class Pipeline:
         while True:
             raw=self.request('CHOOSER_LOCATION',window_id=window['window_id'],prefix_length=prefix_length,role=role)
             value=raw['value']
+            need(value.get('keyboardFocusMatches') is True,'actual keyboard focus left the authenticated chooser')
             if value.get('available') is True:
                 need(value.get('readOnlyObservation') is True and value['window_id']==window['window_id']and
                      value['pid']==self.app['pid']and value['requestedPrefixCharacters']==prefix_length,
@@ -1182,6 +1185,14 @@ class Pipeline:
             need(time.monotonic()<end,'actual native chooser text not consumed; QMP ACK is insufficient')
             time.sleep(min(.1,end-time.monotonic()))
 
+    def chooser_focus(self,window,role):
+        raw=self.request('CHOOSER_LOCATION',window_id=window['window_id'],prefix_length=0,role=role)
+        value=raw['value']
+        need(value.get('readOnlyObservation') is True and value.get('window_id')==window['window_id'] and
+             value.get('pid')==self.app['pid'] and value.get('requestedPrefixCharacters')==0 and
+             value.get('keyboardFocusMatches') is True,'actual keyboard focus left the authenticated chooser')
+        return raw
+
     def choose(self,action,button,path,confirm):
         self.click(action,button)
         while True:
@@ -1192,7 +1203,9 @@ class Pipeline:
         need(len(dialogs)==1,'one actual same-app native chooser')
         role='input_path'if action=='chooser-open'else'output_directory'
         need(path==self.cfg[role],'only declared image or owned output chooser')
-        self.key('l',('ctrl',));self.text(path,after_character=lambda count:self.chooser_location(dialogs[0],count,role))
+        self.chooser_focus(dialogs[0],role)
+        self.key('l',('ctrl',));self.text(path,after_character=lambda count:self.chooser_location(dialogs[0],count,role),
+            before_key=lambda:self.chooser_focus(dialogs[0],role))
         self.click('chooser-confirm-exact-input'if action=='chooser-open'else action+'-confirm',confirm,window=dialogs[0])
 
     def names(self):return [name for row in self.request('UI_STATE')['value']['namesByWindow']for name in row['names']]
