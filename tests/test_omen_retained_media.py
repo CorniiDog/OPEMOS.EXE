@@ -27,6 +27,92 @@ import types
 
 
 class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
+    def test_real_robot_child_fd_closure_waits_for_parent_observation_socket(self):
+        """Actual click orchestration/Popen/FD guard; guest and RF facts MODELED.
+
+        The benign child waits for the same observed-result publication as RF.
+        Real socket pairs represent QMP descriptors; a genuinely leaked extra
+        descriptor must still fail the unchanged owned-command verifier.
+        """
+        import socket,threading
+        import connection_control as control
+        import owned_command as owned
+        from unittest.mock import patch
+        for leak in (False,True):
+            before=set(os.listdir('/proc/self/fd'));leaked=[]
+            class QMP:
+                def __init__(self,pair,temporary=True):
+                    self.socket,self.peer=pair;self.f=self.socket.makefile('rwb',buffering=0)
+                    self.temporary=temporary
+                def close(self):
+                    if self.f.closed:return
+                    self.f.close();self.socket.close();self.peer.close()
+                    if leak and self.temporary:leaked.append(os.open(os.devnull,os.O_RDONLY))
+            with tempfile.TemporaryDirectory()as temp:
+                root=Path(temp)
+                app={'pid':101,'window_id':17,'title':'MODELED app','rect':[10,10,760,800]}
+                native={'window_id':17,'visible':True,'enabled':True,
+                    'hitObservation':'native-same-control-unoccluded','nativeAccessibleId':'choose',
+                    'rect':[100,100,140,40],'role':'push button','label':'Choose Image',
+                    'point':{'x':170,'y':120}}
+                p=types.SimpleNamespace(root=root,end=time.monotonic()+200,app=app,actions=[],
+                    ready={'process':{'pid':101,'start_ticks':'1'}},cfg={'display':[1600,900]},
+                    binding={'qmp_socket':str(root/'modeled-qmp'),'pid':102,'vm_name':'MODELED owned guest'},
+                    target=lambda *args:{'value':native},q=QMP(socket.socketpair(),temporary=False))
+                robot=control.RobotPipeline.__new__(control.RobotPipeline)
+                robot.p=p;robot.cfg={'normalPolicyPin':{'MODELED':'source custody'},
+                    'normalPolicy':{'engineSHA256':{'scripts/run_omen_robot_guest.py':'a'*64}}}
+                robot.engine=root/'engine';robot.owned=owned;robot.threading=threading
+                robot.actions={};robot.files={};robot.controls={};robot.reports=[]
+                robot.clock={'MODELED':'clock'};robot.identity={'source_commit':'b'*40,
+                    'run_id':'1','attempt':'1','operation_nonce':'c'*32}
+                robot.session={'MODELED':'session'};robot.birth={'pid':101,'start':1}
+                robot.sender=root/'modeled-sender.py';robot.sender_sha='d'*64;robot.observer_sha='e'*64
+                def capture(prefix,window=None):
+                    self.assertFalse(p.q.f.closed,'observation owns a live temporary socket')
+                    image=root/(prefix+'.png');image.write_bytes(b'MODELED guest screenshot')
+                    robot.retain(prefix+'-png',image,'screenshot')
+                    return {'ref':prefix+'-png','capture_ref':prefix+'-capture','capture_id':prefix}
+                robot.capture=capture
+                robot.destination_admission=lambda app:robot.put('modeled-destination',{},'destination')
+                robot.after_state=lambda *args:{'MODELED':'actual guest transition'}
+                def bootstrap(context,*args):
+                    paths={key:context[key+'_path']for key in
+                           ('action_result','sender_stdout','sender_stderr','sender_lifecycle')}
+                    return ('from pathlib import Path\nimport json,time\npaths='+repr(paths)+'\n'+
+                        'for key in ("action_result","sender_stdout","sender_stderr"): Path(paths[key]).write_text("{}")\n'+
+                        'Path(paths["sender_lifecycle"]).write_text(json.dumps(dict(waited=True,numeric_exit=0,stdout_EOF=True,stderr_EOF=True,pipes_closed=True,original_gone=True,first_failure=None)))\n'+
+                        'marker=Path('+repr(str(root/'robot-1-observed.json'))+')\nend=time.monotonic()+10\n'+
+                        'while not marker.exists():\n assert time.monotonic()<end,"missing parent observation"\n time.sleep(.01)\n'+
+                        'reports=Path('+repr(str(root/'robot-1-reports'))+');reports.mkdir()\n'+
+                        '(reports/"result.json").write_text(json.dumps(dict(numeric_exit=0,tests_failed=0,tests_passed=1,actual_pointer_calls=1,reports=[])))\n')
+                try:
+                    with patch.object(control,'native_control_bound',return_value={'MODELED':'ancestry'}),\
+                         patch.object(control,'fixed_robot_bootstrap',side_effect=bootstrap),\
+                         patch.object(control,'connect_owned',side_effect=lambda *args:socket.socketpair()),\
+                         patch.object(control,'QMP',QMP):
+                        if leak:
+                            with self.assertRaisesRegex(RuntimeError,'real Robot suite or child closure failed'):
+                                robot.click(p,'chooser-open','Choose Image',['push button'],None)
+                        else:
+                            result=robot.click(p,'chooser-open','Choose Image',['push button'],None)
+                            self.assertEqual(result['action'],'chooser-open')
+                            self.assertEqual(list(robot.actions),['chooser-open'])
+                    record=json.loads((root/'robot-1-robot-native.json').read_bytes())
+                    actual=record['native']
+                    self.assertTrue(record['originalRobotThreadClosed'])
+                    self.assertEqual(actual['numericExit'],0)
+                    self.assertTrue(actual['reaped']and actual['stdoutEOF']and actual['stderrEOF'])
+                    self.assertTrue(actual['childSetRestored'])
+                    self.assertEqual(actual['fd']['restored'],not leak)
+                    self.assertEqual(actual['lifecycleClosed'],not leak)
+                    self.assertEqual([e['kind']for e in actual['errors']],
+                                     ['owned_fd_set_not_restored']if leak else [])
+                finally:
+                    p.q.close()
+                    for fd in leaked:os.close(fd)
+            self.assertEqual(set(os.listdir('/proc/self/fd')),before)
+
     def test_native_builder_readiness_precedes_first_chooser_target(self):
         """Observed checking-to-ready layout transition; guest facts modeled."""
         import connection_control as control

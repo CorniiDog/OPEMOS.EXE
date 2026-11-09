@@ -1006,6 +1006,10 @@ class RobotPipeline:
                 'action_id':context['action_id'],'runtime_instance_id':p.binding['vm_name'],
                 'frame_sha256':self.files[after['ref']]['sha256'],'window_id':native['window_id'],
                 'observer_source_sha256':self.observer_sha}
+            # The child can exit as soon as its observed result is published.
+            # Restore the parent's temporary QMP FD first so the original
+            # owned-child FD check sees its unchanged baseline.
+            p.q.close()
             # The observed result is published complete; Robot never sees a
             # partially written JSON file or an overwritten previous result.
             temp=p.root/(prefix+'-observed.partial');save(temp,result)
@@ -1015,6 +1019,7 @@ class RobotPipeline:
             need(numeric==0,'atomic create-only independent observed result')
         except BaseException as error:first=error;raise
         finally:
+            if not p.q.f.closed:p.q.close()
             thread.join(max(0,min(110,p.end-time.monotonic())))
             if first is not None:outcome['parentFIRST']={'type':type(first).__name__,'reason':str(first)}
             outcome['originalRobotThreadClosed']=not thread.is_alive()
