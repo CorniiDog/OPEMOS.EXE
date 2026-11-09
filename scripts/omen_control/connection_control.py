@@ -890,7 +890,7 @@ class RobotPipeline:
             labels=p.cfg['labels'];ok=False
             if name=='chooser-open':ok=len(dialogs)==1
             elif name=='chooser-confirm-exact-input':
-                ok=not dialogs and any(Path(p.cfg['input_path']).name in n for n in names)
+                ok=not dialogs and p.cfg['input_path'] in names
             elif name=='Build':
                 ok=any(n in names for n in ('Opening build progress…','Build progress is open in a separate window.',
                     'Preparing builder','Starting builder','Normalizing compressed image','Build Progress is open'))
@@ -1137,14 +1137,22 @@ class Pipeline:
              'bounded QMP text key')
         need(set(modifiers)<={'ctrl','shift'},'only declared location/text modifiers')
         process(self.binding)
+        # QMP accepting a raw make/break pair does not mean the guest has
+        # consumed it. Let QEMU hold and release one chord before the next;
+        # this also avoids leaving a modifier down on a transport exception.
+        hold_ms=100;delivery_seconds=hold_ms/1000+.025
+        need(self.end-time.monotonic()>delivery_seconds,'original keyboard deadline before chord')
+        self.q.s.settimeout(min(10,self.end-time.monotonic()))
         record={'kind':'keyboard','qcode':qcode,'modifiers':list(modifiers),'actualQMPInput':[]}
         self.actions.append(record)
-        def send(code,down):
-            bounded_input(self.q,{'events':[{'type':'key','data':{'down':down,
-                'key':{'type':'qcode','data':code}}}]},record['actualQMPInput'],self.end)
-        for code in modifiers:send(code,True)
-        for down in(True,False):send(qcode,down)
-        for code in reversed(modifiers):send(code,False)
+        event={'command':'send-key','request':{'keys':[{'type':'qcode','data':code}
+            for code in (*modifiers,qcode)],'hold-time':hold_ms},'response':None}
+        record['actualQMPInput'].append(event)
+        event['response']=self.q.call(event['command'],event['request'])
+        remaining=self.end-time.monotonic()
+        need(remaining>0,'original keyboard deadline after chord')
+        time.sleep(min(delivery_seconds,remaining))
+        need(time.monotonic()<self.end,'original keyboard deadline after release interval')
 
     def text(self,value):
         need(type(value)is str and 0<len(value)<=512 and re.fullmatch('[A-Za-z0-9 /_.-]+',value),

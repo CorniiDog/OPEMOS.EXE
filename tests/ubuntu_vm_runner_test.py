@@ -46,6 +46,47 @@ def fixture_reap_receipt(child, row):
 
 
 class RunnerTest(unittest.TestCase):
+    def test_virtual_usb_keyboard_chords_release_before_next_and_keep_original_deadline(self):
+        """Production text sender; QMP/guest timing modeled, not a GUI pass."""
+        spec=importlib.util.spec_from_file_location('normal_timed_keyboard',
+            Path(__file__).resolve().parents[1]/'scripts/omen_control/connection_control.py')
+        sender=importlib.util.module_from_spec(spec);spec.loader.exec_module(sender)
+        clock=[0.0];release=[0.0];calls=[];timeouts=[]
+        def call(command,args):
+            self.assertEqual(command,'send-key')
+            self.assertGreaterEqual(clock[0],release[0])
+            self.assertEqual(args['hold-time'],100)
+            release[0]=clock[0]+args['hold-time']/1000
+            calls.append(args['keys'])
+            return {}
+        pipeline=object.__new__(sender.Pipeline)
+        pipeline.binding={};pipeline.end=30;pipeline.actions=[]
+        pipeline.q=SimpleNamespace(call=call,s=SimpleNamespace(settimeout=timeouts.append))
+        def sleep(seconds):clock[0]+=seconds
+        value='/media/opemosgui/STEAMOS_RAW/STEAMOS/steamdeck-repair-latest.img'
+        with patch.object(sender,'process'),patch.object(sender.time,'monotonic',side_effect=lambda:clock[0]),\
+             patch.object(sender.time,'sleep',side_effect=sleep):
+            pipeline.text(value)
+            self.assertEqual(calls[0],[{'type':'qcode','data':'ctrl'},{'type':'qcode','data':'a'}])
+            typed=''
+            for keys in calls[1:]:
+                codes=[key['data']for key in keys];shift=codes[:-1]==['shift'];code=codes[-1]
+                typed+=('_'if shift and code=='minus'else {'slash':'/','minus':'-','dot':'.','spc':' '}.get(
+                    code,code.upper()if shift else code))
+            self.assertEqual(typed,value)
+            self.assertEqual(pipeline.end,30)
+            self.assertTrue(all(row['actualQMPInput'][0]['response']=={}for row in pipeline.actions))
+            self.assertTrue(all(0<timeout<=10 for timeout in timeouts))
+            # An expired/insufficient interval cannot send the next chord.
+            count=len(calls);pipeline.end=clock[0]+.1
+            with self.assertRaisesRegex(RuntimeError,'deadline before chord'):pipeline.key('a')
+            self.assertEqual(len(calls),count)
+            # A delayed reply consumes the same deadline, never resets it.
+            pipeline.end=clock[0]+1
+            def late(command,args):clock[0]+=2;return {}
+            pipeline.q.call=late
+            with self.assertRaisesRegex(RuntimeError,'deadline after chord'):pipeline.key('a')
+
     def test_virtual_usb_robot_owned_sender_retains_actual_child_raw_and_nonzero(self):
         import hashlib
         spec=importlib.util.spec_from_file_location('actual_normal_ci10_sender',
@@ -114,6 +155,14 @@ class RunnerTest(unittest.TestCase):
                 bridge.after_state('chooser-confirm-exact-input',{})
         current['value']['windows']=[]
         current['value']['namesByWindow'][0]['names']=['exact-input.img']
+        with patch.object(sender.time,'monotonic',side_effect=[0,26]):
+            with self.assertRaisesRegex(RuntimeError,'action-specific native transition absent'):
+                bridge.after_state('chooser-confirm-exact-input',{})
+        current['value']['namesByWindow'][0]['names']=['/wrong/exact-input.img']
+        with patch.object(sender.time,'monotonic',side_effect=[0,26]):
+            with self.assertRaisesRegex(RuntimeError,'action-specific native transition absent'):
+                bridge.after_state('chooser-confirm-exact-input',{})
+        current['value']['namesByWindow'][0]['names']=['/readonly/exact-input.img']
         self.assertIs(bridge.after_state('chooser-confirm-exact-input',{}),current)
 
     def test_virtual_usb_candidate_medium_preserves_actual_package_companion_and_refuses_escape(self):
