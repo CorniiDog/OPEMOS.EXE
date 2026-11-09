@@ -249,23 +249,22 @@ class RunnerTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'deadline before actual pointer'):
                 operation.click('Build','Build NVIDIA Image')
             self.assertEqual(events,[])
-            # Same source send seam also bounds each modifier/key event. A
-            # late successful ctrl-down ACK must not issue a following key or
-            # key-up, and the actual attempted/ACK evidence remains available.
+            # A timed chord schedules its own release. A late successful ACK
+            # must fail the original deadline and retain the attempted chord.
             operation.end=1
-            with patch.object(control.time,'monotonic',side_effect=[0,2]):
-                with self.assertRaisesRegex(RuntimeError,'deadline after QMP event'):
+            with patch.object(control.time,'monotonic',side_effect=[0,0,2]):
+                with self.assertRaisesRegex(RuntimeError,'deadline after chord'):
                     operation.key('a',('ctrl',))
             self.assertEqual(len(events),1)
             self.assertEqual(operation.actions[-1]['kind'],'keyboard')
             self.assertEqual(len(operation.actions[-1]['actualQMPInput']),1)
             self.assertEqual(operation.actions[-1]['actualQMPInput'][0]['response'],{})
-            events.clear()
+            events.clear();action_count=len(operation.actions)
             with patch.object(control.time,'monotonic',return_value=2):
-                with self.assertRaisesRegex(RuntimeError,'deadline before QMP event'):
+                with self.assertRaisesRegex(RuntimeError,'deadline before chord'):
                     operation.key('a',('ctrl',))
             self.assertEqual(events,[])
-            self.assertEqual(operation.actions[-1]['actualQMPInput'],[])
+            self.assertEqual(len(operation.actions),action_count)
 
     def test_virtual_usb_readback_matches_guest_observed_image_without_second_host_copy(self):
         import copy,hashlib,stat
