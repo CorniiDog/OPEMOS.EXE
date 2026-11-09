@@ -71,9 +71,16 @@ def installed_normal_installer(p):
         path=Path(pin['path'])
     raw,identity=pin_source(path,p['normalInstallerSHA256'],0)
     if pin is not None:
-        need(identity==pin['identity']and len(raw)==pin['bytes']and
-             identity['st_gid']==0 and stat.S_IMODE(identity['st_mode'])==0o444 and
-             identity['st_nlink']==1,'actual immutable installer source full9/bytes')
+        fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+        need(type(identity)is list and len(identity)==len(fields)and
+             all(type(v)is int for v in identity)and
+             type(pin['identity'])is dict and set(pin['identity'])==set(fields)and
+             all(type(v)is int for v in pin['identity'].values()),
+             'actual immutable installer source identity shape')
+        named=dict(zip(fields,identity))
+        need(named==pin['identity']and len(raw)==pin['bytes']and
+             named['st_gid']==0 and stat.S_IMODE(named['st_mode'])==0o444 and
+             named['st_nlink']==1,'actual immutable installer source full9/bytes')
     return raw,identity,path
 
 

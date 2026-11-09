@@ -6773,14 +6773,36 @@ class FiniteConnectionEpochTests(unittest.TestCase):
             # as accepted. The real reader, compile and materializer run.
             body=b'def targets():return {}\ndef full(path):raise AssertionError("no targets")\n'
             path.write_bytes(body);path.chmod(0o444)
-            pin=dict(path=str(path),bytes=len(body),sha256=normal.sha(body),identity=normal.full9(path.stat()))
+            fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+            pin=dict(path=str(path),bytes=len(body),sha256=normal.sha(body),identity={k:getattr(path.stat(),k)for k in fields})
             now=int(time.time());nonce='e'*32
             policy=dict(currentReleaseTx='d'*32,normalInstallerSHA256=pin['sha256'],normalInstallerSourcePin=pin,
                 mainCommit='a'*40,queueSourceSHA256='b'*64,queueLoggerSHA256='c'*64,
                 controlBrokerSHA256=normal.sha(b'control'),jobStartedSHA256=normal.sha(b'hook'),
                 expiresUnix=now+3600,renewalAuthorizedUntilUnix=now+7*86400)
             raw,identity,actual_path=normal.installed_normal_installer(policy)
-            self.assertEqual((raw,identity,actual_path),(body,pin['identity'],path))
+            self.assertEqual((raw,identity,actual_path),(body,normal.full9(path.stat()),path))
+            self.assertIs(type(identity),list) # Existing held/local_sources ABI remains unchanged.
+            recovery=self.load('runner21_recovery')
+            source_keys=('queueLoggerSHA256','jobStartedSHA256','jobGuardSHA256','runnerManifestSHA256',
+                'controlBrokerSHA256','priorControlBrokerSHA256','privatePeerSHA256','normalProbeSHA256',
+                'normalCycleSHA256','controllerProbeSHA256','controllerCycleSHA256','sshConfigSHA256',
+                'coordinationSourceSHA256','normalQueueEntrySHA256','heartbeatProducerSHA256',
+                'currentReleaseLeaseSHA256','heavySHA256','normalTemplateSHA256','recoverySourceSHA256')
+            full_policy={k:'a'*64 for k in source_keys}
+            full_policy.update(kind='ROOT_RUNNER21_AUTO_RECOVERY_V1',enabled=True,sourceAccepted=True,
+                runtimeAuthorized=True,repository='CorniiDog/OPEMOS.EXE',runnerId=21,
+                mainCommit=recovery.REVIEWED_MAIN,queueSourceSHA256=recovery.REVIEWED_QUEUE,
+                currentReleaseTx=policy['currentReleaseTx'],scope=recovery.SOURCE_SCOPE,
+                normalInstallerSourcePin=copy.deepcopy(pin),normalInstallerSHA256=pin['sha256'],
+                notBeforeUnix=now-1,expiresUnix=now+3600,renewalAuthorizedUntilUnix=now+7*86400,
+                maxTotalCycles=64,maxCycles=32,renewLeadSeconds=recovery.RENEW_LEAD_SECONDS,maxBackoffSeconds=900)
+            self.assertEqual(recovery.validate_policy(full_policy,now),full_policy)
+            bad_shape=copy.deepcopy(full_policy);bad_shape['normalInstallerSourcePin']['identity']=identity
+            with self.assertRaisesRegex(RuntimeError,'Root immutable actual installer source pin'):
+                recovery.validate_policy(bad_shape,now)
+            with self.assertRaisesRegex(RuntimeError,'installer source identity shape'):
+                normal.installed_normal_installer(bad_shape)
             template=dict(kind='ROOT_REVIEWED_ROBOT_CONTROL_MATERIALIZATION_V1',mainCommit=policy['mainCommit'],
                 runnerId=21,queueSourceSHA256=policy['queueSourceSHA256'],queueLoggerSHA256=policy['queueLoggerSHA256'],
                 sources={'control.py':{'hex':b'control'.hex(),'sha256':policy['controlBrokerSHA256']},
@@ -6805,7 +6827,7 @@ class FiniteConnectionEpochTests(unittest.TestCase):
                     normal.installed_normal_installer(bad)
                 if path.is_symlink():path.unlink();path.write_bytes(body);path.chmod(0o444)
                 if fault=='owner':os.chown(path,0,0)
-                pin['identity']=normal.full9(path.stat());policy['normalInstallerSourcePin']=copy.deepcopy(pin)
+                pin['identity']={k:getattr(path.stat(),k)for k in fields};policy['normalInstallerSourcePin']=copy.deepcopy(pin)
         finally:shutil.rmtree(source_root)
 
 
