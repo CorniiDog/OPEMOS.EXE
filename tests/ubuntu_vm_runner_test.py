@@ -1064,6 +1064,87 @@ class RunnerTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 runner.launch_command(link)
 
+    def test_virtual_usb_chooser_waits_for_consumed_native_prefix_before_next_key_and_pointer(self):
+        spec=importlib.util.spec_from_file_location('native_chooser_sender',
+            Path(__file__).resolve().parents[1]/'scripts/omen_control/connection_control.py')
+        sender=importlib.util.module_from_spec(spec);spec.loader.exec_module(sender)
+        clock=[0.];events=[];committed=[0];queries={}
+        p=object.__new__(sender.Pipeline);p.cfg={'input_path':'/ab'};p.end=30;p.app={'pid':731,'window_id':481}
+        dialog={'window_id':482,'pid':731,'dialog_type':True,'transient_for':481}
+        p.windows=lambda:[dialog]
+        def key(code,modifiers=()):
+            if code not in('l','a')or not modifiers:
+                self.assertEqual(committed[0],len([e for e in events if e[0]=='character']))
+                events.append(('character',code))
+            clock[0]+=.125
+        p.key=key
+        def click(action,*args,**kwargs):
+            if action=='chooser-confirm-exact-input':self.assertEqual(committed[0],3)
+            events.append(('pointer',action))
+        p.click=click
+        def request(kind,**args):
+            self.assertEqual(kind,'CHOOSER_LOCATION');n=args['prefix_length'];queries[n]=queries.get(n,0)+1
+            # QMP already ACKed; native GTK consumes this character later.
+            if queries[n]>1:committed[0]=n
+            return {'value':dict(available=True,readOnlyObservation=True,pid=731,window_id=482,
+                requestedPrefixCharacters=n,committedCharacters=committed[0],
+                declaredPrefixMatched=committed[0]>=n,exactDeclaredInput=committed[0]==3)}
+        p.request=request
+        with patch.object(sender.time,'monotonic',side_effect=lambda:clock[0]),patch.object(sender.time,'sleep',side_effect=lambda seconds:clock.__setitem__(0,clock[0]+seconds)):
+            p.choose('chooser-open','Choose','/ab','Open')
+        self.assertEqual([e[1]for e in events if e[0]=='pointer'],['chooser-open','chooser-confirm-exact-input'])
+        self.assertEqual(queries,{1:2,2:2,3:2});self.assertEqual(p.end,30)
+        # A late/wrong native value cannot obtain a pointer confirmation or a
+        # fresh deadline, despite every preceding keyboard ACK succeeding.
+        p.end=clock[0]+.05;p.request=lambda *a,**k:{'value':{'available':False}}
+        with patch.object(sender.time,'monotonic',side_effect=lambda:clock[0]),patch.object(sender.time,'sleep',side_effect=lambda seconds:clock.__setitem__(0,clock[0]+seconds)):
+            with self.assertRaisesRegex(RuntimeError,'native chooser text not consumed'):
+                p.chooser_location(dialog,1)
+        self.assertEqual([e[1]for e in events if e[0]=='pointer'].count('chooser-confirm-exact-input'),1)
+
+    def test_virtual_usb_native_chooser_compares_only_declared_nonsecret_focused_location(self):
+        spec=importlib.util.spec_from_file_location('native_chooser_observer',
+            Path(__file__).resolve().parents[1]/'scripts/omen_control/observer_guest.py')
+        observer=importlib.util.module_from_spec(spec);spec.loader.exec_module(observer)
+        states={k:k for k in('visible','showing','focused','editable','defunct','screen')}
+        declared='/media/source/image.img';reads=[]
+        class Node:
+            def __init__(self,children=()):
+                self.children=list(children);self.pid=731;self.role='entry';self.value=declared
+                self.flags={'visible','showing','focused','editable'};self.caret=len(declared);self.selection=None
+            def get_process_id(self):return self.pid
+            def get_role_name(self):return self.role
+            def get_child_count(self):return len(self.children)
+            def get_child_at_index(self,i):return self.children[i]
+            def get_state_set(self):return SimpleNamespace(contains=lambda flag:flag in self.flags)
+            def get_component_iface(self):return SimpleNamespace(get_extents=lambda _:SimpleNamespace(x=10,y=10,width=200,height=30))
+            def get_text_iface(self):reads.append('read');return self
+            def get_character_count(self):return len(self.value)
+            def get_text(self,start,end):return self.value[start:end]
+            def get_caret_offset(self):return self.caret
+            def get_n_selections(self):return int(self.selection is not None)
+            def get_selection(self,_):return SimpleNamespace(start_offset=self.selection[0],end_offset=self.selection[1])
+            def set_text_contents(self,*a):raise AssertionError('read-only observer must not edit text')
+        entry=Node();app=Node([entry]);app.role='application';app.flags=set();desktop=Node([app])
+        window=dict(dialog_type=True,pid=731,window_id=482,rect=[0,0,400,300])
+        actual=observer.observed_chooser_location(desktop,window,declared,len(declared),states)
+        self.assertTrue(actual['exactDeclaredInput']);self.assertEqual(actual['committedCharacters'],len(declared))
+        self.assertNotIn(declared,str(actual));self.assertTrue(actual['readOnlyObservation'])
+        entry.selection=(6,len(declared));entry.caret=len(declared)
+        actual=observer.observed_chooser_location(desktop,window,declared,7,states)
+        self.assertEqual(actual['committedCharacters'],6) # autocomplete is not typed consumption
+        entry.value='/other/image.img';entry.caret=len(entry.value);entry.selection=None
+        self.assertFalse(observer.observed_chooser_location(desktop,window,declared,len(declared),states)['declaredPrefixMatched'])
+        for fault in('password','foreign','hidden','unfocused'):
+            entry.role='entry';entry.pid=731;entry.flags={'visible','showing','focused','editable'};reads.clear()
+            if fault=='password':entry.role='password text'
+            elif fault=='foreign':entry.pid=732
+            elif fault=='hidden':entry.flags.remove('showing')
+            else:entry.flags.remove('focused')
+            self.assertFalse(observer.observed_chooser_location(desktop,window,declared,1,states)['available'])
+            self.assertEqual(reads,[])
+
+
 
 if __name__ == '__main__':
     unittest.main()
