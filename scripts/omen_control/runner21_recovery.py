@@ -995,11 +995,37 @@ def before_transport_frontier_failure(policy,old):
         return {'kind':'AUTHENTICATED_INITIAL_READONLY_FRONTIER_REFUSAL_V1',
             'stderrPath':str(path),'stderrSHA256':sha(raw),'frames':frames,
             'controllerCycleSHA256':sha(cycle),'controllerProbeSHA256':sha(probe),
-            'normalProbeSHA256':sha(normal),'observed':observed,'transportStarted':False}
+            'normalProbeSHA256':sha(normal),'observed':observed,'effectBearingTransportStarted':False}
     except (OSError,ValueError,KeyError,TypeError,StopIteration,RuntimeError,SyntaxError):return None
 
 
-def reconcile_failed_live_renewal(policy,state,probe,now,probe_sha):
+def original_native_outcome(state,ref):
+    """Optional immutable original state proof for a legacy overwritten FIRST.
+
+    The normal timer used to overwrite native FIRST with a later probe error.
+    A held Root original snapshot may establish that earlier native field;
+    every other state/intent/native field must match. Keep BOTH originals.
+    No caller flag or editable current exception can manufacture closure.
+    """
+    if ref is None:return state['lastOutcome']
+    try:
+        path=Path(ref['path']);fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+        identity=lambda:{k:getattr(path.lstat(),k)for k in fields}
+        need(path.is_absolute()and '..'not in path.parts and path.resolve()==path,'exact original native state path')
+        need(identity()==ref['identity'],'original native state full9 before read')
+        raw=held(path,65536,0,0o400)
+        need(len(raw)==ref['bytes']and sha(raw)==ref['sha256']and identity()==ref['identity'],'original native state hash/full9/EOF')
+        prior=validate_state(strict(raw))
+        need({k:v for k,v in prior.items()if k!='lastOutcome'}=={k:v for k,v in state.items()if k!='lastOutcome'},'same original native state epoch/counters/nonce')
+        old=prior['lastOutcome'];current=state['lastOutcome']
+        need(type(old)is dict and type(current)is dict and old.get('first')is None and
+             {k:v for k,v in old.items()if k not in('first','firstType')}==
+             {k:v for k,v in current.items()if k not in('first','firstType')},'only legacy later probe FIRST overlay; native fields unchanged')
+        return old
+    except (OSError,ValueError,KeyError,TypeError,RuntimeError):return None
+
+
+def reconcile_failed_live_renewal(policy,state,probe,now,probe_sha,native_outcome_ref=None):
     """Release only a terminated renewal intent whose original owner is live.
 
     Authenticate the retained initial read-only failure before any transport,
@@ -1008,7 +1034,8 @@ def reconcile_failed_live_renewal(policy,state,probe,now,probe_sha):
     Keep the original failed/unknown outcome; this is not a retry of its nonce,
     a readiness publication, or a mutation of queue/source/lease/process state.
     """
-    old=state.get('lastOutcome');nonce=state.get('inflight');c=probe['control']
+    current_outcome=state.get('lastOutcome');old=original_native_outcome(state,native_outcome_ref)
+    nonce=state.get('inflight');c=probe['control']
     if not(nonce is not None and type(old)is dict and old.get('nonce')==nonce and
            old.get('action')=='GRACEFUL_RENEW'and old.get('reaped')is True and
            'first'in old and old['first']is None and type(old.get('numeric'))is int and
@@ -1032,6 +1059,7 @@ def reconcile_failed_live_renewal(policy,state,probe,now,probe_sha):
     before=strict(canonical(state));record={'kind':'ROOT_FAILED_LIVE_RENEWAL_INTENT_DISPOSITION_V1',
         'atUnix':now,'before':before,'probeSHA256':probe_sha,
         'originalJobId':c['jobId'],'beforeTransportEvidence':before_transport,
+        'originalNativeOutcomeSource':native_outcome_ref,
         'queueMutation':False,'sourceMutation':False,
         'heartbeatPublished':False,'vmAdmission':False,
         'historicalOutcome':'ORIGINAL_FAILED_OR_UNKNOWN_PRESERVED'}
@@ -1041,7 +1069,7 @@ def reconcile_failed_live_renewal(policy,state,probe,now,probe_sha):
     finally:os.close(fd)
     state['inflight']=None;state['failureCount']=0;state['nextAttemptUnix']=now+1
     state['lastOutcome']={'action':'GRACEFUL_RENEW','nonce':nonce,'jobId':c['jobId'],
-        'dispatcherNonce':old['dispatcherNonce'],'originalOutcome':old,
+        'dispatcherNonce':old['dispatcherNonce'],'originalOutcome':current_outcome,'originalNativeOutcomeSource':native_outcome_ref,
         'reconciledBy':'terminated renewal; same original authenticated live control; normal decision next tick',
         'disposition':str(path),'dispositionSHA256':sha(raw),'heartbeatPublished':False}
     write_state(state)
@@ -1446,8 +1474,8 @@ def main():
                                    type(secondary).__name__+':'+str(secondary)[:300])
             elif (state['lastOutcome'] or {}).get('action')!='REFRESH_HEARTBEAT':
                 failure=type(first).__name__+':'+str(first)[:512]
-                state['lastOutcome']['firstType']=type(first).__name__
-                state['lastOutcome']['first']=str(first)[:512]
+                state['lastOutcome']['lastProbeFailure']={'firstType':type(first).__name__,
+                    'first':str(first)[:512],'atUnix':now}
                 try:write_state(state)
                 except BaseException as secondary:
                     first.add_note('secondary ambiguous state custody: '+

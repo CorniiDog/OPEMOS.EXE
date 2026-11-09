@@ -5313,6 +5313,66 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
                 self.assertIsNone(r.reconcile_failed_live_renewal(policy,bad,v,now,'0'*64))
                 self.assertEqual(bad,unchanged,'refusal has no bookkeeping writes')
 
+    @unittest.skipUnless(os.geteuid()==0,'actual protected Root original native state custody')
+    def test_original_native_first_snapshot_survives_followup_probe_failure(self):
+        from unittest import mock
+        _,r=self.modules();policy,state,probe,_,_=self.pending(r)
+        state['lastOutcome'].update(action='GRACEFUL_RENEW',first=None,numeric=1,reaped=True,
+            stdoutSHA256=r.sha(b''),stderrSHA256='a'*64)
+        prior=copy.deepcopy(state);state['lastOutcome'].update(first='later full health probe refused',firstType='RuntimeError')
+        with tempfile.TemporaryDirectory()as tmp:
+            path=Path(tmp)/'original-state.json';raw=r.canonical(prior);path.write_bytes(raw);path.chmod(0o400)
+            fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+            ref={'path':str(path),'bytes':len(raw),'sha256':r.sha(raw),
+                 'identity':{k:getattr(path.stat(),k)for k in fields}}
+            self.assertEqual(r.original_native_outcome(state,ref),prior['lastOutcome'])
+            for fault in ('hash','nonce','counter','native','epoch'):
+                v=copy.deepcopy(state);pin=copy.deepcopy(ref)
+                if fault=='hash':pin['sha256']='0'*64
+                elif fault=='nonce':v['inflight']='f'*32
+                elif fault=='counter':v['totalCycles']+=1
+                elif fault=='native':v['lastOutcome']['reaped']=False
+                elif fault=='epoch':v['epochExpiresUnix']+=1
+                with self.subTest(fault=fault):self.assertIsNone(r.original_native_outcome(v,pin))
+            # Real normal reconciliation API consumes the immutable native
+            # snapshot while preserving the later probe FIRST on current state.
+            policy.update(controlBrokerSHA256='9'*64,controllerCycleSHA256='2'*64)
+            now=int(time.time());probe.update(runnerOnline=True,runnerBusy=False,actionsInProgress=0,
+                controlBrokerSHA256=policy['controlBrokerSHA256'],queueSourceSHA256=policy['queueSourceSHA256'])
+            probe['control'].update(jobId=prior['lastOutcome']['controlJobId'],state='running',
+                terminalLifecycle=None,reservationRetained=True,leaseExpiresUnix=now+1000,
+                **{k:True for k in('listenerAlive','controllerAlive','workerAlive','ownUnitBound')})
+            fixture=Path(__file__).parent/'fixtures';failure=(fixture/'runner21-initial-readonly-frontier-traceback.txt').read_bytes()
+            trace=Path(tmp)/('normal-cycle-'+state['inflight']+'.stderr');trace.write_bytes(failure);trace.chmod(0o600)
+            for value in (prior,state):value['lastOutcome'].update(dispatcherNonce='e'*32,
+                stderrSHA256=r.sha(failure),stderrCapture=str(trace))
+            raw=r.canonical(prior);path.write_bytes(raw);path.chmod(0o400)
+            ref.update(bytes=len(raw),sha256=r.sha(raw),identity={k:getattr(path.stat(),k)for k in fields})
+            sources={'controller_cycle.py':(SOURCE/'controller_cycle.py').read_bytes(),
+                     'controller_probe.py':(SOURCE/'controller_probe.py').read_bytes(),
+                     'normal_probe.py':(fixture/'runner21-normal-probe-before-frontier-retry.py.txt').read_bytes()}
+            overlay=copy.deepcopy(state);original=copy.deepcopy(overlay)
+            with mock.patch.object(r,'ROOT',Path(tmp)), \
+                 mock.patch.object(r,'load_code',side_effect=lambda path,digest:sources[path.name]), \
+                 mock.patch.object(r,'write_state')as saved:
+                result=r.reconcile_failed_live_renewal(policy,overlay,probe,now,'0'*64,ref)
+                self.assertEqual(result['decision'],'RECONCILED_FAILED_LIVE_RENEWAL_INTENT')
+                self.assertIsNone(overlay['inflight']);self.assertEqual(overlay['lastOutcome']['originalOutcome'],original['lastOutcome'])
+                self.assertEqual(overlay['lastOutcome']['originalNativeOutcomeSource'],ref);saved.assert_called_once()
+            # Exercise the actual timer entry and its real native recovery lock.
+            lock=Path(tmp)/'recovery.lock';lock.touch();lock.chmod(0o600)
+            p={'recoverySourceSHA256':r.sha(b'reviewed Root source')};before=copy.deepcopy(state)
+            failure=RuntimeError('new readonly health failure')
+            with mock.patch.object(r,'LOCK',lock),mock.patch.object(r.sys,'argv',['normal-timer']), \
+                 mock.patch.object(r,'check_root_directory'),mock.patch.object(r,'validate_policy',return_value=p), \
+                 mock.patch.object(r,'held',side_effect=lambda path,*args:r.canonical(p)if path==r.POLICY else b'reviewed Root source'), \
+                 mock.patch.object(r,'read_state',return_value=state),mock.patch.object(r,'run_cycle',side_effect=failure), \
+                 mock.patch.object(r,'write_state')as saved,mock.patch.object(r,'summon_resolver_once'):
+                with self.assertRaisesRegex(RuntimeError,'new readonly health failure'):r.main()
+            expected=copy.deepcopy(before['lastOutcome']);actual=state['lastOutcome']
+            added=actual.pop('lastProbeFailure');self.assertEqual(actual,expected)
+            self.assertEqual(added['first'],'new readonly health failure');saved.assert_called_once()
+
     def test_current_control_lineage_preserves_terminal_history(self):
         import importlib.util
         spec=importlib.util.spec_from_file_location('fixture_r1_history_probe',SOURCE/'normal_probe.py')
