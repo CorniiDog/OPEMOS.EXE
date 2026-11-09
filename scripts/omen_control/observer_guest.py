@@ -222,15 +222,25 @@ class X11:
         require(False,'native window hit depth bound')
 
 
-def accessible_descendants(root):
+def accessible_descendants(root,defunct_state):
     """Existing native accessibility observation, bounded; never invoke actions."""
     pending=[(root,0)];seen=0
     while pending:
         node,depth=pending.pop();seen+=1
         require(seen<=4096 and depth<=32,'native accessibility tree bound')
-        yield node
+        # Closed GTK/WebKit objects can remain in the native cache. Never
+        # expand or return an object the provider explicitly marks defunct.
+        if node.get_state_set().contains(defunct_state):continue
         children=node.get_child_count()
-        require(type(children)is int and 0<=children<=4096,'native child count')
+        if type(children)is not int or not 0<=children<=4096:
+            # The object may have been disposed during the read. A live or
+            # unclassified invalid count still refuses; retain its actual value.
+            if node.get_state_set().contains(defunct_state):continue
+            require(False,'native child count: '+repr(children)[:80]+
+                    '; depth='+str(depth)+'; visited='+str(seen))
+        if node.get_state_set().contains(defunct_state):continue
+        yield node
+        if node.get_state_set().contains(defunct_state):continue
         for index in range(children-1,-1,-1):
             child=node.get_child_at_index(index)
             if child is not None:pending.append((child,depth+1))
@@ -249,7 +259,7 @@ def observed_control(desktop,window,label,roles,states,screen,probe=False,hit_te
     for index in range(count):
         app=desktop.get_child_at_index(index)
         if app is None or app.get_process_id()!=window['pid']:continue
-        for node in accessible_descendants(app):
+        for node in accessible_descendants(app,states['defunct']):
             if node.get_name()!=label or node.get_role_name()not in roles:continue
             state=node.get_state_set()
             if not all(state.contains(states[k])for k in('enabled','sensitive','visible','showing')):
@@ -290,7 +300,7 @@ def observed_names(desktop,window,states,owner_check=None):
     for index in range(count):
         app=desktop.get_child_at_index(index)
         if app is None or app.get_process_id()!=window['pid']:continue
-        for node in accessible_descendants(app):
+        for node in accessible_descendants(app,states['defunct']):
             if node.get_role_name()in('password text','entry'):continue
             provider=node.get_process_id()
             if provider!=window['pid']:
@@ -329,7 +339,7 @@ def observed_chooser_location(desktop,window,declared,prefix_length,states,text_
     for index in range(count):
         app=desktop.get_child_at_index(index)
         if app is None or app.get_process_id()!=window['pid']:continue
-        for node in accessible_descendants(app):
+        for node in accessible_descendants(app,states['defunct']):
             if node.get_process_id()!=window['pid']or node.get_role_name()not in('entry','text'):continue
             state=node.get_state_set()
             if state.contains(states['defunct'])or not all(state.contains(states[k])for k in('visible','showing','focused','editable')):continue

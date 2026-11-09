@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 import tempfile
@@ -384,6 +385,42 @@ finally:
                 pipeline.q.call.assert_not_called()
             self.assertIn('Choose recovery image',
                 observer.observed_names(desktop, window, states, owner)['names'])
+            # A closed native chooser can remain under the same application's
+            # accessible root while its new build-progress window is observed.
+            gone = accessible(parent.pid, 'Closed chooser')
+            gone.get_state_set = lambda: types.SimpleNamespace(
+                contains=lambda key: key == 'defunct')
+            gone.get_child_count = mock.Mock(side_effect=AssertionError('expanded defunct chooser'))
+            disposing = {'defunct': False}
+            retiring = accessible(parent.pid, 'Disposed during native read')
+            retiring.get_state_set = lambda: types.SimpleNamespace(
+                contains=lambda key: disposing['defunct'] if key == 'defunct' else True)
+            def invalid_during_disposal():
+                disposing['defunct'] = True
+                return -1  # libatspi's error sentinel, not a successful empty tree.
+            retiring.get_child_count = invalid_during_disposal
+            app = accessible(parent.pid, '', [gone, retiring, node])
+            observed = observer.observed_names(desktop, window, states, owner)['names']
+            self.assertEqual(observed, ['Choose recovery image'])
+            gone.get_child_count.assert_not_called()
+            self.assertEqual(observer.observed_control(desktop, window, 'Choose recovery image',
+                ['push button'], states, [1600, 900], hit_test=lambda *_: [456],
+                owner_check=owner)['pid'], child)
+            late = accessible(parent.pid, 'Disposal after observation', [node])
+            late.get_child_at_index = mock.Mock(side_effect=AssertionError('expanded disposed parent'))
+            walk = observer.accessible_descendants(late, states['defunct'])
+            self.assertIs(next(walk), late)
+            late.get_state_set = gone.get_state_set
+            self.assertEqual(list(walk), [])
+            late.get_child_at_index.assert_not_called()
+            for invalid in (-1, 4097, None, True):
+                live = accessible(parent.pid, 'Unclassified invalid provider')
+                live.get_child_count = lambda value=invalid: value
+                app = accessible(parent.pid, '', [live, node])
+                with self.subTest(count=invalid), self.assertRaisesRegex(
+                        RuntimeError, 'native child count: '+re.escape(repr(invalid))):
+                    observer.observed_names(desktop, window, states, owner)
+            app = accessible(parent.pid, '', [gone, retiring, node])
             with self.assertRaisesRegex(RuntimeError, 'native target actual process owner'):
                 observer.observed_control(desktop, window, 'Choose recovery image',
                     ['push button'], states, [1600, 900])
