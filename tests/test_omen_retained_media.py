@@ -70,7 +70,7 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                 robot.sender=root/'modeled-sender.py';robot.sender_sha='d'*64;robot.observer_sha='e'*64
                 def capture(prefix,window=None):
                     self.assertFalse(p.q.f.closed,'observation owns a live temporary socket')
-                    image=root/(prefix+'.png');image.write_bytes(b'MODELED guest screenshot')
+                    image=root/(prefix+'.png');image.write_bytes(b'MODELED guest screenshot');image.chmod(0o600)
                     robot.retain(prefix+'-png',image,'screenshot')
                     return {'ref':prefix+'-png','capture_ref':prefix+'-capture','capture_id':prefix}
                 robot.capture=capture
@@ -79,7 +79,7 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                 def bootstrap(context,*args):
                     paths={key:context[key+'_path']for key in
                            ('action_result','sender_stdout','sender_stderr','sender_lifecycle')}
-                    return ('from pathlib import Path\nimport json,time\npaths='+repr(paths)+'\n'+
+                    return ('from pathlib import Path\nimport json,time,os\nos.umask(0o077)\npaths='+repr(paths)+'\n'+
                         'for key in ("action_result","sender_stdout","sender_stderr"): Path(paths[key]).write_text("{}")\n'+
                         'Path(paths["sender_lifecycle"]).write_text(json.dumps(dict(waited=True,numeric_exit=0,stdout_EOF=True,stderr_EOF=True,pipes_closed=True,original_gone=True,first_failure=None)))\n'+
                         'marker=Path('+repr(str(root/'robot-1-observed.json'))+')\nend=time.monotonic()+10\n'+
