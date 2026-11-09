@@ -190,6 +190,12 @@ def operation_policy(pin):
     return policy,dict(pin,bytes=len(raw),uid=0,identity={k:getattr(first,k)for k in FULL9})
 
 
+def operation_network(policy,purpose):
+    need(purpose in('source','artifact')and policy['network']in('none','user-nat'),
+         'reviewed network profile and normal operation purpose')
+    return 'none'if purpose=='source'else policy['network']
+
+
 def automatic_operation(pin, r, operation_root, normal_policy_pin=None):
     """Bind only typed run data in the installed, hash-pinned normal recipe.
 
@@ -261,7 +267,8 @@ def automatic_operation(pin, r, operation_root, normal_policy_pin=None):
         if tag in('$policy','$program','$program_pin','$engine','$engine_pin','$engine_sha','$runtime'):
             need(policy is not None,'Root selected current normal operation definition required')
             if tag=='$policy':
-                need(name in('pin','value','path','sha256'),'declared normal policy data')
+                need(name in('pin','value','path','sha256','network'),'declared normal policy data')
+                if name=='network':return operation_network(policy,r['kind'])
                 return policy_ref if name=='pin'else policy if name=='value'else policy_ref[name]
             if tag=='$runtime':
                 need(name in('id','root','result','operation','stage'),'declared current Ubuntu runtime role')
@@ -329,7 +336,13 @@ def automatic_operation(pin, r, operation_root, normal_policy_pin=None):
              document['name'].endswith('.json') and document['name'] not in pins,
              'unique JSON operand only; no generated executable')
         target = path(document['name'])
-        raw = (json.dumps(bind(document['value']),sort_keys=True,separators=(',',':'),allow_nan=False)+'\n').encode()
+        value=bind(document['value'])
+        if policy is not None and document['name']=='normal-job.json':
+            expected='ROOT_ADMITTED_UBUNTU_SOURCE_BUILD_V1'if r['kind']=='source'else'ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1'
+            need(type(value)is dict and value.get('kind')==expected and
+                 value.get('network')==operation_network(policy,r['kind']),
+                 'same Root-derived purpose/network before normal job creation')
+        raw = (json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False)+'\n').encode()
         total += len(raw);need(total <= 8*1048576, 'existing operation data bound')
         if r['action'] == 'prepare':
             fd = os.open(target,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)

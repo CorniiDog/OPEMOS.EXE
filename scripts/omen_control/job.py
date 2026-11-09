@@ -441,6 +441,7 @@ def authenticated_config(config):
          and type(C['cores'])is int and 0<C['cores']<=policy['maxCPU']<=10
          and type(C['memoryBytes'])is int and 0<C['memoryBytes']<=policy['maxMemoryBytes']<=34359738368,
          'current normal operation identity/deadline/resource bounds')
+    operation_network(C)
     if source_build(C):
         d=C['source_input']['descriptor']
         need(policy.get('sourceBuildEnabled')is True and d['kind']=='UBUNTU_SOURCE_INPUT_ARTIFACT_V1' and

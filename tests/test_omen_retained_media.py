@@ -1184,6 +1184,132 @@ class UbuntuCandidateDiscLayout(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, 'reviewed normal network profile'):
                     args(wrong)
 
+    def test_network_policy_reaches_real_planner_materializer_entry_and_argv(self):
+        """Real Root pins and UID1000 consumers; broker/VM execution is not modeled as passed."""
+        import run_approved as approved
+        trusted = Path('/var/lib/opemos-robot-control-r1/releases')
+        created = []
+        for path in (trusted.parent, trusted):
+            if not path.exists():
+                path.mkdir(mode=0o755); path.chmod(0o755); created.append(path)
+        try:
+            for mode in ('none', 'user-nat'):
+                with self.subTest(mode=mode), tempfile.TemporaryDirectory(dir='/var/lib') as temp:
+                    root = Path(temp); root.chmod(0o711)
+                    operations = root / 'operations'; operations.mkdir(); operations.chmod(0o700)
+                    os.chown(operations, 1000, 1000)
+                    release = trusted / os.urandom(16).hex(); release.mkdir(); release.chmod(0o755)
+                    def root_file(path, raw):
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        for ancestor in path.parents:
+                            if ancestor == release: break
+                            if release in ancestor.parents: ancestor.chmod(0o755)
+                        path.write_bytes(raw); path.chmod(0o444)
+                        return {'path': str(path), 'sha256': hashlib.sha256(raw).hexdigest()}
+                    try:
+                        programs = {name: (SOURCE / name).read_bytes() for name in approved.PROGRAMS}
+                        engine = {name: (SOURCE.parents[1] / name).read_bytes() for name in approved.ENGINE}
+                        for name, raw in programs.items(): root_file(release / 'proof-sources' / name, raw)
+                        for name, raw in engine.items(): root_file(release / 'engine' / name, raw)
+                        root_file(release / 'planner.py', (SOURCE / 'planner.py').read_bytes())
+                        originals = {name: {'sha256': 'd' * 64} for name in
+                                     ('base', 'code', 'vars_template', 'image_carrier')}
+                        operands = dict(originals, loginPin={'fixture': True}, ext4_dev=operations.stat().st_dev,
+                                        retained_union_bytes=0, original_source={'fixture': True})
+                        policy = dict(kind='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1',
+                            sourceAccepted=True, runtimeAuthorized=True, sourceBuildEnabled=True,
+                            sourceCommit='a' * 40, network=mode, swapBytes=0,
+                            maxVMBytes=59971770624, maxCPU=10, maxMemoryBytes=34359738368,
+                            wholeSeconds=120, operationRoot=str(operations), operationOperands=operands,
+                            originalSHA256={name: item['sha256'] for name, item in originals.items()},
+                            programSHA256={name: hashlib.sha256(raw).hexdigest() for name, raw in programs.items()},
+                            engineSHA256={name: hashlib.sha256(raw).hexdigest() for name, raw in engine.items()})
+                        policy_pin = root_file(release / 'fixed-policy.json', json.dumps(policy).encode())
+                        body = r'''
+import copy,hashlib,importlib.util,json,os,sys,time
+from pathlib import Path
+def load(name,path):
+ spec=importlib.util.spec_from_file_location(name,path);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);return m
+release,operations=map(Path,sys.argv[1:3]);policy_pin=json.loads(sys.argv[3])
+planner=load('actual_network_planner',release/'planner.py')
+approved=load('actual_network_materializer',release/'proof-sources/run_approved.py')
+policy,_=planner.operation_policy(policy_pin)
+assert os.getresuid()==(1000,1000,1000)
+archive=operations/'opaque-input';archive.write_bytes(b'opaque DATA, never extracted or executed');archive.chmod(0o400)
+archive_ref={'path':str(archive),'bytes':archive.stat().st_size,'sha256':hashlib.sha256(archive.read_bytes()).hexdigest()}
+def request(purpose):
+ r=dict(version=1,action='prepare',kind=purpose,repository='CorniiDog/OPEMOS.EXE',source_commit='a'*40,
+  run_id='12',attempt='2',nonce=os.urandom(16).hex(),consumer_started_epoch=int(time.time()))
+ d=dict(repository=r['repository'],source_commit='b'*40,artifact_id='21',platform='ubuntu',
+  artifact_archive_sha256=archive_ref['sha256'],package_name='package.AppImage',executable_name='native',
+  package_sha256='e'*64,executable_sha256='f'*64,executable_bytes=8)
+ if purpose=='source':
+  d.update(kind='UBUNTU_SOURCE_INPUT_ARTIFACT_V1',producer_run_id='12',producer_attempt='2',input={'compiled_or_packaged':False})
+  r.update(subject={'platform':'ubuntu'},source_input={'descriptor':d,'archive':archive_ref})
+ else:r.update(subject={'platform':'ubuntu','artifact_id':'21'},candidate={'descriptor':d,'archive':archive_ref})
+ return r
+def recipe(r,network=None,wrong_kind=False):
+ source=r['kind']=='source';kind=approved.SOURCE_KIND if source else 'ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1'
+ cfg=dict(kind=('wrong-purpose'if wrong_kind else kind),nonce={'$run':'nonce'},source_commit={'$run':'source_commit'},
+  normalPolicyPin={'$policy':'pin'},normalPolicy={'$policy':'value'},programRoot={'$path':'programs'},
+  network={'$policy':'network'}if network is None else network,whole_seconds=120,cores=1,
+  memoryBytes=25769803776,guest_memory_bytes=21474836480,maxVMBytes=59971770624,swapBytes=0,
+  observer_iso={'nonce':r['nonce'],'source_commit':'b'*40})
+ for name in policy['operationOperands']:cfg[name]={'$operand':name}
+ if source:cfg['source_input']={'descriptor':{'$source_input':'*'},'archive':{'$archive':'*'}}
+ else:
+  cfg['candidate']={'descriptor':{'$candidate':'*'},'archive':{'$archive':'*'}}
+  cfg['guest_operation']=dict(nonce=r['nonce'],source_commit='b'*40,package_sha256='e'*64,
+   native_executable_sha256='f'*64,native_executable_bytes=8,usb_serial='opemos-'+r['nonce'],
+   input_carrier_serial=r['nonce'][:20],display=[1920,1080])
+ response=dict(config={'$document':'normal-job.json'},operand={},plan={},staging_path='unused fixture data')
+ if source:response.update(expected_source_input={'$source_input':'*'},operation_scope='NORMAL_UBUNTU_SOURCE_BUILD_ONLY')
+ else:response.update(expected={'$candidate':'*'},robot_job={},executable_entry='',additional_operations=[],executable_transaction_path='')
+ value=dict(schema=1,documents=[dict(name='normal-job.json',value=cfg)],prepare=response,collect={})
+ p=operations/('recipe-'+r['nonce']+'.json');p.write_text(json.dumps(value));p.chmod(0o400)
+ return dict(path=str(p),sha256=hashlib.sha256(p.read_bytes()).hexdigest())
+for purpose in('artifact','source'):
+ r=request(purpose);planned=planner.automatic_operation(recipe(r),r,operations,policy_pin)
+ cfg,actual_policy,programs,pins,engine,operation=approved.definition(planned['config'])
+ expected='none'if purpose=='source'else policy['network'];assert cfg['network']==expected
+ # Only preparation/mount/VM execution is omitted. The real planner JSON,
+ # Root definition reader, exact program authentication and job entry run.
+ program_root=operation/'programs';program_root.mkdir();program_root.chmod(0o700)
+ for name,raw in programs.items():
+  p=program_root/name;p.write_bytes(raw);p.chmod(0o500)
+ config=program_root/'operation.json';config.write_text(json.dumps(cfg));config.chmod(0o400)
+ job=load('actual_network_job',program_root/'job.py');actual=job.authenticated_config(config)
+ argv=job.qemu_arguments(actual,'code','vars','cow','carrier','observer')
+ assert argv[argv.index('-nic')+1]==('none'if expected=='none'else'user,model=virtio-net-pci,ipv6=off')
+ wrong=copy.deepcopy(cfg);wrong['network']='user-nat'if expected=='none'else'none'
+ config.chmod(0o600);config.write_text(json.dumps(wrong));config.chmod(0o400)
+ try:job.authenticated_config(config)
+ except RuntimeError as e:assert str(e)=='same kind-specific Root network profile'
+ else:raise AssertionError('entry accepted wrong purpose/policy network')
+ for bad_mode,wrong_kind in [('user,hostfwd=tcp::2222-:22',False),(None,True)]:
+  bad=request(purpose)
+  try:planner.automatic_operation(recipe(bad,network=bad_mode,wrong_kind=wrong_kind),bad,operations,policy_pin)
+  except ValueError as e:assert str(e)=='same Root-derived purpose/network before normal job creation'
+  else:raise AssertionError('planner accepted unknown options or wrong purpose')
+ if purpose=='artifact'and policy['network']=='user-nat':
+  bad=request(purpose)
+  try:planner.automatic_operation(recipe(bad,network='none'),bad,operations,policy_pin)
+  except ValueError as e:assert str(e)=='same Root-derived purpose/network before normal job creation'
+  else:raise AssertionError('planner accepted stale none recipe under acquisition policy')
+print(json.dumps(dict(realUID1000=True,rootMode=policy['network'],plannerMaterializerEntryArgv=True,VMOrAcquisitionAccepted=False)))
+'''
+                        result = subprocess.run([sys.executable, '-I', '-B', '-', str(release),
+                            str(operations), json.dumps(policy_pin)], input=body, text=True,
+                            user=1000, group=1000, extra_groups=[], capture_output=True, timeout=30)
+                        self.assertEqual(result.returncode, 0, result.stderr + '\n' + result.stdout)
+                        self.assertTrue(json.loads(result.stdout)['plannerMaterializerEntryArgv'])
+                    finally:
+                        shutil.rmtree(release)
+        finally:
+            for path in reversed(created):
+                try: path.rmdir()
+                except OSError: pass  # Preserve another fixture's existing files.
+
     def test_bootstrap_refusal_keeps_invalid_event_without_accepting_its_binding(self):
         import socket
         import connection_control as control
@@ -1781,7 +1907,7 @@ descriptor={'kind':'UBUNTU_SOURCE_INPUT_ARTIFACT_V1','repository':'CorniiDog/OPE
 login=work/'login';approved.create(login,b'{"fixtureOnly":true}',0o600);_,login_pin=approved.read(login,4096,1000)
 programs={n:(modules/n).read_bytes()for n in('job.py','prepare_observer_iso.py','ubuntu_guest_build.py','owned_command.py')}
 pins={n:approved.read(modules/n,1048576,0)[1]for n in programs}
-policy={'fixedStorageBytes':33554432,'sourceBuildEnabled':True,'sourceBuildInputBytes':1048576,'network':'none',
+policy={'fixedStorageBytes':33554432,'sourceBuildEnabled':True,'sourceBuildInputBytes':1048576,'network':'user-nat',
  'programSHA256':{n:hashlib.sha256(raw).hexdigest()for n,raw in programs.items()},
  'engineSHA256':{n:hashlib.sha256((modules/n).read_bytes()).hexdigest()for n in approved.ENGINE},
  'operationOperands':{k:{}for k in('base','code','vars_template','image_carrier','original_source','queue_entry')}}
