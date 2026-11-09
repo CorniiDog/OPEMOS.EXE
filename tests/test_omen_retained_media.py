@@ -227,6 +227,38 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                 robot.capture('still-blank',window)
             self.assertEqual(frames.call_count,1)
 
+    def test_current_operation_display_contains_observed_native_chooser(self):
+        """Actual chooser geometry from run 42519213984/4, modeled PNG only.
+
+        The old 900px framebuffer must still refuse this client; the recipe
+        must fit it without changing the native-frame or pointer guards.
+        """
+        import struct
+        import zlib
+        import connection_control as control
+        operation = json.loads((SOURCE / 'ubuntu-operation.json').read_text())
+        geometry = next(item['value']['guest_operation']['display'] for item in operation['documents']
+                        if 'guest_operation' in item['value'])
+        self.assertEqual(geometry, [1920, 1080])
+        window = {'rect': [205, 9, 1255, 920]}
+        with self.assertRaisesRegex(RuntimeError, 'native client inside actual frame'):
+            control.painted_client({'width': 1600, 'height': 900}, window)
+        width, height = geometry
+        def chunk(kind, data):
+            return (struct.pack('>I', len(data)) + kind + data +
+                    struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff))
+        rows = b''.join(b'\0' + bytes((y % 256, 31, 47, 255)) * width for y in range(height))
+        raw = (b'\x89PNG\r\n\x1a\n' +
+               chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, 0)) +
+               chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / 'same-frame.png'; image.write_bytes(raw); image.chmod(0o600)
+            value = dict(path=str(image), bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest(),
+                         width=width, height=height)
+            self.assertTrue(control.painted_client(value, window))
+            with self.assertRaisesRegex(RuntimeError, 'native client inside actual frame'):
+                control.painted_client(value, {'rect': [205, 9, 1255, height]})
+
     def test_native_child_control_requires_actual_original_app_ancestry(self):
         """Real process family and nonce checks; the accessible tree is modeled.
 
