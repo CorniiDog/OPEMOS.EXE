@@ -21,6 +21,15 @@
   Build/write/readback attempt. Neither source checks nor runner liveness is a
   successful image, USB or SteamOS result. The same84ca Listener/lease remained
   online across the failed job and two subsequent natural heartbeat advances.
+- Core's connected review found that an outer uplink would also expose the
+  nested appliances' previously unrestricted NAT. Both Rust launch paths and
+  both existing macOS shell launch paths now default to `restrict=on`, retaining
+  only their existing loopback SSH forwarding. No implicit exact-build egress
+  authorization is added. The packaged app changes, so a new actual native
+  package is required before testing the enabled outer acquisition profile;
+  the old9a4 package remains historical evidence. Existing Rust/default-network
+  and Root policy/UID1000 producer/entry/argv regressions cover these joins;
+  their actual source CI and guest execution remain required.
 
 ## PR211 `130d57de` Core F1-R2 follow-up — 2026-10-27
 

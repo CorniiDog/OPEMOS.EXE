@@ -1,6 +1,17 @@
 use super::*;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 
+// The app host acquires authenticated inputs. Default builder/install sessions
+// have only their existing loopback SSH control channel, not external egress.
+pub(crate) fn configure_offline_appliance_network(command: &mut Command, ssh_port: u16) {
+    command
+        .args(["-device", "virtio-net-pci,netdev=net0"])
+        .arg("-netdev")
+        .arg(format!(
+            "user,id=net0,restrict=on,hostfwd=tcp:127.0.0.1:{ssh_port}-:22"
+        ));
+}
+
 // The bundled template can be read-only (notably after Windows ISO transfer).
 // Only the session-owned pflash copy is writable; never alter the template.
 pub(crate) fn copy_writable_uefi_vars(template: &Path, destination: &Path) -> Result<(), String> {
@@ -2188,14 +2199,9 @@ pub(crate) fn prepare_session_with_output(
             "-device",
             "virtio-blk-pci,drive=user-working,serial=steamos-user-working",
         ])
-        .args([
-            "-device",
-            "virtio-rng-pci",
-            "-device",
-            "virtio-net-pci,netdev=net0",
-        ])
-        .arg("-netdev")
-        .arg(format!("user,id=net0,hostfwd=tcp:127.0.0.1:{ssh_port}-:22"))
+        .args(["-device", "virtio-rng-pci"]);
+    configure_offline_appliance_network(&mut command, ssh_port);
+    command
         .args(["-display", "none", "-monitor", "none", "-serial", "stdio"])
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
@@ -2431,17 +2437,14 @@ pub(crate) fn prepare_nvidia_build_session(
         FEDORA_TCG_DEVICE_TIMEOUT_SECS,
     )?);
     isolate_process_group(&mut qemu_command);
+    qemu_command.args([
+        "-device",
+        "pcie-root-port,id=steamos-target-port,chassis=10,slot=10",
+        "-device",
+        "virtio-rng-pci",
+    ]);
+    configure_offline_appliance_network(&mut qemu_command, ssh_port);
     let mut child = qemu_command
-        .args([
-            "-device",
-            "pcie-root-port,id=steamos-target-port,chassis=10,slot=10",
-            "-device",
-            "virtio-rng-pci",
-            "-device",
-            "virtio-net-pci,netdev=net0",
-        ])
-        .arg("-netdev")
-        .arg(format!("user,id=net0,hostfwd=tcp:127.0.0.1:{ssh_port}-:22"))
         .arg("-qmp")
         .arg(format!("tcp:127.0.0.1:{qmp_port},server=on,wait=off"))
         .args(["-display", "none", "-monitor", "none", "-serial", "stdio"])

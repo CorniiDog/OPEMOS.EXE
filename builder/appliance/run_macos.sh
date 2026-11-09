@@ -283,7 +283,7 @@ if [[ "$GUEST_ARCH" == "aarch64" ]]; then
         -drive "file=${SEED_IMAGE},if=virtio,format=raw,readonly=on" \
         -device virtio-rng-pci \
         -device virtio-net-pci,netdev=net0 \
-        -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" \
+        -netdev "user,id=net0,restrict=on,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" \
         -display none \
         -monitor none \
         -serial mon:stdio
@@ -300,7 +300,7 @@ else
         -drive "file=${SEED_IMAGE},if=virtio,format=raw,readonly=on" \
         -device virtio-rng-pci \
         -device virtio-net-pci,netdev=net0 \
-        -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" \
+        -netdev "user,id=net0,restrict=on,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" \
         -display none \
         -monitor none \
         -serial mon:stdio

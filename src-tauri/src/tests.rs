@@ -3859,6 +3859,57 @@ esac
     }
 
     #[test]
+    fn default_appliance_network_is_isolated_with_only_loopback_ssh_forwarding() {
+        for port in [22, 2222, u16::MAX] {
+            let mut command = Command::new("qemu-system-x86_64");
+            command.args(["-name", "existing session", "-display", "none"]);
+            configure_offline_appliance_network(&mut command, port);
+            let args: Vec<_> = command
+                .get_args()
+                .map(|arg| arg.to_str().unwrap())
+                .collect();
+            assert_eq!(
+                &args[..4],
+                ["-name", "existing session", "-display", "none"]
+            );
+            assert_eq!(
+                &args[4..7],
+                ["-device", "virtio-net-pci,netdev=net0", "-netdev"]
+            );
+            let network = args[7];
+            let fields: Vec<_> = network.split(',').collect();
+            assert_eq!(
+                fields.len(),
+                4,
+                "no additional forwarding or network options"
+            );
+            assert_eq!(fields[0], "user");
+            assert!(fields.contains(&"id=net0"));
+            assert!(fields.contains(&"restrict=on"));
+            let forward = fields
+                .iter()
+                .find_map(|field| field.strip_prefix("hostfwd="))
+                .expect("existing app-to-appliance control channel");
+            assert_eq!(forward, format!("tcp:127.0.0.1:{port}-:22"));
+        }
+        let launcher = include_str!("../../builder/appliance/run_macos.sh");
+        let network_lines: Vec<_> = launcher
+            .lines()
+            .filter(|line| line.trim_start().starts_with("-netdev "))
+            .collect();
+        assert_eq!(
+            network_lines.len(),
+            2,
+            "both existing architecture launch paths"
+        );
+        for line in network_lines {
+            assert!(line.contains("restrict=on,"));
+            assert!(line.contains("hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22"));
+            assert!(!line.contains("guestfwd="));
+        }
+    }
+
+    #[test]
     fn native_appliance_uses_exact_tcg_device_credentials_only() {
         let runtime_disk = Path::new("/tmp/native appliance,root.qcow2");
         let kvm = native_appliance_qemu_arguments("kvm", runtime_disk)
