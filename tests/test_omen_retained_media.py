@@ -2150,6 +2150,98 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
         broken=copy.deepcopy(error.evidence);broken['firstFailure']['closeOutcomes'][0]['UNKNOWN']=True
         with self.assertRaises(ValueError):monitor(q.PoolAdmissionFailure('unknown close',broken))
 
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'actual Linux cgroup list lifecycle')
+    def test_actual_exit_between_cgroup_lists_is_failure_only_monitor(self):
+        """Real kernel list samples/child exit/FDs; manager and lease are modeled."""
+        import ast,time
+        from unittest.mock import patch
+        spec=importlib.util.spec_from_file_location('actual_cgroup_coverage_queue',SOURCE/'test_queue.py')
+        q=importlib.util.module_from_spec(spec);sys.modules[spec.name]=q;spec.loader.exec_module(q)
+        ns={};exec(compile(q.POOL_PROOF_SOURCE,'root_pool_proof_r1.py','exec'),ns)
+        tree=ast.parse(q.POOL_PROOF_SOURCE)
+        pool=next(n for n in tree.body if isinstance(n,ast.FunctionDef)and n.name=='readonly_pool')
+        names={'owned','read','ids','populated','process_thread_coverage'}
+        pieces=[ast.unparse(n)for n in pool.body if isinstance(n,ast.FunctionDef)and n.name in names]
+        self.assertEqual(len(pieces),len(names))
+        factory='def actual_probe(io,root,pool,units,reserved):\n    fd_states=[]\n    field_reads=0\n    def clock(): pass\n'
+        for piece in pieces:factory+='\n'+'\n'.join('    '+line for line in piece.splitlines())+'\n'
+        factory+='    return owned,read,ids,populated,process_thread_coverage,fd_states\n'
+        exec(compile(factory,'actual-production-cgroup-functions','exec'),ns)
+        unit='opemos-testq-0123456789ab-'+uuid.uuid4().hex+'.service';invocation=uuid.uuid4().hex
+        model_pool='/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice'
+        model_root='/sys/fs/cgroup'+model_pool;model_path=model_root+'/'+unit
+        units={unit:{'known':True,'properties':{'ControlGroup':model_pool+'/'+unit,'ActiveState':'active'}}}
+        reserved={unit:{'invocation':invocation}}
+        # Source identity and systemd facts remain modeled here. The underlying
+        # cgroup.procs, cgroup.threads and cgroup.events bytes come from the real
+        # test process's kernel cgroup, never a fabricated mismatch dictionary.
+        lines=Path('/proc/self/cgroup').read_text().splitlines()
+        unified=[line[3:]for line in lines if line.startswith('0::')]
+        self.assertEqual(len(unified),1)
+        actual=Path('/sys/fs/cgroup'+unified[0])
+        if not(actual/'cgroup.procs').exists():actual=Path('/sys/fs/cgroup')
+        io=ns['KernelIO']();owned,read,ids,populated,coverage,closes=ns['actual_probe'](io,model_root,model_pool,units,reserved)
+        before=set(os.listdir('/proc/self/fd'))
+        child=subprocess.Popen([sys.executable,'-I','-c','import time;time.sleep(30)'])
+        try:
+            with self.assertRaises(ns['OwnedFDProofFailure'])as caught:
+                with owned(io.open_dir(str(actual)),'actual-kernel-cgroup')as fd:
+                    pids=ids(read(fd,'cgroup.procs'));self.assertIn(child.pid,pids)
+                    child.terminate();child.wait(timeout=5)
+                    tids=ids(read(fd,'cgroup.threads'));self.assertNotIn(child.pid,tids)
+                    pop=populated(fd)
+                    coverage(pids,tids,model_path,pop)
+            lower=caught.exception.evidence;typed=lower['firstFailure']
+            self.assertEqual(typed['sampledPids'],pids);self.assertEqual(typed['sampledTids'],tids)
+            self.assertEqual(typed['sampledPopulated'],pop.decode())
+            self.assertEqual(typed['unit'],unit);self.assertEqual(typed['invocation'],invocation)
+            self.assertEqual(typed['type'],'TransientCgroupCoverageObservation')
+            self.assertTrue(lower['closeOutcomes'])
+            self.assertTrue(all(c['closed']and not c['UNKNOWN']for c in lower['closeOutcomes']))
+            self.assertIs(lower['operationOrReleaseAuthorized'],False)
+        finally:
+            if child.poll()is None:child.terminate()
+            child.wait(timeout=5)
+        self.assertEqual(set(os.listdir('/proc/self/fd')),before)
+        job={'memory':1024,'resources':['coverage-monitor'],'timeout_seconds':300}
+        row={'id':'actual-coverage-monitor','state':'running','unit':unit,'spec':q.canonical(job),
+             'cpus':'[0]','started':time.time(),'_poolBinding':{}}
+        bound={'version':1,'specSHA256':hashlib.sha256(q.canonical(job).encode()).hexdigest(),'cpus':[0],'memory':1024}
+        context=types.SimpleNamespace(unit=unit,invocation=invocation,bound=bound,ledger_current=lambda:None)
+        props={'LoadState':'loaded','InvocationID':invocation,'MainPID':str(os.getpid()),
+               'ActiveState':'active','SubState':'running','ControlGroup':model_pool+'/'+unit}
+        db=types.SimpleNamespace(execute=lambda _:types.SimpleNamespace(fetchall=lambda:[]))
+        error=q.PoolAdmissionFailure('actual coverage sample',{'admitted':False,'reservationRetained':True,
+            'operationOrReleaseAuthorized':False,'firstFailure':lower,
+            'recordedReservations':[{'unit':unit,'cpus':[0],'memory':1024,'resources':job['resources'],'invocation':invocation}]})
+        def monitor(e):
+            with patch.object(q,'pool_rows',return_value=[row]),patch.object(q,'ExpectedInvocation',return_value=context),\
+                 patch.object(q,'exact_unit_observation',return_value=props),\
+                 patch.object(q,'boundary_pool_epoch',side_effect=AssertionError('no admission or release proof from incomplete sample')):
+                return q.monitor_membership_race(db,object(),e)
+        result=monitor(error)
+        self.assertTrue(result['newAdmissionEffectsReleaseForbidden'])
+        self.assertTrue(result['originalServiceNotCancelled'])
+        self.assertEqual(result['originalReadonlyMonitor'][-1]['incompleteCgroupCoverageObservation'],typed)
+        for change in ({'invocation':uuid.uuid4().hex},{'group':'/foreign/'+unit},
+                       {'sampledPids':tids},{'sampledPopulated':'UNKNOWN'},
+                       {'unit':'foreign.service'}):
+            broken=copy.deepcopy(error.evidence);broken['firstFailure']['firstFailure'].update(change)
+            with self.subTest(change=change),self.assertRaises(ValueError):
+                monitor(q.PoolAdmissionFailure('unbound coverage',broken))
+        for change in ('UNKNOWN','operation','untyped'):
+            broken=copy.deepcopy(error.evidence)
+            if change=='UNKNOWN':broken['firstFailure']['closeOutcomes'][0]['UNKNOWN']=True
+            elif change=='operation':broken['operationOrReleaseAuthorized']=True
+            else:broken['firstFailure']['firstFailure']={'type':'ValueError','reason':'cgroup process/thread coverage'}
+            with self.subTest(change=change),self.assertRaises(ValueError):
+                monitor(q.PoolAdmissionFailure('unsafe coverage',broken))
+        # Unknown/unbound manager context never becomes a typed retry class.
+        other=copy.deepcopy(units);other[unit]['known']=False
+        _,_,_,_,denied,_=ns['actual_probe'](io,model_root,model_pool,other,reserved)
+        with self.assertRaises(ValueError)as caught:denied(pids,tids,model_path,pop)
+        self.assertFalse(hasattr(caught.exception,'evidence'))
+
     def test_installed_worker_retains_cascading_proc_exit_then_rechecks_readonly(self):
         """Real proc disappearance/FDs, physical code, worker/locks/log/SQL.
 

@@ -5366,3 +5366,17 @@ R121 publication: normal receive-pack returned server500 three times with ref ab
   Actual broker OOM and the 96,591,145-byte whole-history poll are retained in
   the authenticated shared handoff; no limit raise, deletion or restart is
   represented as the permanent repair.
+
+
+- [ ] 2026-11-09: retain genuine known-unit cgroup process/thread coverage samples
+  as a bounded read-only monitor refusal instead of exiting the dispatcher for
+  the demonstrated original55da FIRST. This does not grant admission, release,
+  restart, new deadlines, or unknown-unit adoption. The existing protected Root
+  regression now reads real kernel cgroup lists around a benign child exit and
+  checks FD closure and strict known invocation/negative cases; only manager and
+  reservation context are modeled. Controller AST/diff checks only; project tests
+  must run in hosted CI. Remote availability is necessary for that exact CI and
+  independent Core review; origin https://github.com/CorniiDog/OPEMOS.EXE.git,
+  branch work/exe-typed-cgroup-coverage-monitor-20261108, bounded e0 successor.
+  The approved e0 source adoption and current6c/f6 job remain separate and intact;
+  this follow-up is not a new prerequisite for either. No VM/GUI/USB/SteamOS pass.
