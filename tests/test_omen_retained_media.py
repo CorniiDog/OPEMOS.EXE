@@ -56,7 +56,8 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                     'rect':[100,100,140,40],'role':'push button','label':'Choose Image',
                     'point':{'x':170,'y':120}}
                 p=types.SimpleNamespace(root=root,end=time.monotonic()+200,app=app,actions=[],
-                    ready={'process':{'pid':101,'start_ticks':'1'}},cfg={'display':[1600,900]},
+                    ready={'process':{'pid':101,'start_ticks':'1','exe_sha256':'f'*64}},
+                    cfg={'display':[1600,900]},
                     binding={'qmp_socket':str(root/'modeled-qmp'),'pid':102,'vm_name':'MODELED owned guest'},
                     target=lambda *args:{'value':native},q=QMP(socket.socketpair(),temporary=False))
                 robot=control.RobotPipeline.__new__(control.RobotPipeline)
@@ -72,6 +73,7 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                     self.assertFalse(p.q.f.closed,'observation owns a live temporary socket')
                     image=root/(prefix+'.png');image.write_bytes(b'MODELED guest screenshot');image.chmod(0o600)
                     robot.retain(prefix+'-png',image,'screenshot')
+                    robot.put(prefix+'-capture',{'MODELED':'guest frame capture'},'frame-capture')
                     return {'ref':prefix+'-png','capture_ref':prefix+'-capture','capture_id':prefix}
                 robot.capture=capture
                 robot.destination_admission=lambda app:robot.put('modeled-destination',{},'destination')
