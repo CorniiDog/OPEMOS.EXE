@@ -310,6 +310,49 @@ def observed_names(desktop,window,states,owner_check=None):
     return {'names':names,'pid':window['pid'],'window_id':window['window_id'],'readOnlyObservation':True}
 
 
+def observed_chooser_location(desktop,window,declared,prefix_length,states):
+    """Read only the focused native chooser entry for the declared image.
+
+    Return comparisons and offsets, never arbitrary editable/password contents.
+    No accessibility mutation or activation is used.
+    """
+    require(window.get('dialog_type') is True and type(window.get('pid')) is int,
+            'actual native chooser dialog')
+    require(type(declared)is str and 0<len(declared)<=512 and
+            type(prefix_length)is int and 0<prefix_length<=len(declared),
+            'declared image prefix only')
+    count=desktop.get_child_count();require(type(count)is int and 0<=count<=4096,'bounded native desktop')
+    matches=[]
+    for index in range(count):
+        app=desktop.get_child_at_index(index)
+        if app is None or app.get_process_id()!=window['pid']:continue
+        for node in accessible_descendants(app):
+            if node.get_process_id()!=window['pid']or node.get_role_name()not in('entry','text'):continue
+            state=node.get_state_set()
+            if state.contains(states['defunct'])or not all(state.contains(states[k])for k in('visible','showing','focused','editable')):continue
+            component=node.get_component_iface()
+            if component is None:continue
+            box=component.get_extents(states['screen']);wx,wy,ww,wh=window['rect']
+            if not(0<box.width and 0<box.height and wx<=box.x and wy<=box.y and
+                   box.x+box.width<=wx+ww and box.y+box.height<=wy+wh):continue
+            text=node.get_text_iface();require(text is not None,'native chooser text interface')
+            length=text.get_character_count();require(type(length)is int and 0<=length<=512,'bounded chooser location')
+            value=text.get_text(0,length);caret=text.get_caret_offset();selections=text.get_n_selections()
+            require(type(value)is str and len(value)==length and type(caret)is int and
+                    0<=caret<=length and type(selections)is int and 0<=selections<=1,'native location offsets')
+            committed=caret
+            if selections:
+                selection=text.get_selection(0);start,end=selection.start_offset,selection.end_offset
+                require(type(start)is int and type(end)is int and 0<=start<=end<=length,'native location selection')
+                committed=min(caret,start)
+            matches.append(dict(available=True,window_id=window['window_id'],pid=window['pid'],
+                requestedPrefixCharacters=prefix_length,observedCharacters=length,committedCharacters=committed,
+                declaredPrefixMatched=value.startswith(declared[:prefix_length]),
+                exactDeclaredInput=value==declared,readOnlyObservation=True))
+    require(len(matches)<=1,'one focused same-dialog native location entry')
+    return matches[0]if matches else dict(available=False,readOnlyObservation=True)
+
+
 def mounted_input(cfg):
     """Resolve only the QEMU-labelled readonly carrier in this admitted guest."""
     import subprocess
@@ -386,7 +429,7 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
     expected={'bytes':cfg['native_executable_bytes'],'sha256':cfg['native_executable_sha256']}
     desktop=Atspi.get_desktop(0);deadline=time.monotonic()+cfg['whole_seconds'];sequence=0
     states={key:getattr(Atspi.StateType,name)for key,name in
-            [('enabled','ENABLED'),('sensitive','SENSITIVE'),('visible','VISIBLE'),('showing','SHOWING'),('defunct','DEFUNCT')]}
+            [('enabled','ENABLED'),('sensitive','SENSITIVE'),('visible','VISIBLE'),('showing','SHOWING'),('defunct','DEFUNCT'),('focused','FOCUSED'),('editable','EDITABLE')]}
     states['screen']=Atspi.CoordType.SCREEN
     def owner_check(pid,window_pid):
         # Keep the existing exact-PID rule for separately owned native chooser
@@ -430,7 +473,7 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
                     'whole guest image identity/hash epoch')
             return {'path':str(path),'bytes':size,'sha256':digest.hexdigest(),'identity':identity(before)}
         finally:os.close(fd)
-    while time.monotonic()<deadline and sequence<256:
+    while time.monotonic()<deadline and sequence<4096:
         line=bytearray()
         while not line.endswith(b'\n'):
             remaining=deadline-time.monotonic();require(remaining>0,'original observer deadline')
@@ -448,6 +491,11 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
             value=observed_control(desktop,window,request['label'],request['roles'],states,cfg['display'],
                 probe=request.get('probe')is True,hit_test=x.hit_window_chain,owner_check=owner_check)
         elif kind=='WINDOWS':value={'windows':owned}
+        elif kind=='CHOOSER_LOCATION':
+            window=next((w for w in owned if w['window_id']==request['window_id']),None)
+            require(window is not None and window['pid']==birth['pid'],'original app native chooser only')
+            role=request['role'];require(role in ('input_path','output_directory'),'declared image/output location only')
+            value=observed_chooser_location(desktop,window,cfg[role],request['prefix_length'],states)
         elif kind=='UI_STATE':
             # Read the actual mapped main/companion/chooser windows. No app
             # command, DOM mutation or accessibility activation is permitted.

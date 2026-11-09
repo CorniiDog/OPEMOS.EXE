@@ -1081,7 +1081,9 @@ class Pipeline:
 
     def request(self,kind,**operands):
         self.check()
-        remaining=self.end-time.monotonic();need(remaining>0 and self.sequence<256,'original GUI operation clock/request bound')
+        # Two declared paths may each contain512 characters; per-character
+        # native consumption proofs share the existing32MiB/whole-clock bound.
+        remaining=self.end-time.monotonic();need(remaining>0 and self.sequence<4096,'original GUI operation clock/request bound')
         process(self.binding);self.sequence+=1;self.observer.settimeout(remaining)
         request={'nonce':self.binding['nonce'],'sequence':self.sequence,'kind':kind,**operands}
         self.observer.sendall((json.dumps(request,separators=(',',':'))+'\n').encode())
@@ -1154,13 +1156,31 @@ class Pipeline:
         time.sleep(min(delivery_seconds,remaining))
         need(time.monotonic()<self.end,'original keyboard deadline after release interval')
 
-    def text(self,value):
+    def text(self,value,after_character=None):
         need(type(value)is str and 0<len(value)<=512 and re.fullmatch('[A-Za-z0-9 /_.-]+',value),
              'declared ASCII image/folder/confirmation only')
         self.key('a',('ctrl',))
-        for character in value:
+        for index,character in enumerate(value,1):
             code={' ':'spc','.':'dot','-':'minus','/':'slash','_':'minus'}.get(character,character.lower())
             self.key(code,('shift',)if character.isupper()or character=='_'else())
+            if after_character is not None:after_character(index)
+
+    def chooser_location(self,window,prefix_length,role='input_path'):
+        need(role in ('input_path','output_directory'),'declared native chooser role')
+        end=min(self.end,time.monotonic()+5)
+        while True:
+            raw=self.request('CHOOSER_LOCATION',window_id=window['window_id'],prefix_length=prefix_length,role=role)
+            value=raw['value']
+            if value.get('available') is True:
+                need(value.get('readOnlyObservation') is True and value['window_id']==window['window_id']and
+                     value['pid']==self.app['pid']and value['requestedPrefixCharacters']==prefix_length,
+                     'same native chooser location observation')
+                if value['declaredPrefixMatched']and value['committedCharacters']==prefix_length:
+                    if prefix_length==len(self.cfg[role]):
+                        need(value['exactDeclaredInput'],'complete declared chooser location before pointer')
+                    return raw
+            need(time.monotonic()<end,'actual native chooser text not consumed; QMP ACK is insufficient')
+            time.sleep(min(.1,end-time.monotonic()))
 
     def choose(self,action,button,path,confirm):
         self.click(action,button)
@@ -1170,7 +1190,9 @@ class Pipeline:
             if dialogs:break
             remaining=self.end-time.monotonic();need(remaining>0,'native chooser absent');time.sleep(min(.5,remaining))
         need(len(dialogs)==1,'one actual same-app native chooser')
-        self.key('l',('ctrl',));self.text(path)
+        role='input_path'if action=='chooser-open'else'output_directory'
+        need(path==self.cfg[role],'only declared image or owned output chooser')
+        self.key('l',('ctrl',));self.text(path,after_character=lambda count:self.chooser_location(dialogs[0],count,role))
         self.click('chooser-confirm-exact-input'if action=='chooser-open'else action+'-confirm',confirm,window=dialogs[0])
 
     def names(self):return [name for row in self.request('UI_STATE')['value']['namesByWindow']for name in row['names']]
