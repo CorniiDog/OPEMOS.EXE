@@ -310,7 +310,7 @@ def observed_names(desktop,window,states,owner_check=None):
     return {'names':names,'pid':window['pid'],'window_id':window['window_id'],'readOnlyObservation':True}
 
 
-def observed_chooser_location(desktop,window,declared,prefix_length,states):
+def observed_chooser_location(desktop,window,declared,prefix_length,states,text_api):
     """Read only the focused native chooser entry for the declared image.
 
     Return comparisons and offsets, never arbitrary editable/password contents.
@@ -336,13 +336,15 @@ def observed_chooser_location(desktop,window,declared,prefix_length,states):
             if not(0<box.width and 0<box.height and wx<=box.x and wy<=box.y and
                    box.x+box.width<=wx+ww and box.y+box.height<=wy+wh):continue
             text=node.get_text_iface();require(text is not None,'native chooser text interface')
-            length=text.get_character_count();require(type(length)is int and 0<=length<=512,'bounded chooser location')
-            value=text.get_text(0,length);caret=text.get_caret_offset();selections=text.get_n_selections()
+            # GI may return an Accessible implementing Text; its deprecated
+            # get_text/get_selection methods shadow the interface methods.
+            length=text_api.get_character_count(text);require(type(length)is int and 0<=length<=512,'bounded chooser location')
+            value=text_api.get_text(text,0,length);caret=text_api.get_caret_offset(text);selections=text_api.get_n_selections(text)
             require(type(value)is str and len(value)==length and type(caret)is int and
                     0<=caret<=length and type(selections)is int and 0<=selections<=1,'native location offsets')
             committed=caret
             if selections:
-                selection=text.get_selection(0);start,end=selection.start_offset,selection.end_offset
+                selection=text_api.get_selection(text,0);start,end=selection.start_offset,selection.end_offset
                 require(type(start)is int and type(end)is int and 0<=start<=end<=length,'native location selection')
                 committed=min(caret,start)
             matches.append(dict(available=True,window_id=window['window_id'],pid=window['pid'],
@@ -495,7 +497,7 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
             window=next((w for w in owned if w['window_id']==request['window_id']),None)
             require(window is not None and window['pid']==birth['pid'],'original app native chooser only')
             role=request['role'];require(role in ('input_path','output_directory'),'declared image/output location only')
-            value=observed_chooser_location(desktop,window,cfg[role],request['prefix_length'],states)
+            value=observed_chooser_location(desktop,window,cfg[role],request['prefix_length'],states,Atspi.Text)
         elif kind=='UI_STATE':
             # Read the actual mapped main/companion/chooser windows. No app
             # command, DOM mutation or accessibility activation is permitted.

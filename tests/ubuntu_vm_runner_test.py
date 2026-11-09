@@ -1119,29 +1119,46 @@ class RunnerTest(unittest.TestCase):
             def get_state_set(self):return SimpleNamespace(contains=lambda flag:flag in self.flags)
             def get_component_iface(self):return SimpleNamespace(get_extents=lambda _:SimpleNamespace(x=10,y=10,width=200,height=30))
             def get_text_iface(self):reads.append('read');return self
-            def get_character_count(self):return len(self.value)
-            def get_text(self,start,end):return self.value[start:end]
-            def get_caret_offset(self):return self.caret
-            def get_n_selections(self):return int(self.selection is not None)
-            def get_selection(self,_):return SimpleNamespace(start_offset=self.selection[0],end_offset=self.selection[1])
+            # Actual GI Accessible retains deprecated no-argument methods,
+            # even when get_text_iface() returns this same object.
+            def get_text(self):raise AssertionError('deprecated Accessible.get_text must not be called')
+            def get_selection(self):raise AssertionError('deprecated Accessible.get_selection must not be called')
             def set_text_contents(self,*a):raise AssertionError('read-only observer must not edit text')
+        calls=[]
+        class TextAPI:
+            @staticmethod
+            def get_character_count(obj):calls.append('count');return len(obj.value)
+            @staticmethod
+            def get_text(obj,start,end):calls.append('range');return obj.value[start:end]
+            @staticmethod
+            def get_caret_offset(obj):calls.append('caret');return obj.caret
+            @staticmethod
+            def get_n_selections(obj):calls.append('selections');return int(obj.selection is not None)
+            @staticmethod
+            def get_selection(obj,index):
+                self.assertEqual(index,0);calls.append('selection')
+                return SimpleNamespace(start_offset=obj.selection[0],end_offset=obj.selection[1])
         entry=Node();app=Node([entry]);app.role='application';app.flags=set();desktop=Node([app])
         window=dict(dialog_type=True,pid=731,window_id=482,rect=[0,0,400,300])
-        actual=observer.observed_chooser_location(desktop,window,declared,len(declared),states)
+        actual=observer.observed_chooser_location(desktop,window,declared,len(declared),states,TextAPI)
         self.assertTrue(actual['exactDeclaredInput']);self.assertEqual(actual['committedCharacters'],len(declared))
         self.assertNotIn(declared,str(actual));self.assertTrue(actual['readOnlyObservation'])
         entry.selection=(6,len(declared));entry.caret=len(declared)
-        actual=observer.observed_chooser_location(desktop,window,declared,7,states)
+        actual=observer.observed_chooser_location(desktop,window,declared,7,states,TextAPI)
         self.assertEqual(actual['committedCharacters'],6) # autocomplete is not typed consumption
+        self.assertEqual(set(calls),{'count','range','caret','selections','selection'})
+        # This fixture now reproduces the actual GUI8 method collision.
+        with self.assertRaises(TypeError):entry.get_text(0,len(declared))
+        with self.assertRaises(TypeError):entry.get_selection(0)
         entry.value='/other/image.img';entry.caret=len(entry.value);entry.selection=None
-        self.assertFalse(observer.observed_chooser_location(desktop,window,declared,len(declared),states)['declaredPrefixMatched'])
+        self.assertFalse(observer.observed_chooser_location(desktop,window,declared,len(declared),states,TextAPI)['declaredPrefixMatched'])
         for fault in('password','foreign','hidden','unfocused'):
             entry.role='entry';entry.pid=731;entry.flags={'visible','showing','focused','editable'};reads.clear()
             if fault=='password':entry.role='password text'
             elif fault=='foreign':entry.pid=732
             elif fault=='hidden':entry.flags.remove('showing')
             else:entry.flags.remove('focused')
-            self.assertFalse(observer.observed_chooser_location(desktop,window,declared,1,states)['available'])
+            self.assertFalse(observer.observed_chooser_location(desktop,window,declared,1,states,TextAPI)['available'])
             self.assertEqual(reads,[])
 
 
