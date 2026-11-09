@@ -42,6 +42,28 @@ def need(ok,why):
 
 def sig(s):return {k:getattr(s,k) for k in FULL9}
 
+def preboot_nbd_closure():
+    """Observe an unassociated NBD device; its idle RO bit may be 0 or 1."""
+    nbd=Path('/sys/block/nbd0')
+    ro=(nbd/'ro').read_text().strip() if nbd.is_dir() else None
+    # After a writable COW disconnect, the kernel can retain ro=0 even
+    # though no process, export, mount or descriptor remains. Attached
+    # read-only source admission is checked separately by the provisioner.
+    need(nbd.is_dir() and
+         (not (nbd/'pid').exists() or not (nbd/'pid').read_text().strip()) and
+         not list((nbd/'holders').iterdir()) and ro in ('0','1'),
+         'preboot NBD process/holder/idle-state closure missing')
+    for node in ('/dev/nbd0',*(str(p) for p in Path('/dev').glob('nbd0p*'))):
+        mounted=subprocess.run(['/usr/bin/findmnt','-rn','-S',node,'-o','TARGET'],
+                               capture_output=True,text=True,timeout=10)
+        need(mounted.returncode==1 and not mounted.stdout,
+             'preboot NBD or partition mount remains')
+    holder=subprocess.run(['/usr/bin/sudo','-n','/usr/bin/fuser','/dev/nbd0'],
+                          capture_output=True,text=True,timeout=10)
+    need(holder.returncode==1 and not holder.stdout,'preboot NBD process FD remains')
+    return {'pid_absent':True,'holders_empty':True,'mounts_empty':True,
+            'fuser_numeric':1,'sysfs_read_only_when_idle':ro}
+
 def input_file(pin,cap):
     path=Path(pin['path']);need(path.is_absolute() and path.resolve()==path,
                              'canonical absolute readonly source required')
@@ -833,23 +855,7 @@ def main():
                     while block:=stream.read(4*1024*1024):current_cow.update(block)
                 result['preboot_cow_after_failure']={'identity':sig(overlay.lstat()),
                                                      'sha256':current_cow.hexdigest()}
-                nbd=Path('/sys/block/nbd0')
-                need(nbd.is_dir() and
-                     (not (nbd/'pid').exists() or not (nbd/'pid').read_text().strip()) and
-                     not list((nbd/'holders').iterdir()) and
-                     (nbd/'ro').read_text().strip()=='1',
-                     'preboot NBD process/holder/read-only closure missing')
-                for node in ('/dev/nbd0',*(str(p) for p in Path('/dev').glob('nbd0p*'))):
-                    mounted=subprocess.run(['/usr/bin/findmnt','-rn','-S',node,'-o','TARGET'],
-                                           capture_output=True,text=True,timeout=10)
-                    need(mounted.returncode==1 and not mounted.stdout,
-                         'preboot NBD or partition mount remains')
-                holder=subprocess.run(['/usr/bin/sudo','-n','/usr/bin/fuser','/dev/nbd0'],
-                                      capture_output=True,text=True,timeout=10)
-                need(holder.returncode==1 and not holder.stdout,
-                     'preboot NBD process FD remains')
-                result['preboot_nbd_closed']={'pid_absent':True,'holders_empty':True,
-                                              'mounts_empty':True,'fuser_numeric':1}
+                result['preboot_nbd_closed']=preboot_nbd_closure()
                 result['private_storage_closure_verified']=True
                 result['closure']='PREBOOT_NO_QEMU_SOURCE_AND_NBD_CLOSED'
             except BaseException as error:

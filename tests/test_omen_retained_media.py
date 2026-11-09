@@ -2051,7 +2051,11 @@ print(json.dumps({'realUID1000':True,'sourceRecipeMaterialized':True,'actualRead
                 module.debugfs('mkdir '+directory,True)
                 module.debugfs('sif '+directory+' mode 040755',True)
             source=root/'notifier.desktop'
-            old=b'[Desktop Entry]\nType=Application\nExec=update-notifier\nX-GNOME-Autostart-Delay=60\n'
+            old=(b'[Desktop Entry]\nType=Application\nExec=update-notifier\nX-GNOME-Autostart-Delay=60\n'+
+                 b''.join(b'Comment[x-test'+str(n).encode()+b']=Translated update notification.\n'
+                          for n in range(256)))
+            self.assertGreater(len(old),8192)
+            self.assertLess(len(old),65536)
             source.write_bytes(old)
             target='/etc/xdg/autostart/update-notifier.desktop'
             module.debugfs('write '+str(source)+' '+target,True)
@@ -2071,7 +2075,7 @@ print(json.dumps({'realUID1000':True,'sourceRecipeMaterialized':True,'actualRead
             self.assertNotIn('Exec',parsed['Desktop Entry'])
             self.assertEqual(module.debugfs('cat '+neighbor)['stdout'].encode(),old)
             self.assertEqual(hashlib.sha256(original.read_bytes()).hexdigest(),original_sha)
-            for fault in('source-build','writable-parent','writable-file','wrong-uid','wrong-exec'):
+            for fault in('source-build','writable-parent','writable-file','wrong-uid','wrong-exec','oversized'):
                 shutil.copyfile(original,cow);work=root/fault;work.mkdir(mode=0o700)
                 bad=dict(config)
                 if fault=='source-build':bad['kind']='ROOT_ADMITTED_UBUNTU_SOURCE_BUILD_V1'
@@ -2079,13 +2083,51 @@ print(json.dumps({'realUID1000':True,'sourceRecipeMaterialized':True,'actualRead
                 elif fault=='writable-file':module.debugfs('sif '+target+' mode 0100666',True)
                 elif fault=='wrong-uid':module.debugfs('sif '+target+' uid 1000',True)
                 else:
-                    source.write_bytes(old.replace(b'Exec=update-notifier',b'Exec=unrelated-app'))
+                    source.write_bytes(old.replace(b'Exec=update-notifier',b'Exec=unrelated-app')
+                                       if fault=='wrong-exec'else old+b'#'+b'x'*65536)
                     module.debugfs('rm '+target,True)
                     module.debugfs('write '+str(source)+' '+target,True)
                     module.debugfs('sif '+target+' mode 0100644',True)
                 before=hashlib.sha256(cow.read_bytes()).hexdigest()
                 with self.assertRaises(RuntimeError):module.mask_guest_update_notifier(bad,work)
                 self.assertEqual(hashlib.sha256(cow.read_bytes()).hexdigest(),before)
+
+    def test_preboot_NBD_consumer_accepts_idle_RW_bit_but_refuses_live_exports(self):
+        """Real consumer, modeled kernfs/commands; not native NBD/VM acceptance."""
+        module=self.load('job')
+        for fault in('idle-ro0','idle-ro1','pid','holder','mount','fuser','bad-ro','missing'):
+            with self.subTest(fault=fault),tempfile.TemporaryDirectory()as temp:
+                root=Path(temp);sysfs=root/'sys';sysfs.mkdir();dev=root/'dev';dev.mkdir()
+                (sysfs/'holders').mkdir();(dev/'nbd0p1').touch()
+                ro='1'if fault=='idle-ro1'else '0'
+                (sysfs/'ro').write_text('invalid'if fault=='bad-ro'else ro)
+                if fault=='pid':(sysfs/'pid').write_text('123')
+                if fault=='holder':(sysfs/'holders'/'foreign').touch()
+                if fault=='missing':shutil.rmtree(sysfs)
+                calls=[]
+                def path(value):
+                    return sysfs if value=='/sys/block/nbd0'else dev if value=='/dev'else Path(value)
+                def command(argv,**kwargs):
+                    self.assertEqual(kwargs,dict(capture_output=True,text=True,timeout=10))
+                    calls.append(argv)
+                    if argv[0]=='/usr/bin/findmnt':
+                        self.assertEqual(argv[:3],['/usr/bin/findmnt','-rn','-S'])
+                        self.assertEqual(argv[-2:],['-o','TARGET'])
+                        blocked=fault=='mount'and argv[3].endswith('nbd0p1')
+                    else:
+                        self.assertEqual(argv,['/usr/bin/sudo','-n','/usr/bin/fuser','/dev/nbd0'])
+                        blocked=fault=='fuser'
+                    return subprocess.CompletedProcess(argv,0 if blocked else 1,
+                                                       'foreign'if blocked else '','')
+                with mock.patch.object(module,'Path',side_effect=path), \
+                     mock.patch.object(module.subprocess,'run',side_effect=command):
+                    if fault.startswith('idle-'):
+                        result=module.preboot_nbd_closure()
+                        self.assertEqual(result,dict(pid_absent=True,holders_empty=True,
+                            mounts_empty=True,fuser_numeric=1,sysfs_read_only_when_idle=ro))
+                        self.assertEqual(len(calls),3)
+                    else:
+                        with self.assertRaises(RuntimeError):module.preboot_nbd_closure()
 
     def test_workflow_grant_authenticates_body_and_input_programs(self):
         import base64

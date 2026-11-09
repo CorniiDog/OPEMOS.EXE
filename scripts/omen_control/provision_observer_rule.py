@@ -32,7 +32,9 @@ def need(ok,reason):
 def cmd(argv,cap=65536,timeout=40):
     p=subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
                      stderr=subprocess.PIPE,timeout=timeout)
-    need(len(p.stdout)<=cap and len(p.stderr)<=cap,'bounded offline helper output exceeded')
+    need(len(p.stdout)<=cap and len(p.stderr)<=cap,
+         'bounded offline helper output exceeded: stdout='+str(len(p.stdout))+
+         ' stderr='+str(len(p.stderr))+' cap='+str(cap))
     return {'argv':argv,'numeric':p.returncode,
             'stdout':p.stdout.decode('utf8','replace'),
             'stderr':p.stderr.decode('utf8','replace')}
@@ -323,7 +325,12 @@ def mask_guest_update_notifier(config,root):
     need(re.search(r'Type:\s*regular\s+Mode:\s*0?644\b',meta) and
          re.search(r'User:\s*0\s+Group:\s*0',meta) and
          re.search(r'Links:\s*1\b',meta),'original guest update notifier custody')
-    original=debugfs('cat '+target,cap=8192)['stdout']
+    size=re.search(r'(?m)^User:[^\n]*\bSize:\s*([0-9]+)\b',meta)
+    need(size and 0<int(size[1])<=65536,'bounded original guest update notifier size')
+    # Translated Ubuntu desktop entries can exceed 8 KiB. Use the existing
+    # offline-helper bound and retain the whole authenticated original.
+    original=debugfs('cat '+target)['stdout']
+    need(len(original.encode())==int(size[1]),'whole original guest update notifier size')
     import configparser
     desktop=configparser.ConfigParser(interpolation=None)
     desktop.read_string(original)
