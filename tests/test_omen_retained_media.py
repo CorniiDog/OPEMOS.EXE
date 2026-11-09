@@ -38,7 +38,8 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
         import connection_control as control
         import owned_command as owned
         from unittest.mock import patch
-        for leak in (False,True):
+        for mode in ('normal','leak','parent-first-close-failure'):
+            leak=mode=='leak';close_failure=mode=='parent-first-close-failure'
             before=set(os.listdir('/proc/self/fd'));leaked=[]
             class QMP:
                 def __init__(self,pair,temporary=True):
@@ -48,6 +49,7 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                     if self.f.closed:return
                     self.f.close();self.socket.close();self.peer.close()
                     if leak and self.temporary:leaked.append(os.open(os.devnull,os.O_RDONLY))
+                    if close_failure and self.temporary:raise RuntimeError('MODELED secondary QMP close failure')
             with tempfile.TemporaryDirectory()as temp:
                 root=Path(temp)
                 app={'pid':101,'window_id':17,'title':'MODELED app','rect':[10,10,760,800]}
@@ -77,14 +79,17 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                     return {'ref':prefix+'-png','capture_ref':prefix+'-capture','capture_id':prefix}
                 robot.capture=capture
                 robot.destination_admission=lambda app:robot.put('modeled-destination',{},'destination')
-                robot.after_state=lambda *args:{'MODELED':'actual guest transition'}
+                def after_state(*args):
+                    if close_failure:raise RuntimeError('MODELED original native transition FIRST')
+                    return {'MODELED':'actual guest transition'}
+                robot.after_state=after_state
                 def bootstrap(context,*args):
                     paths={key:context[key+'_path']for key in
                            ('action_result','sender_stdout','sender_stderr','sender_lifecycle')}
                     return ('from pathlib import Path\nimport json,time,os\nos.umask(0o077)\npaths='+repr(paths)+'\n'+
                         'for key in ("action_result","sender_stdout","sender_stderr"): Path(paths[key]).write_text("{}")\n'+
                         'Path(paths["sender_lifecycle"]).write_text(json.dumps(dict(waited=True,numeric_exit=0,stdout_EOF=True,stderr_EOF=True,pipes_closed=True,original_gone=True,first_failure=None)))\n'+
-                        'marker=Path('+repr(str(root/'robot-1-observed.json'))+')\nend=time.monotonic()+10\n'+
+                        'marker=Path('+repr(str(root/'robot-1-observed.json'))+')\nend=time.monotonic()+'+str(2 if close_failure else 10)+'\n'+
                         'while not marker.exists():\n assert time.monotonic()<end,"missing parent observation"\n time.sleep(.01)\n'+
                         'reports=Path('+repr(str(root/'robot-1-reports'))+');reports.mkdir()\n'+
                         '(reports/"result.json").write_text(json.dumps(dict(numeric_exit=0,tests_failed=0,tests_passed=1,actual_pointer_calls=1,reports=[])))\n')
@@ -93,7 +98,10 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                          patch.object(control,'fixed_robot_bootstrap',side_effect=bootstrap),\
                          patch.object(control,'connect_owned',side_effect=lambda *args:socket.socketpair()),\
                          patch.object(control,'QMP',QMP):
-                        if leak:
+                        if close_failure:
+                            with self.assertRaisesRegex(RuntimeError,'MODELED original native transition FIRST'):
+                                robot.click(p,'chooser-open','Choose Image',['push button'],None)
+                        elif leak:
                             with self.assertRaisesRegex(RuntimeError,'real Robot suite or child closure failed'):
                                 robot.click(p,'chooser-open','Choose Image',['push button'],None)
                         else:
@@ -103,13 +111,18 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                     record=json.loads((root/'robot-1-robot-native.json').read_bytes())
                     actual=record['native']
                     self.assertTrue(record['originalRobotThreadClosed'])
-                    self.assertEqual(actual['numericExit'],0)
+                    self.assertEqual(actual['numericExit'],1 if close_failure else 0)
                     self.assertTrue(actual['reaped']and actual['stdoutEOF']and actual['stderrEOF'])
                     self.assertTrue(actual['childSetRestored'])
                     self.assertEqual(actual['fd']['restored'],not leak)
                     self.assertEqual(actual['lifecycleClosed'],not leak)
                     self.assertEqual([e['kind']for e in actual['errors']],
                                      ['owned_fd_set_not_restored']if leak else [])
+                    if close_failure:
+                        self.assertEqual(record['parentFIRST']['reason'],'MODELED original native transition FIRST')
+                        self.assertEqual(record['parentQMPCloseFailure']['reason'],'MODELED secondary QMP close failure')
+                        self.assertFalse((root/'robot-1-observed.json').exists())
+                        self.assertEqual(robot.actions,{})
                 finally:
                     p.q.close()
                     for fd in leaked:os.close(fd)

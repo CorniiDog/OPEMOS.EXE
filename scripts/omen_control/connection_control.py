@@ -1019,13 +1019,21 @@ class RobotPipeline:
             need(numeric==0,'atomic create-only independent observed result')
         except BaseException as error:first=error;raise
         finally:
-            if not p.q.f.closed:p.q.close()
-            thread.join(max(0,min(110,p.end-time.monotonic())))
-            if first is not None:outcome['parentFIRST']={'type':type(first).__name__,'reason':str(first)}
-            outcome['originalRobotThreadClosed']=not thread.is_alive()
-            self.put(prefix+'-robot-native',outcome,'robot-child-lifecycle')
+            close_error=None
+            try:
+                if not p.q.f.closed:p.q.close()
+            except BaseException as error:
+                close_error=error
+                outcome['parentQMPCloseFailure']={'type':type(error).__name__,'reason':str(error)}
+            finally:
+                thread.join(max(0,min(110,p.end-time.monotonic())))
+                if first is not None:outcome['parentFIRST']={'type':type(first).__name__,'reason':str(first)}
+                outcome['originalRobotThreadClosed']=not thread.is_alive()
+                self.put(prefix+'-robot-native',outcome,'robot-child-lifecycle')
+            if close_error is not None and first is None:raise close_error
             if thread.is_alive() and first is None:raise RuntimeError('original Robot owned-child closure remains unknown')
-            if p.q.f.closed and not thread.is_alive():p.q=QMP(connect_owned(p.binding['qmp_socket'],p.binding['pid']))
+            if close_error is None and p.q.f.closed and not thread.is_alive():
+                p.q=QMP(connect_owned(p.binding['qmp_socket'],p.binding['pid']))
         need('error'not in outcome and outcome['native']['numericExit']==0
              and outcome['native']['lifecycleClosed']is True and not outcome['native']['errors'],
              'real Robot suite or child closure failed')
