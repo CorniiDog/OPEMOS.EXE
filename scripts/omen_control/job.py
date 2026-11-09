@@ -359,6 +359,21 @@ def receive_source_package(channel,config,result):
     result['guest_build']=proof
 
 
+def operation_network(C):
+    """Root selects GUI host networking; source compilation remains offline.
+
+    Do not accept QEMU options from operation data. User networking creates
+    neither a host forwarding port nor a bridge/tap interface. It permits
+    outbound traffic, not just HTTPS; HTTPS identities remain app contracts.
+    """
+    selected=C['normalPolicy']['network']
+    need(C['kind']in('ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1',SOURCE_KIND)and
+         selected in ('none','user-nat'),'reviewed normal network profile')
+    mode='none'if source_build(C)else selected
+    need(C['network']==mode,'same kind-specific Root network profile')
+    return 'none'if mode=='none'else'user,model=virtio-net-pci,ipv6=off'
+
+
 def qemu_arguments(C,code,vars_out,overlay,package,observer):
     """Common readonly carrier binding for actual source and GUI operations."""
     nonce=C['nonce']
@@ -395,7 +410,7 @@ def qemu_arguments(C,code,vars_out,overlay,package,observer):
           '-chardev','socket,path=observer.sock,server=on,wait=off,id=obs',
           '-device','virtio-serial-pci',
           '-device','virtserialport,chardev=obs,name=opemos.robot.observer',
-          '-nic','none','-display','none','-vnc','unix:vnc.sock',
+          '-nic',operation_network(C),'-display','none','-vnc','unix:vnc.sock',
           '-qmp','unix:qmp.sock,server=on,wait=off',
           '-monitor','none','-serial','none','-parallel','none',
           '-sandbox','on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny','-S']
@@ -415,7 +430,7 @@ def authenticated_config(config):
                               and not s.st_mode&0o022,'Root source ancestry')
     policy=json.loads(held_source(path,0,0o444,ref['sha256']))
     need(policy==C['normalPolicy']and policy['kind']=='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1'
-         and policy['network']=='none'and policy['swapBytes']==0
+         and policy['network']in('none','user-nat')and policy['swapBytes']==0
          and type(policy['maxVMBytes'])is int and 0<policy['maxVMBytes']<=59_971_770_624,
          'one actual normal policy graph')
     need(C['kind']in('ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1',SOURCE_KIND)and re.fullmatch('[0-9a-f]{32}',C['nonce'])
@@ -492,10 +507,11 @@ def main():
     cow_limit=C['cow_growth_bytes'];whole_limit=C['maxVMBytes']
     need(type(cow_limit)is int and 4_000_000_000<=cow_limit<=24_000_000_000,
          'finite actual guest COW write ceiling')
+    operation_network(C)
     need(type(C['cores'])is int and 0<C['cores']<=10 and
          type(C['memoryBytes'])is int and C['memoryBytes']%1048576==0 and
-         0<C['memoryBytes']<=34359738368 and C['swapBytes']==0 and C['network']=='none',
-         'same admitted CPU/RAM/no-swap/no-network bounds')
+         0<C['memoryBytes']<=34359738368 and C['swapBytes']==0,
+         'same admitted CPU/RAM/no-swap bounds')
     need(type(C['guest_memory_bytes'])is int and C['guest_memory_bytes']%1048576==0 and
          0<C['guest_memory_bytes']<=C['memoryBytes']-2147483648,
          'guest memory preserves admitted QEMU/observer overhead')

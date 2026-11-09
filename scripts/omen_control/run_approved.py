@@ -129,10 +129,10 @@ def definition(config_ref,root=False):
             and not info.st_mode&0o022,'Root immutable deployment ancestry')
     policy_raw,_=read(path,1048576,0,ref['sha256'],0o444);policy=json.loads(policy_raw)
     need(policy['kind']=='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1'and
-         set(policy['programSHA256'])==PROGRAMS and set(policy['engineSHA256'])==ENGINE and policy['network']=='none'
+         set(policy['programSHA256'])==PROGRAMS and set(policy['engineSHA256'])==ENGINE and policy['network']in('none','user-nat')
          and policy['maxVMBytes']<=59_971_770_624 and policy['maxCPU']<=10
          and policy['maxMemoryBytes']<=34359738368 and policy['swapBytes']==0,
-         'reviewed finite normal VM policy, no physical media or new network')
+         'reviewed finite normal VM and network policy, no physical media')
     bundle=path.parent/'proof-sources';programs={};pins={}
     for name in sorted(PROGRAMS):
         programs[name],pins[name]=read(bundle/name,1048576,0,policy['programSHA256'][name],0o444)
@@ -144,7 +144,8 @@ def definition(config_ref,root=False):
     need(operation.parent==base and operation.name.endswith('-'+nonce)and
          operation.resolve()==operation and operation.stat().st_uid==1000
          and stat.S_IMODE(operation.stat().st_mode)==0o700,'same existing normal operation namespace')
-    need(cfg['network']=='none'and cfg['whole_seconds']<=policy['wholeSeconds']<=7200
+    network='none'if source_build(cfg)else policy['network']
+    need(cfg['network']==network and cfg['whole_seconds']<=policy['wholeSeconds']<=7200
          and 0<cfg['cores']<=policy['maxCPU']and 0<cfg['memoryBytes']<=policy['maxMemoryBytes']
          and cfg['maxVMBytes']==policy['maxVMBytes']and cfg['swapBytes']==0,
          'normal operation stays within exact queue policy')

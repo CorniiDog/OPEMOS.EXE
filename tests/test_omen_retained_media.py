@@ -1094,18 +1094,24 @@ class UbuntuCandidateDiscLayout(unittest.TestCase):
         config = {'kind': 'ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1', 'nonce': nonce,
                   'observer_iso': {'nonce': nonce, 'source_commit': source},
                   'candidate': {'descriptor': {'source_commit': source}},
+                  'normalPolicy': {'network': 'none'}, 'network': 'none',
                   'cores': 1, 'guest_memory_bytes': 67108864,
                   'guest_operation': {'nonce': nonce, 'input_carrier_serial': nonce[:20]}}
         for display in ([1600, 900], [1920, 1080]):
             with self.subTest(display=display), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary); root.chmod(0o700)
                 config['guest_operation']['display'] = display
+                # Exercise the actual new GUI NIC on the second existing
+                # real-QEMU case. No guest OS or external request is run here.
+                mode = 'user-nat' if display == [1920, 1080] else 'none'
+                config['normalPolicy']['network'] = config['network'] = mode
                 actual = job.qemu_arguments(config, 'code', 'vars', 'cow', 'carrier', 'observer')
                 device = next(arg for arg in actual if arg.startswith('virtio-vga'))
+                nic = actual[actual.index('-nic') + 1]
                 socket_path = root / 'qmp.sock'
                 child = subprocess.Popen([qemu, '-machine', 'q35,accel=tcg', '-nodefaults',
                     '-m', '64', '-device', device, '-display', 'none', '-monitor', 'none',
-                    '-serial', 'none', '-nic', 'none', '-S', '-qmp',
+                    '-serial', 'none', '-nic', nic, '-S', '-qmp',
                     'unix:' + str(socket_path) + ',server=on,wait=off'],
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     umask=0o077)
@@ -1116,6 +1122,12 @@ class UbuntuCandidateDiscLayout(unittest.TestCase):
                         time.sleep(.02)
                     self.assertTrue(socket_path.exists(), 'actual QEMU did not expose QMP')
                     channel = control.QMP(control.connect_owned(socket_path, child.pid, timeout=5))
+                    if mode == 'user-nat':
+                        network = channel.call('human-monitor-command',
+                                               {'command-line': 'info network'})
+                        self.assertIn('virtio-net-pci', network)
+                        self.assertNotIn('hostfwd', nic)
+                        self.assertNotIn('guestfwd', nic)
                     for prop, value in zip(('xres', 'yres'), display):
                         self.assertEqual(channel.call('qom-get',
                             {'path': '/machine/peripheral/display', 'property': prop}), value)
@@ -1134,6 +1146,43 @@ class UbuntuCandidateDiscLayout(unittest.TestCase):
             config['guest_operation']['display'] = display
             with self.assertRaisesRegex(RuntimeError, 'same positive guest display dimensions'):
                 job.qemu_arguments(config, 'code', 'vars', 'cow', 'carrier', 'observer')
+
+    def test_normal_gui_network_requires_exact_root_mode_and_source_stays_offline(self):
+        """Production argv selection, including refused profile escalation."""
+        import copy
+        import job
+        nonce, source = 'e' * 32, 'd' * 40
+        gui = {'kind': 'ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1', 'nonce': nonce,
+               'observer_iso': {'nonce': nonce, 'source_commit': source},
+               'candidate': {'descriptor': {'source_commit': source}},
+               'normalPolicy': {'network': 'user-nat'}, 'network': 'user-nat',
+               'cores': 1, 'guest_memory_bytes': 67108864,
+               'guest_operation': {'nonce': nonce, 'input_carrier_serial': nonce[:20],
+                                   'display': [1920, 1080]}}
+        args = lambda cfg: job.qemu_arguments(cfg, 'code', 'vars', 'cow', 'carrier', 'observer')
+        actual = args(gui)
+        self.assertEqual(actual[actual.index('-nic') + 1],
+                         'user,model=virtio-net-pci,ipv6=off')
+        compiler = copy.deepcopy(gui)
+        compiler.update(kind=job.SOURCE_KIND, network='none',
+                        source_input={'descriptor': {'source_commit': source}})
+        self.assertEqual(args(compiler)[args(compiler).index('-nic') + 1], 'none')
+        for kind, config_mode, root_mode in [
+                (gui['kind'], 'user-nat', 'none'),
+                (job.SOURCE_KIND, 'user-nat', 'user-nat'),
+                (gui['kind'], 'none', 'user-nat'),
+                (gui['kind'], 'user,hostfwd=tcp::2222-:22', 'user-nat')]:
+            wrong = copy.deepcopy(compiler if kind == job.SOURCE_KIND else gui)
+            wrong['network'] = config_mode
+            wrong['normalPolicy']['network'] = root_mode
+            with self.subTest(kind=kind, config_mode=config_mode, root_mode=root_mode):
+                with self.assertRaisesRegex(RuntimeError, 'same kind-specific Root network profile'):
+                    args(wrong)
+        for mode in (None, True, 'bridge', 'tap', 'user,hostfwd=tcp::2222-:22'):
+            wrong = copy.deepcopy(gui); wrong['normalPolicy']['network'] = mode
+            with self.subTest(root_mode=mode):
+                with self.assertRaisesRegex(RuntimeError, 'reviewed normal network profile'):
+                    args(wrong)
 
     def test_bootstrap_refusal_keeps_invalid_event_without_accepting_its_binding(self):
         import socket
@@ -1732,7 +1781,7 @@ descriptor={'kind':'UBUNTU_SOURCE_INPUT_ARTIFACT_V1','repository':'CorniiDog/OPE
 login=work/'login';approved.create(login,b'{"fixtureOnly":true}',0o600);_,login_pin=approved.read(login,4096,1000)
 programs={n:(modules/n).read_bytes()for n in('job.py','prepare_observer_iso.py','ubuntu_guest_build.py','owned_command.py')}
 pins={n:approved.read(modules/n,1048576,0)[1]for n in programs}
-policy={'fixedStorageBytes':33554432,'sourceBuildEnabled':True,'sourceBuildInputBytes':1048576,
+policy={'fixedStorageBytes':33554432,'sourceBuildEnabled':True,'sourceBuildInputBytes':1048576,'network':'none',
  'programSHA256':{n:hashlib.sha256(raw).hexdigest()for n,raw in programs.items()},
  'engineSHA256':{n:hashlib.sha256((modules/n).read_bytes()).hexdigest()for n in approved.ENGINE},
  'operationOperands':{k:{}for k in('base','code','vars_template','image_carrier','original_source','queue_entry')}}

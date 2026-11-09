@@ -32,10 +32,12 @@ def normal_ubuntu_job(config_ref,request_ref):
             and not s.st_mode&0o022,'Root normal deployment ancestry')
     policy=strict(raw_file(path,1048576,ref['sha256'],0))
     require(policy['kind']=='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1'and
-        policy['sourceCommit']==cfg['source_commit']and policy['network']=='none'and
+        policy['sourceCommit']==cfg['source_commit']and policy['network']in('none','user-nat')and
         policy['swapBytes']==0 and 0<cfg['whole_seconds']<=policy['wholeSeconds']<=7200,
         'exact explicit normal Ubuntu source/effects boundary')
     source_build=cfg['kind']=='ROOT_ADMITTED_UBUNTU_SOURCE_BUILD_V1'
+    require(cfg['network']==('none'if source_build else policy['network']),
+            'same kind-specific Root network profile')
     bundle=path.parent/'proof-sources';programs={}
     for name,digest in policy['programSHA256'].items():
         require(name.endswith('.py')and Path(name).name==name,'fixed Root normal program member')

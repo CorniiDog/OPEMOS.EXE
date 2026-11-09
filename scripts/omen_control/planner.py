@@ -185,7 +185,7 @@ def operation_policy(pin):
     policy=strict(raw)
     need(policy['kind']=='ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1'and
          policy['sourceAccepted']is True and policy['runtimeAuthorized']is True and
-         policy['network']=='none'and policy['swapBytes']==0,
+         policy['network']in('none','user-nat')and policy['swapBytes']==0,
          'explicit reviewed normal Ubuntu operation scope')
     return policy,dict(pin,bytes=len(raw),uid=0,identity={k:getattr(first,k)for k in FULL9})
 

@@ -1,5 +1,27 @@
 # OPEMOS.EXE — Product Checklist
 
+## Actual GUI3 host acquisition/network join — 2026-11-09
+
+- Actual normal Actions42642945013 attempt3/job129335571982 booted Ubuntu
+  QEMU3891840 and the exact native9a4 application. Real image/output selection
+  and Build reached SteamOS3.8.14 target inspection. The authentic bc0 observer
+  passed the earlier traversal boundary and captured the application's failure:
+  its published-NVIDIA-release HTTPS request could not succeed in a VM launched
+  with `-nic none`. Preserve the failed/CLOSED/nonreserved b7a job, native/private
+  closure, screenshots, original media and all preceding failures.
+- The bounded controller correction adds an explicit Root-selected `user-nat`
+  GUI mode through the existing policy/planner/materializer/job consumers.
+  Source compilation remains offline. Fixed QEMU user-network arguments create
+  no host forwarding port, bridge or TAP; outbound traffic is available and is
+  not represented as an endpoint allowlist. Current installed policy is unchanged.
+- Existing real-QEMU display coverage now starts the production-selected NIC;
+  source/GUI profile mismatch and injected/unknown network options refuse.
+  These project tests remain unrun locally. Exact Core source/effects review and
+  current applicable source CI precede adoption and an actual cause-changed GUI
+  Build/write/readback attempt. Neither source checks nor runner liveness is a
+  successful image, USB or SteamOS result. The same84ca Listener/lease remained
+  online across the failed job and two subsequent natural heartbeat advances.
+
 ## PR211 `130d57de` Core F1-R2 follow-up — 2026-10-27
 
 - Core withheld approval for the exact `130d57de` head because automatic

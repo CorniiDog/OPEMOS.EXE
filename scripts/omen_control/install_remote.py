@@ -285,7 +285,7 @@ def require_source(payload):
              and policy['fixedStorageBytes']%4096==0 and 0<policy['fixedStorageBytes']<policy['maxVMBytes']
              and type(policy.get('publicEvidenceMaxBytes'))is int
              and 0<policy['publicEvidenceMaxBytes']<=268435456
-             and policy.get('network')=='none'and policy.get('swapBytes')==0
+             and policy.get('network')in('none','user-nat')and policy.get('swapBytes')==0
              and type(policy.get('maxVMBytes'))is int and 0<policy['maxVMBytes']<=59_971_770_624
              and type(policy.get('maxCPU'))is int and 0<policy['maxCPU']<=10
              and type(policy.get('maxMemoryBytes'))is int and 0<policy['maxMemoryBytes']<=34359738368
