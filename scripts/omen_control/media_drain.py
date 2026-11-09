@@ -30,11 +30,11 @@ def generation(row,binding,state,p,origins,controller_boot,queue=None):
  tx=row['id'].removeprefix('root-github-robot-control-');need(re.fullmatch('[0-9a-f]{32}',tx)is not None,'exact automatic control nonce')
  s=json.loads(row['spec']);root='/var/lib/opemos-robot-control-r1/releases/'+tx
  need(s['id']==row['id']and s['owner']=='root'and s['platform']=='controlplane'and s['cores']==1 and s['memory']==1073741824 and s['resources']==['opemos-robot-controlplane']and s['depends_on']==[],'only exact normal 1CPU/1GiB control job, no VM/build')
- if s['timeout_seconds']!=21600:
-  need(queue is not None,'authenticated current queue for finite Root connection')
-  queue.authenticated_control_window(s)
+ if queue is not None:queue.authenticated_control_window(s)
+ else:need(s['timeout_seconds']==21600,'authenticated current queue for finite Root connection')
  need(s['cwd']==root and s['command']==['/usr/bin/python3',root+'/launch.py',root+'/lease.json','/run/user/1000/opemos-robot-control-'+tx],'whole source-pinned original launch command/nonce')
  files=s['files'];expected={'control.py':p['controlBrokerSHA256'],'connection_host.py':p['privatePeerSHA256']}
+ if queue is None:expected.update({'host_engine.py':'685de3f64d1ae8cbb1d16ea96ca4830a030679e8d083287a3abaca55414b0505','launch.py':'1d726ad0533fd8d2fee32bbe0d10aa65d69013351abdb3ced901b7e3ba5fd9f9'})
  need(len(files)==5 and {f['path']for f in files}=={root+'/'+n for n in(*expected,'host_engine.py','launch.py','lease.json')},'exact five normal generated source roles')
  for f in files:
   if Path(f['path']).name in expected:need(f['sha256']==expected[Path(f['path']).name],'exact current implementation source graph')
