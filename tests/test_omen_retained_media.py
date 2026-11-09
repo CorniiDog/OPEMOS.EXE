@@ -1225,21 +1225,64 @@ class UbuntuCandidateDiscLayout(unittest.TestCase):
                             programSHA256={name: hashlib.sha256(raw).hexdigest() for name, raw in programs.items()},
                             engineSHA256={name: hashlib.sha256(raw).hexdigest() for name, raw in engine.items()})
                         policy_pin = root_file(release / 'fixed-policy.json', json.dumps(policy).encode())
+                        cases = []
+                        for purpose in ('artifact', 'source'):
+                            variants = [(None, False, False),
+                                        ('user,hostfwd=tcp::2222-:22', False, True),
+                                        (None, True, True)]
+                            if purpose == 'artifact' and mode == 'user-nat':
+                                variants.append(('none', False, True))
+                            for override, wrong_kind, refuses in variants:
+                                nonce = os.urandom(16).hex(); source = purpose == 'source'
+                                cfg = dict(kind=('wrong-purpose' if wrong_kind else
+                                    approved.SOURCE_KIND if source else 'ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1'),
+                                    nonce={'$run': 'nonce'}, source_commit={'$run': 'source_commit'},
+                                    normalPolicyPin={'$policy': 'pin'}, normalPolicy={'$policy': 'value'},
+                                    programRoot={'$path': 'programs'},
+                                    network={'$policy': 'network'} if override is None else override,
+                                    whole_seconds=120, cores=1, memoryBytes=25769803776,
+                                    guest_memory_bytes=21474836480, maxVMBytes=59971770624, swapBytes=0,
+                                    observer_iso={'nonce': nonce, 'source_commit': 'b' * 40})
+                                for name in operands: cfg[name] = {'$operand': name}
+                                if source:
+                                    cfg['source_input'] = {'descriptor': {'$source_input': '*'},
+                                                           'archive': {'$archive': '*'}}
+                                else:
+                                    cfg['candidate'] = {'descriptor': {'$candidate': '*'},
+                                                        'archive': {'$archive': '*'}}
+                                    cfg['guest_operation'] = dict(nonce=nonce, source_commit='b' * 40,
+                                        package_sha256='e' * 64, native_executable_sha256='f' * 64,
+                                        native_executable_bytes=8, usb_serial='opemos-' + nonce,
+                                        input_carrier_serial=nonce[:20], display=[1920, 1080])
+                                response = dict(config={'$document': 'normal-job.json'}, operand={},
+                                                plan={}, staging_path='unused fixture data')
+                                if source:
+                                    response.update(expected_source_input={'$source_input': '*'},
+                                                    operation_scope='NORMAL_UBUNTU_SOURCE_BUILD_ONLY')
+                                else:
+                                    response.update(expected={'$candidate': '*'}, robot_job={}, executable_entry='',
+                                                    additional_operations=[], executable_transaction_path='')
+                                recipe = dict(schema=1, documents=[dict(name='normal-job.json', value=cfg)],
+                                              prepare=response, collect={})
+                                recipe_pin = root_file(release / ('recipe-' + nonce + '.json'),
+                                                       json.dumps(recipe).encode())
+                                cases.append(dict(purpose=purpose, nonce=nonce, recipe=recipe_pin, refuses=refuses))
+                        case_pin = root_file(release / 'cases.json', json.dumps(cases).encode())
                         body = r'''
 import copy,hashlib,importlib.util,json,os,sys,time
 from pathlib import Path
 def load(name,path):
  spec=importlib.util.spec_from_file_location(name,path);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);return m
-release,operations=map(Path,sys.argv[1:3]);policy_pin=json.loads(sys.argv[3])
+release,operations=map(Path,sys.argv[1:3]);policy_pin=json.loads(sys.argv[3]);cases=json.loads(Path(sys.argv[4]).read_bytes())
 planner=load('actual_network_planner',release/'planner.py')
 approved=load('actual_network_materializer',release/'proof-sources/run_approved.py')
 policy,_=planner.operation_policy(policy_pin)
 assert os.getresuid()==(1000,1000,1000)
 archive=operations/'opaque-input';archive.write_bytes(b'opaque DATA, never extracted or executed');archive.chmod(0o400)
 archive_ref={'path':str(archive),'bytes':archive.stat().st_size,'sha256':hashlib.sha256(archive.read_bytes()).hexdigest()}
-def request(purpose):
+def request(purpose,nonce):
  r=dict(version=1,action='prepare',kind=purpose,repository='CorniiDog/OPEMOS.EXE',source_commit='a'*40,
-  run_id='12',attempt='2',nonce=os.urandom(16).hex(),consumer_started_epoch=int(time.time()))
+  run_id='12',attempt='2',nonce=nonce,consumer_started_epoch=int(time.time()))
  d=dict(repository=r['repository'],source_commit='b'*40,artifact_id='21',platform='ubuntu',
   artifact_archive_sha256=archive_ref['sha256'],package_name='package.AppImage',executable_name='native',
   package_sha256='e'*64,executable_sha256='f'*64,executable_bytes=8)
@@ -1248,28 +1291,14 @@ def request(purpose):
   r.update(subject={'platform':'ubuntu'},source_input={'descriptor':d,'archive':archive_ref})
  else:r.update(subject={'platform':'ubuntu','artifact_id':'21'},candidate={'descriptor':d,'archive':archive_ref})
  return r
-def recipe(r,network=None,wrong_kind=False):
- source=r['kind']=='source';kind=approved.SOURCE_KIND if source else 'ROOT_ADMITTED_UBUNTU_GUI_BUILD_WRITE_V1'
- cfg=dict(kind=('wrong-purpose'if wrong_kind else kind),nonce={'$run':'nonce'},source_commit={'$run':'source_commit'},
-  normalPolicyPin={'$policy':'pin'},normalPolicy={'$policy':'value'},programRoot={'$path':'programs'},
-  network={'$policy':'network'}if network is None else network,whole_seconds=120,cores=1,
-  memoryBytes=25769803776,guest_memory_bytes=21474836480,maxVMBytes=59971770624,swapBytes=0,
-  observer_iso={'nonce':r['nonce'],'source_commit':'b'*40})
- for name in policy['operationOperands']:cfg[name]={'$operand':name}
- if source:cfg['source_input']={'descriptor':{'$source_input':'*'},'archive':{'$archive':'*'}}
- else:
-  cfg['candidate']={'descriptor':{'$candidate':'*'},'archive':{'$archive':'*'}}
-  cfg['guest_operation']=dict(nonce=r['nonce'],source_commit='b'*40,package_sha256='e'*64,
-   native_executable_sha256='f'*64,native_executable_bytes=8,usb_serial='opemos-'+r['nonce'],
-   input_carrier_serial=r['nonce'][:20],display=[1920,1080])
- response=dict(config={'$document':'normal-job.json'},operand={},plan={},staging_path='unused fixture data')
- if source:response.update(expected_source_input={'$source_input':'*'},operation_scope='NORMAL_UBUNTU_SOURCE_BUILD_ONLY')
- else:response.update(expected={'$candidate':'*'},robot_job={},executable_entry='',additional_operations=[],executable_transaction_path='')
- value=dict(schema=1,documents=[dict(name='normal-job.json',value=cfg)],prepare=response,collect={})
- p=operations/('recipe-'+r['nonce']+'.json');p.write_text(json.dumps(value));p.chmod(0o400)
- return dict(path=str(p),sha256=hashlib.sha256(p.read_bytes()).hexdigest())
-for purpose in('artifact','source'):
- r=request(purpose);planned=planner.automatic_operation(recipe(r),r,operations,policy_pin)
+for case in cases:
+ purpose=case['purpose'];r=request(purpose,case['nonce'])
+ if case['refuses']:
+  try:planner.automatic_operation(case['recipe'],r,operations,policy_pin)
+  except ValueError as e:assert str(e)=='same Root-derived purpose/network before normal job creation'
+  else:raise AssertionError('planner accepted wrong purpose, injected options or stale none')
+  continue
+ planned=planner.automatic_operation(case['recipe'],r,operations,policy_pin)
  cfg,actual_policy,programs,pins,engine,operation=approved.definition(planned['config'])
  expected='none'if purpose=='source'else policy['network'];assert cfg['network']==expected
  # Only preparation/mount/VM execution is omitted. The real planner JSON,
@@ -1286,20 +1315,10 @@ for purpose in('artifact','source'):
  try:job.authenticated_config(config)
  except RuntimeError as e:assert str(e)=='same kind-specific Root network profile'
  else:raise AssertionError('entry accepted wrong purpose/policy network')
- for bad_mode,wrong_kind in [('user,hostfwd=tcp::2222-:22',False),(None,True)]:
-  bad=request(purpose)
-  try:planner.automatic_operation(recipe(bad,network=bad_mode,wrong_kind=wrong_kind),bad,operations,policy_pin)
-  except ValueError as e:assert str(e)=='same Root-derived purpose/network before normal job creation'
-  else:raise AssertionError('planner accepted unknown options or wrong purpose')
- if purpose=='artifact'and policy['network']=='user-nat':
-  bad=request(purpose)
-  try:planner.automatic_operation(recipe(bad,network='none'),bad,operations,policy_pin)
-  except ValueError as e:assert str(e)=='same Root-derived purpose/network before normal job creation'
-  else:raise AssertionError('planner accepted stale none recipe under acquisition policy')
 print(json.dumps(dict(realUID1000=True,rootMode=policy['network'],plannerMaterializerEntryArgv=True,VMOrAcquisitionAccepted=False)))
 '''
                         result = subprocess.run([sys.executable, '-I', '-B', '-', str(release),
-                            str(operations), json.dumps(policy_pin)], input=body, text=True,
+                            str(operations), json.dumps(policy_pin), case_pin['path']], input=body, text=True,
                             user=1000, group=1000, extra_groups=[], capture_output=True, timeout=30)
                         self.assertEqual(result.returncode, 0, result.stderr + '\n' + result.stdout)
                         self.assertTrue(json.loads(result.stdout)['plannerMaterializerEntryArgv'])
