@@ -2469,7 +2469,7 @@ from pathlib import Path
 from unittest import mock
 sys.path.insert(0,sys.argv[1]);import job_guard
 class ReachedAuthenticatedAPI(Exception):pass
-def api(path,token=None):
+def api(path,token=None,*,deadline=None):
     assert path=='repos/CorniiDog/OPEMOS.EXE/branches/main'
     raise ReachedAuthenticatedAPI()
 with tempfile.TemporaryDirectory()as d:

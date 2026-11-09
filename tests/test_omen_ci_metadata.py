@@ -185,6 +185,91 @@ class OwnedNBDDisconnect(unittest.TestCase):
         self.assertEqual(set(os.listdir('/proc/self/fd')),self.before_fd)
 
 
+class JobGuardOriginalBudget(unittest.TestCase):
+    def load(self):
+        source=Path(__file__).resolve().parents[1]/'scripts/omen_control/job_guard.py'
+        spec=importlib.util.spec_from_file_location('guard_original_budget',source)
+        guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
+        return guard
+
+    def test_real_broker_reply_after_five_seconds_keeps_original_budget_and_peer_refusal(self):
+        """Real AF_UNIX/elapsed delay; outside-PID-namespace credentials MODELED.
+
+        Existing cross-PID-namespace CI proves real peer credentials separately.
+        This exercises the production transport's actual >5-second reply and
+        proves it never sends a token to a rejected namespace/UID peer.
+        """
+        import socket,struct,threading,time
+        guard=self.load();real_socket=socket.socket
+        request={'kind':'OPEMOS_ROBOT_JOB_API_TOKEN','github_token':'ghs_'+'MODELED'*6}
+        for peer,delay in(((0,1000,1000),6),((99,1000,1000),0),((0,0,0),0)):
+            with self.subTest(peer=peer),tempfile.TemporaryDirectory()as temp:
+                path=str(Path(temp)/'control.sock');server=real_socket(socket.AF_UNIX)
+                server.bind(path);server.listen(1);server.settimeout(10)
+                received=[];errors=[]
+                def serve():
+                    try:
+                        with server.accept()[0]as client:
+                            client.settimeout(10);raw=b''
+                            while not raw.endswith(b'\n'):
+                                part=client.recv(4096)
+                                if not part:break
+                                raw+=part
+                            received.append(raw)
+                            if raw:
+                                time.sleep(delay);client.sendall(b'{"accepted":true}\n')
+                    except BaseException as error:errors.append(type(error).__name__)
+                    finally:server.close()
+                worker=threading.Thread(target=serve);worker.start()
+                class NamespaceSocket:
+                    def __init__(self,*a,**kw):self.socket=real_socket(*a,**kw)
+                    def __enter__(self):return self
+                    def __exit__(self,*a):self.socket.close()
+                    def __getattr__(self,name):return getattr(self.socket,name)
+                    def getsockopt(self,level,kind,size):
+                        self_outer.assertEqual((level,kind,size),(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
+                        return struct.pack('3i',*peer)
+                self_outer=self;end=time.monotonic()+12
+                try:
+                    with mock.patch.object(guard.socket,'socket',NamespaceSocket):
+                        if peer==(0,1000,1000):
+                            self.assertEqual(guard.broker_attestation(path,request,end),{'accepted':True})
+                        else:
+                            with self.assertRaisesRegex(ValueError,'outside-namespace broker peer'):
+                                guard.broker_attestation(path,request,end)
+                finally:worker.join(13)
+                self.assertFalse(worker.is_alive());self.assertEqual(errors,[])
+                if peer==(0,1000,1000):self.assertEqual(json.loads(received[0]),request)
+                else:self.assertEqual(received,[b''])
+
+    def test_api_and_partial_broker_reply_cannot_restart_original_guard_budget(self):
+        import struct
+        guard=self.load();response=mock.MagicMock()
+        response.__enter__.return_value.read.return_value=b'{}'
+        opener=mock.Mock();opener.open.return_value=response
+        with mock.patch.object(guard.urllib.request,'build_opener',return_value=opener),\
+             mock.patch.object(guard.time,'monotonic',side_effect=[4,6]):
+            with self.assertRaises(guard.GuardTimeout):guard.api('repos/owner/repo',deadline=5)
+        self.assertEqual(opener.open.call_args.kwargs['timeout'],1)
+        client=mock.MagicMock();client.__enter__.return_value=client
+        client.getsockopt.return_value=struct.pack('3i',0,1000,1000)
+        client.recv.side_effect=[b'{',b'"accepted":true}\n']
+        with mock.patch.object(guard.socket,'socket',return_value=client),\
+             mock.patch.object(guard.time,'monotonic',side_effect=[0,.1,.2,.8,1.1]):
+            with self.assertRaises(guard.GuardTimeout):
+                guard.broker_attestation('/modeled/control',{'kind':'modeled'},1)
+        self.assertEqual(client.recv.call_count,2)
+        self.assertEqual(len(client.settimeout.call_args_list),4)
+        for call,expected in zip(client.settimeout.call_args_list,(1,.9,.8,.2)):
+            self.assertAlmostEqual(call.args[0],expected)
+        client.connect.reset_mock()
+        with mock.patch.object(guard.socket,'socket',return_value=client),\
+             mock.patch.object(guard.time,'monotonic',return_value=2):
+            with self.assertRaises(guard.GuardTimeout):
+                guard.broker_attestation('/modeled/control',{'kind':'modeled'},1)
+        client.connect.assert_not_called()
+
+
 class UbuntuOwnedUnixSockets(unittest.TestCase):
     """Actual Linux sockets at a future normal operation path over108 bytes."""
     def setUp(self):

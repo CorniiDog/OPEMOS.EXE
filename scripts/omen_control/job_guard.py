@@ -15,6 +15,9 @@ import urllib.error
 from pathlib import Path
 
 REPO = "CorniiDog/OPEMOS.EXE"
+# The existing hook and token-binding shell both have a 45-second whole limit.
+# Leave time to report/exit; API reads and the broker share this one budget.
+GUARD_SECONDS = 40
 WORKFLOW_PATH = ".github/workflows/omen-robot.yml"
 PRODUCER_PATHS = {
     "01 Windows EXE": ".github/workflows/windows-portable.yml",
@@ -26,6 +29,17 @@ PRODUCER_PATHS = {
 def need(value, why):
     if not value:
         raise ValueError(why)
+
+
+class GuardTimeout(TimeoutError):
+    """Only a fixed nonsecret classification crosses the job boundary."""
+
+
+def remaining(deadline, limit=None):
+    seconds = deadline - time.monotonic()
+    if seconds <= 0:
+        raise GuardTimeout("original fixed guard budget exhausted")
+    return seconds if limit is None else min(limit, seconds)
 
 
 def number(value):
@@ -55,20 +69,49 @@ class NoGitHubRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def api(path, token=None):
+def api(path, token=None, *, deadline=None):
     need(not path.startswith("/") and ".." not in path, "fixed API path")
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "OPEMOS-fixed-job-guard"}
     if token is not None: headers["Authorization"] = "Bearer " + token
     request = urllib.request.Request("https://api.github.com/" + path, headers=headers)
+    if deadline is None:
+        deadline = time.monotonic() + GUARD_SECONDS
     try:
-        with urllib.request.build_opener(NoGitHubRedirect()).open(request, timeout=15) as response:
+        with urllib.request.build_opener(NoGitHubRedirect()).open(request, timeout=remaining(deadline, 15)) as response:
             raw = response.read(1048577)
+        remaining(deadline)
+    except TimeoutError:
+        raise GuardTimeout("original fixed guard API budget exhausted") from None
     except urllib.error.HTTPError as refused:
         refused.close()
         raise
 
     need(len(raw) <= 1048576, "API response oversized")
     return json.loads(raw)
+
+
+def broker_attestation(control_path, attestation, deadline):
+    """The broker authenticates through GitHub before replying, not in five seconds."""
+    try:
+        with socket.socket(socket.AF_UNIX) as connection:
+            connection.settimeout(remaining(deadline))
+            connection.connect(control_path)
+            peer_pid, peer_uid, peer_gid = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            # Keep the actual outside-namespace broker requirement unchanged.
+            need(peer_pid == 0 and peer_uid == peer_gid == 1000, "fixed outside-namespace broker peer")
+            connection.settimeout(remaining(deadline))
+            connection.sendall(json.dumps(attestation, separators=(",", ":")).encode() + b"\n")
+            raw = bytearray()
+            while len(raw) <= 4096 and not raw.endswith(b"\n"):
+                connection.settimeout(remaining(deadline))
+                part = connection.recv(min(4096, 4097 - len(raw)))
+                need(part, "host control attestation EOF")
+                raw.extend(part)
+            remaining(deadline)
+            need(len(raw) <= 4096 and raw.endswith(b"\n"), "bounded attestation reply")
+            return json.loads(raw)
+    except TimeoutError:
+        raise GuardTimeout("original fixed guard broker budget exhausted") from None
 
 
 def source_workflow_policy(expected_sha=None):
@@ -116,6 +159,7 @@ def verify_source_workflow(read, workflow_commit, expected_policy_sha=None):
 
 
 def main():
+    deadline = time.monotonic() + GUARD_SECONDS
     need(sys.argv[1:] in ([], ["--bind-job-token"]), "fixed guard invocation")
     bind_token = sys.argv[1:] == ["--bind-job-token"]
     env = os.environ
@@ -152,7 +196,7 @@ def main():
         token = env.pop("GITHUB_TOKEN", None)
         need(type(token) is str and token.startswith(("ghs_", "ghr_")) and
              20 <= len(token) <= 4096, "existing ephemeral Actions token required")
-    read = lambda path: api(path, token)
+    read = lambda path: api(path, token, deadline=deadline)
     if source_producer:
         verify_source_workflow(read, workflow_sha)
     else:
@@ -220,24 +264,12 @@ def main():
     if bind_token:
         attestation["kind"] = "OPEMOS_ROBOT_JOB_API_TOKEN"
         attestation["github_token"] = token
-    with socket.socket(socket.AF_UNIX) as connection:
-        connection.settimeout(5)
-        connection.connect(control_path)
-        peer_pid, peer_uid, peer_gid = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-        # The host broker is outside this fixed private PID namespace. A job
-        # process can share UID1000 but must never impersonate that broker.
-        need(peer_pid == 0 and peer_uid == peer_gid == 1000, "fixed outside-namespace broker peer")
-        connection.sendall(json.dumps(attestation, separators=(",", ":")).encode() + b"\n")
-        raw = bytearray()
-        while len(raw) <= 4096 and not raw.endswith(b"\n"):
-            part = connection.recv(min(4096, 4097 - len(raw)))
-            need(part, "host control attestation EOF")
-            raw.extend(part)
-        need(len(raw) <= 4096 and raw.endswith(b"\n"), "bounded attestation reply")
-        reply = json.loads(raw)
-    # Deleting references is not a claim of secure erasure of Python strings.
-    attestation.pop("github_token", None)
-    token = None
+    try:
+        reply = broker_attestation(control_path, attestation, deadline)
+    finally:
+        # Deleting references is not secure erasure of Python strings.
+        attestation.pop("github_token", None)
+        token = None
     need(reply == {"accepted": True}, "host control attestation refused")
     accepted["job_token_bound"] = bind_token
     print(json.dumps(accepted, sort_keys=True))
@@ -249,7 +281,13 @@ if __name__ == "__main__":
     except Exception as error:
         # Never log arbitrary exception text while a credential may be in memory.
         code = "GUARD_REFUSED"
-        if type(error) is ValueError and str(error) == "existing ephemeral Actions token required":
+        if isinstance(error, GuardTimeout):
+            code = "GUARD_ORIGINAL_BUDGET_EXHAUSTED"
+        elif isinstance(error, urllib.error.HTTPError):
+            code = "GITHUB_API_HTTP_" + str(error.code)
+        elif isinstance(error, urllib.error.URLError):
+            code = "GITHUB_API_UNAVAILABLE"
+        elif type(error) is ValueError and str(error) == "existing ephemeral Actions token required":
             code = "ACTIONS_JOB_TOKEN_UNAVAILABLE"
         elif type(error) is ValueError and str(error) == "host control attestation refused":
             code = "ATTESTATION_REFUSED"
