@@ -6695,4 +6695,70 @@ class FiniteConnectionEpochTests(unittest.TestCase):
             retire.assert_not_called()
 
 
+    @unittest.skipUnless(os.geteuid()==0,'Root-owned directory/FD fault in protected CI')
+    def test_known_cgroup_disappearance_repeats_one_complete_cut_with_live_control(self):
+        """Actual directory removal/FD close; cgroup path and second cut MODELED."""
+        import ast,errno,stat
+        from unittest import mock
+        q=self.load('test_queue');ns={};exec(compile(q.POOL_PROOF_SOURCE,'root_pool_proof_r1.py','exec'),ns)
+        parent=next(n for n in ast.parse(q.POOL_PROOF_SOURCE).body if isinstance(n,ast.FunctionDef)and n.name=='readonly_pool')
+        pieces=[ast.unparse(n)for n in parent.body if isinstance(n,ast.FunctionDef)and n.name in('owned','tree_identity','scan')]
+        self.assertEqual(len(pieces),3)
+        factory='def native_directory_exit(io,root,units,reserved,path,fd):\n    fd_states=[]\n    held={}\n    def clock(): pass\n'
+        for piece in pieces:factory+='\n'+'\n'.join('    '+line for line in piece.splitlines())+'\n'
+        factory+='    try:\n        with owned(fd,path):scan(path,fd,False)\n    except Exception as error:return error,fd_states\n    raise AssertionError("missing native directory was accepted")\n'
+        exec(compile(factory,'actual-production-tree-revalidation-functions','exec'),ns)
+        unit='opemos-testq-'+'a'*12+'-'+'b'*32+'.service';invocation='c'*32
+        root='/sys/fs/cgroup/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice';path=root+'/'+unit
+        before=set(os.listdir('/proc/self/fd'))
+        with tempfile.TemporaryDirectory()as directory:
+            actual=Path(directory)/unit;actual.mkdir();fd=os.open(actual,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+            actual.rmdir()
+            class MappedKernelPath(ns['KernelIO']):
+                # Only the kernel path route is modeled. lstat really fails
+                # after rmdir and the production owned() closes the real FD.
+                def path_id(self,name):
+                    self.native_error=None
+                    if name!=path:raise AssertionError('unrelated path')
+                    try:return super().path_id(actual)
+                    except FileNotFoundError as error:
+                        self.native_error=error
+                        raise FileNotFoundError(error.errno,error.strerror,name)from error
+            io=MappedKernelPath();error,closes=ns['native_directory_exit'](io,root,{unit:{'known':True}},
+                {unit:{'invocation':invocation}},path,fd)
+            self.assertEqual(io.native_error.errno,errno.ENOENT)
+            self.assertEqual(io.native_error.filename,str(actual))
+        self.assertEqual(set(os.listdir('/proc/self/fd')),before)
+        self.assertIsInstance(error,ValueError);typed=error.evidence['firstFailure']
+        self.assertEqual((typed['unit'],typed['invocation'],typed['path']),(unit,invocation,path))
+        self.assertTrue(all(c['closed']and not c['UNKNOWN']for c in closes))
+        evidence=dict(admitted=False,reservationRetained=True,operationOrReleaseAuthorized=False,
+            firstFailure=error.evidence,recordedReservations=[{'unit':unit,'invocation':invocation}],
+            unknownReservationsRetained=[])
+        refused=q.PoolAdmissionFailure('actual lower directory disappearance; modeled kernel route',evidence)
+        backend=object.__new__(q.SystemdBackend)
+        current=dict(admitted=True,allOwnedDescriptorsClosed=True,includesUID0=True,
+            completeBoundedTraversal=True,tasks=[{'pid':12345,'role':'MODELED still-live control'}],
+            currentWholePoolEmpty=False,unknownReservationsRetained=[])
+        with mock.patch.object(q,'_READONLY_BOUNDARY_PREPARATION',False),mock.patch.object(backend,'_validate_pool_cut',side_effect=[refused,current],create=True)as cut:
+            result=backend.validate_pool([])
+        self.assertEqual(cut.call_count,2);self.assertEqual(cut.call_args_list[0].args[1],cut.call_args_list[1].args[1])
+        self.assertFalse(result['currentWholePoolEmpty']);self.assertEqual(result['tasks'],current['tasks'])
+        self.assertEqual(result['readonlyMembershipTransition'],evidence)
+        for fault in ('path','invocation','owner','errno','unknown-close','foreign-lease'):
+            bad=copy.deepcopy(evidence);first=bad['firstFailure']['firstFailure']
+            if fault=='path':first['path']=root+'/foreign.service'
+            elif fault=='invocation':first['invocation']='d'*32
+            elif fault=='owner':first['heldIdentity'][3]=1000
+            elif fault=='errno':first['errno']=errno.EACCES
+            elif fault=='unknown-close':bad['firstFailure']['closeOutcomes'][0]['UNKNOWN']=True
+            else:bad['unknownReservationsRetained']=['unclassified']
+            with self.subTest(fault=fault),mock.patch.object(q,'_READONLY_BOUNDARY_PREPARATION',False),mock.patch.object(backend,'_validate_pool_cut',side_effect=q.PoolAdmissionFailure('refuse',bad),create=True)as cut:
+                with self.assertRaises(q.PoolAdmissionFailure):backend.validate_pool([])
+                self.assertEqual(cut.call_count,1)
+        # The same original finite observation deadline bounds both cuts.
+        with mock.patch.object(q.time,'monotonic',side_effect=[100.,101.,115.]),mock.patch.object(backend,'_validate_pool_cut',side_effect=[refused,current],create=True),mock.patch.object(q,'_READONLY_BOUNDARY_PREPARATION',False):
+            with self.assertRaisesRegex(ValueError,'original whole pool observation deadline'):backend.validate_pool([])
+
+
 if __name__ == '__main__': unittest.main()
