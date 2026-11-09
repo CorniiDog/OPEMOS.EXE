@@ -2094,6 +2094,7 @@ print(json.dumps({'realUID1000':True,'sourceRecipeMaterialized':True,'actualRead
 
     def test_preboot_NBD_consumer_accepts_idle_RW_bit_but_refuses_live_exports(self):
         """Real consumer, modeled kernfs/commands; not native NBD/VM acceptance."""
+        from unittest import mock
         module=self.load('job')
         for fault in('idle-ro0','idle-ro1','pid','holder','mount','fuser','bad-ro','missing'):
             with self.subTest(fault=fault),tempfile.TemporaryDirectory()as temp:
