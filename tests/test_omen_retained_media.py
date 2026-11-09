@@ -1207,7 +1207,8 @@ class UbuntuCandidateDiscLayout(unittest.TestCase):
                         path.write_bytes(raw); path.chmod(0o444)
                         return {'path': str(path), 'sha256': hashlib.sha256(raw).hexdigest()}
                     try:
-                        programs = {name: (SOURCE / name).read_bytes() for name in approved.PROGRAMS}
+                        programs = {name: ((SOURCE.parent if name == 'vm_write_ceiling.py' else SOURCE)
+                                           / name).read_bytes() for name in approved.PROGRAMS}
                         engine = {name: (SOURCE.parents[1] / name).read_bytes() for name in approved.ENGINE}
                         for name, raw in programs.items(): root_file(release / 'proof-sources' / name, raw)
                         for name, raw in engine.items(): root_file(release / 'engine' / name, raw)
