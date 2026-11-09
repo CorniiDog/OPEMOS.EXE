@@ -1150,6 +1150,41 @@ class RunnerTest(unittest.TestCase):
         # This fixture now reproduces the actual GUI8 method collision.
         with self.assertRaises(TypeError):entry.get_text(0,len(declared))
         with self.assertRaises(TypeError):entry.get_selection(0)
+        # Actual GUI9 selected the image, then GTK completed the separately
+        # declared output folder with a selected terminal slash (68/69 chars).
+        # Keep raw offsets, admit only this directory representation and still
+        # require every declared character before the sender can click Select.
+        folder='/home/opemosgui/opemos-robot-fixture/output'
+        entry.value=folder+'/';entry.caret=len(entry.value);entry.selection=(len(folder),len(entry.value))
+        actual=observer.observed_chooser_location(desktop,window,folder,len(folder),states,TextAPI,role='output_directory')
+        self.assertTrue(actual['exactDeclaredInput']);self.assertTrue(actual['directorySeparatorCompletion'])
+        self.assertEqual(actual['committedCharacters'],len(folder))
+        entry.selection=None
+        actual=observer.observed_chooser_location(desktop,window,folder,len(folder),states,TextAPI,role='output_directory')
+        self.assertEqual(actual['nativeCommittedCharacters'],len(folder)+1)
+        self.assertEqual(actual['committedCharacters'],len(folder))
+        entry.selection=(len(folder),len(entry.value))
+        sender_spec=importlib.util.spec_from_file_location('folder_chooser_sender',
+            Path(__file__).resolve().parents[1]/'scripts/omen_control/connection_control.py')
+        sender=importlib.util.module_from_spec(sender_spec);sender_spec.loader.exec_module(sender)
+        p=object.__new__(sender.Pipeline);p.cfg={'input_path':folder,'output_directory':folder}
+        p.end=time.monotonic()+5;p.app={'pid':731,'window_id':481}
+        p.request=lambda kind,**args:{'value':observer.observed_chooser_location(desktop,window,
+            p.cfg[args['role']],args['prefix_length'],states,TextAPI,role=args['role'])}
+        self.assertTrue(p.chooser_location(window,len(folder),'output_directory')['value']['exactDeclaredInput'])
+        with self.assertRaisesRegex(RuntimeError,'complete declared chooser location before pointer'):
+            p.chooser_location(window,len(folder),'input_path')
+        entry.selection=(len(folder)-1,len(entry.value))
+        actual=observer.observed_chooser_location(desktop,window,folder,len(folder),states,TextAPI,role='output_directory')
+        self.assertLess(actual['committedCharacters'],len(folder))
+        for suffix in('/','//','/child','/../other'):
+            entry.value=folder+suffix;entry.caret=len(folder);entry.selection=(len(folder),len(entry.value))
+            file_value=observer.observed_chooser_location(desktop,window,folder,len(folder),states,TextAPI)
+            directory_value=observer.observed_chooser_location(desktop,window,folder,len(folder),states,TextAPI,role='output_directory')
+            self.assertFalse(file_value['exactDeclaredInput'])
+            self.assertEqual(directory_value['exactDeclaredInput'],suffix=='/')
+        with self.assertRaises(RuntimeError):
+            observer.observed_chooser_location(desktop,window,folder,len(folder),states,TextAPI,role='other')
         entry.value='/other/image.img';entry.caret=len(entry.value);entry.selection=None
         self.assertFalse(observer.observed_chooser_location(desktop,window,declared,len(declared),states,TextAPI)['declaredPrefixMatched'])
         for fault in('password','foreign','hidden','unfocused'):
