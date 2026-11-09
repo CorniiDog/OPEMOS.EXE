@@ -5366,3 +5366,10 @@ R121 publication: normal receive-pack returned server500 three times with ref ab
   Actual broker OOM and the 96,591,145-byte whole-history poll are retained in
   the authenticated shared handoff; no limit raise, deletion or restart is
   represented as the permanent repair.
+
+### 2026-11-09 — derive materialized profile Stage from the authenticated Engine graph
+
+- Actual e0/cfb automatic Source jobs failed before VM startup because the generated profile retained the old Stage hash while its immutable lease bound the new Stage. Preserve that failure and completed original closures/source adoption.
+- Normal materialize now checks the Stage body/hash/fixed-policy join and derives the copied profile Stage pin from that same graph. HostEngine strict verification is unchanged. Extend existing actual materializer/preflight fixture through Root-owned strict HostEngine reads, two Stage generations, old-profile rejection, tampered Stage/body/policy negatives and enabled/disabled source-producer targets.
+- AST and whitespace checks only on controller; project execution is hosted CI. Exact current operative CI and Core source/caller/effects review remain required before a normal idle new-generation rollout. No current immutable profile/lease edit, listener cancellation, completed operation replay, new helper or framework.
+- Lead-only normal fast-forward publication is necessary for remote CI and immutable Core review: origin https://github.com/CorniiDog/OPEMOS.EXE.git, branch work/exe-materialized-stage-profile-20261109; exact commit recorded in authenticated handoff. No new PR while cap two, Main push, merge, trust or runtime approval implied.

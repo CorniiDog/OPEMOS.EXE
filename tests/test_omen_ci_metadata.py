@@ -56,16 +56,19 @@ class SourceProducerInstallationCustody(unittest.TestCase):
             spec=importlib.util.spec_from_file_location('actual_create_'+name,root/(name+'.py'))
             value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value);return value
         cycle=load('normal_cycle');installer=(root/'install_remote.py').read_bytes()
-        control=b'Root source fixture DATA';hook=b'Root hook fixture DATA'
+        control=b'Root source fixture DATA';hook=b'Root hook fixture DATA';stage=b'new Stage fixture DATA'
         sha=lambda data:hashlib.sha256(data).hexdigest()
         for enabled in (False,True):
             template={'kind':'ROOT_REVIEWED_ROBOT_CONTROL_MATERIALIZATION_V1','mainCommit':'a'*40,
                 'runnerId':21,'queueSourceSHA256':'b'*64,'queueLoggerSHA256':'c'*64,
                 'sources':{'control.py':{'hex':control.hex(),'sha256':sha(control)},
                            'job-started.sh':{'hex':hook.hex(),'sha256':sha(hook)}},
+                'engine':{'scripts/omen_ci_stage.py':{'hex':stage.hex(),'sha256':sha(stage)}},
                 'policy':{'kind':'ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1','sourceCommit':'a'*40,
+                    'engineSHA256':{'scripts/omen_ci_stage.py':sha(stage)},
                     'queueSourceSHA256':'b'*64,'queueLoggerSHA256':'c'*64,'sourceBuildEnabled':enabled},
-                'registry':{'artifacts':{'ubuntu':{}}},'profile':{'fixed_registry':{}}}
+                'registry':{'artifacts':{'ubuntu':{}}},
+                'profile':{'fixed_registry':{},'stage':{'sha256':'0'*64}}}
             raw=cycle.enc(template)
             policy={'normalTemplateSHA256':sha(raw),'currentReleaseTx':'d'*32,
                 'normalInstallerSHA256':sha(installer),'mainCommit':'a'*40,'queueSourceSHA256':'b'*64,
@@ -80,6 +83,8 @@ class SourceProducerInstallationCustody(unittest.TestCase):
             self.assertEqual(set(result['prior']),set(actual_installer.targets(result)))
             self.assertEqual('producerWorkflow'in result['prior'],enabled)
             self.assertEqual(result['transaction'],'e'*32)
+            self.assertEqual(result['profile']['stage']['sha256'],sha(stage))
+            self.assertEqual(template['profile']['stage']['sha256'],'0'*64)
 
     def test_remote_create_failure_preserves_actual_stderr_in_existing_wrapper_capture(self):
         import io,types,subprocess

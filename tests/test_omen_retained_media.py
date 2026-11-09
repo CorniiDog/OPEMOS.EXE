@@ -1316,7 +1316,7 @@ print(json.dumps({'realTaskProcessJoin':True,'ordinaryReader':1000,'rootPayload'
 
     def test_normal_create_materializer_reaches_actual_preflight_with_optional_workflow(self):
         from unittest import mock
-        cycle=self.load('normal_cycle')
+        cycle=self.load('normal_cycle');host=self.load('host_engine')
         with tempfile.TemporaryDirectory(prefix='opemos-create-preflight-',dir='/var/lib')as temp:
             root=Path(temp);root.chmod(0o755)
             runner=root/'runner';runner.mkdir();os.chown(runner,1000,1000);runner.chmod(0o700)
@@ -1345,20 +1345,30 @@ print(json.dumps({'realTaskProcessJoin':True,'ordinaryReader':1000,'rootPayload'
                 if not path.exists():file(path,b'original installed target data')
             sha=lambda raw:hashlib.sha256(raw).hexdigest()
             control=b'opaque Root control fixture';hook=b'opaque Root hook fixture'
+            planner=file(root/'planner.py',b'opaque Root planner fixture')
+            engine_dir=root/'engine';engine_dir.mkdir()
+            engine={name:(b'{"required_vms":[{"id":"ubuntu"}]}'if name=='ci/required-vms.json'
+                         else ('actual pinned fixture '+name).encode())for name in temporary.ENGINE}
+            for name,body in engine.items():file(engine_dir/name,body)
             closed={'currentManager':{'MainPID':'0','ControlGroup':''},'fullUID0Group':{'absent':True},
                     'oldDispatcherAbsent':True,'oldListenerAbsent':True}
             manager_result=subprocess.CompletedProcess(['modeled systemd'],0,
                 b'LoadState=not-found\nActiveState=inactive\nMainPID=0\nControlGroup=\n',b'')
             for enabled in (False,True):
+                engine['scripts/omen_ci_stage.py']=b'new Stage generation '+str(enabled).encode()
+                file(engine_dir/'scripts/omen_ci_stage.py',engine['scripts/omen_ci_stage.py'])
                 template={'kind':'ROOT_REVIEWED_ROBOT_CONTROL_MATERIALIZATION_V1','mainCommit':'a'*40,
                     'runnerId':21,'queueSourceSHA256':queue_pin['sha256'],'queueLoggerSHA256':logger['sha256'],
                     'runnerManifest':manifest,'login':login,
                     'sources':{'control.py':{'hex':control.hex(),'sha256':sha(control)},
                                'job-started.sh':{'hex':hook.hex(),'sha256':sha(hook)}},
+                    'engine':{name:{'hex':body.hex(),'sha256':sha(body)}for name,body in engine.items()},
                     'policy':{'kind':'ROOT_NORMAL_UBUNTU_GUI_BUILD_WRITE_POLICY_V1','sourceCommit':'a'*40,
+                        'engineSHA256':{name:sha(body)for name,body in engine.items()},
                         'queueSourceSHA256':queue_pin['sha256'],'queueLoggerSHA256':logger['sha256'],
                         'sourceBuildEnabled':enabled},
-                    'registry':{'artifacts':{'ubuntu':{}}},'profile':{'fixed_registry':{}}}
+                    'registry':{'artifacts':{'ubuntu':{}}},'profile':{'fixed_registry':{},
+                        'schema':1,'enabled':True,'hook':planner,'stage':{'sha256':'0'*64}}}
                 raw=cycle.enc(template)
                 policy={'normalTemplateSHA256':sha(raw),'currentReleaseTx':'d'*32,
                     'normalInstallerSHA256':sha(source),'mainCommit':'a'*40,
@@ -1373,6 +1383,40 @@ print(json.dumps({'realTaskProcessJoin':True,'ordinaryReader':1000,'rootPayload'
                 data=json.loads(payload)
                 self.assertEqual(set(data['prior']),set(installer.targets(data)))
                 self.assertEqual('producerWorkflow'in data['prior'],enabled)
+                # Retain an old profile as immutable input, generate the new
+                # profile with actual materialize(), then exercise the strict
+                # installed HostEngine consumer against real Root-owned files.
+                # Only location, predecessor/systemd and lease assembly are modeled.
+                self.assertEqual(template['profile']['stage']['sha256'],'0'*64)
+                generated=file(config/'generated-profile.json',installer.enc(data['profile']))
+                consumer=host.HostEngine.__new__(host.HostEngine)
+                consumer.bundle=engine_dir
+                consumer.pins={name:sha(body)for name,body in engine.items()}
+                consumer.lease={'planner_path':planner['path'],'planner_sha256':planner['sha256'],
+                    'profile_path':generated['path'],'profile_sha256':generated['sha256']}
+                consumer.verify_bundle()
+                self.assertEqual(consumer.vm_ids,{'ubuntu'})
+                old_profile=copy.deepcopy(data['profile']);old_profile['stage']['sha256']='0'*64
+                old=file(config/'old-profile.json',installer.enc(old_profile))
+                consumer.lease.update(profile_path=old['path'],profile_sha256=old['sha256'])
+                with self.assertRaisesRegex(ValueError,'exact enabled root-owned planner/profile pairing'):
+                    consumer.verify_bundle()
+                consumer.lease.update(profile_path=generated['path'],profile_sha256=generated['sha256'])
+                stage_path=engine_dir/'scripts/omen_ci_stage.py'
+                stage_path.write_bytes(b'tampered Stage bytes')
+                with self.assertRaises(ValueError):consumer.verify_bundle()
+                stage_path.write_bytes(engine['scripts/omen_ci_stage.py'])
+                for field in ('hex','sha256','policy'):
+                    bad=copy.deepcopy(template)
+                    if field=='hex':bad['engine']['scripts/omen_ci_stage.py']['hex']=b'tampered'.hex()
+                    elif field=='sha256':bad['engine']['scripts/omen_ci_stage.py']['sha256']='f'*64
+                    else:bad['policy']['engineSHA256']['scripts/omen_ci_stage.py']='f'*64
+                    bad_raw=cycle.enc(bad);bad_policy=dict(policy,normalTemplateSHA256=sha(bad_raw))
+                    with mock.patch.object(cycle,'REMOTE_TEMPLATE_HEX',bad_raw.hex(),create=True), \
+                         mock.patch.object(cycle,'CONTROL',root), \
+                         mock.patch.object(cycle,'closed_receipt',return_value=closed), \
+                         self.assertRaisesRegex(RuntimeError,'same authenticated materialized Stage/profile source'):
+                        cycle.materialize(bad_policy,probe,'e'*32,{'unit':'opemos-testq-aa-bb.service'}, {})
                 with mock.patch.object(installer.subprocess,'run',return_value=manager_result):
                     self.assertTrue(installer.preflight(data))
                     if enabled:

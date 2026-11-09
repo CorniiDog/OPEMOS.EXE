@@ -393,6 +393,11 @@ def materialize(policy,probe_module,nonce,old_row,old_manager,dispatchers=None):
         # release, then the existing registry/profile consume it consistently.
         data['registry']=json.loads(enc(data['registry']))
         data['profile']=json.loads(enc(data['profile']))
+        stage=data['engine']['scripts/omen_ci_stage.py']
+        need(sha(bytes.fromhex(stage['hex']))==stage['sha256']==
+             fixed['engineSHA256']['scripts/omen_ci_stage.py'],
+             'same authenticated materialized Stage/profile source')
+        data['profile']['stage']['sha256']=stage['sha256']
         data['registry']['artifacts']['ubuntu']['operation_policy']={
             'path':str(CONTROL/'releases'/nonce/'fixed-policy.json'),'sha256':sha(enc(fixed))}
         data['profile']['fixed_registry']['sha256']=sha(enc(data['registry']))
