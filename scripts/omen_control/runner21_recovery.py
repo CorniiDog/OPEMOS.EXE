@@ -6,6 +6,7 @@ itself.  It executes only the Root-pinned normal-cycle source through its held
 bytes.  That source must use the existing installer, canonical queue, listener
 and job-started guard.  A disabled or stale policy always refuses.
 """
+import ast
 import fcntl
 import hashlib
 import json
@@ -940,13 +941,70 @@ def failed_probe(stage, native):
     return error
 
 
+def before_transport_frontier_failure(policy,old):
+    """Authenticate the retained initial read-only probe failure, not a flag.
+
+    A reaped SSH client says nothing about a remote mutator. Only the exact
+    trusted controller-cycle initial-probe call site is eligible here. Source
+    line numbers are derived from authenticated original executable bytes;
+    transported/effect-bearing frames, changed sources and unknowns refuse.
+    """
+    if type(old.get('nonce'))is not str or re.fullmatch('[0-9a-f]{32}',old['nonce'])is None:return None
+    path=ROOT/('normal-cycle-'+old['nonce']+'.stderr')
+    if old.get('stderrCapture')!=str(path):return None
+    try:
+        raw=held(path,65536,0,0o600)
+        if sha(raw)!=old['stderrSHA256']:return None
+        text=raw.decode('utf-8')
+        frames=re.findall(r'^  File "([^"\n]+)", line ([1-9][0-9]*), in ([^\n]+)$',text,re.M)
+        if len(frames)!=5 or text.count('Traceback (most recent call last):')!=1:return None
+        cycle=load_code(CYCLE,policy['controllerCycleSHA256'])
+        probe=load_code(PROBE,policy['controllerProbeSHA256'])
+        normal=load_code(ROOT/'normal_probe.py',policy['normalProbeSHA256'])
+        def sites(source,function,predicate):
+            tree=ast.parse(source)
+            body=tree if function is None else next(n for n in tree.body
+                if isinstance(n,ast.FunctionDef)and n.name==function)
+            return {n.lineno for n in ast.walk(body)if predicate(n)}
+        def call(n,owner,name):
+            return isinstance(n,ast.Call)and ((owner is None and isinstance(n.func,ast.Name)and n.func.id==name)or
+                (owner is not None and isinstance(n.func,ast.Attribute)and isinstance(n.func.value,ast.Name)and n.func.value.id==owner and n.func.attr==name))
+        initial=sites(cycle,'run',lambda n:isinstance(n,ast.Assign)and
+            len(n.targets)==1 and isinstance(n.targets[0],ast.Name)and n.targets[0].id=='initial'and call(n.value,'cp','observe'))
+        frames=re.findall(r'^  File "([^"\n]+)", line ([1-9][0-9]*), in ([^\n]+)$',text,re.M)
+        if len(frames)!=5 or text.count('Traceback (most recent call last):')!=1:return None
+        expected=[(None,'<module>',sites(cycle,None,lambda n:call(n,None,'run'))),
+            (None,'run',initial),('reviewed_controller_probe','observe',sites(probe,'observe',lambda n:call(n,'m','current_github'))),
+            ('current_github_and_remote_probe_source','current_github',sites(normal,'current_github',lambda n:call(n,None,'runner21_assigned_jobs'))),
+            ('current_github_and_remote_probe_source','runner21_assigned_jobs',sites(normal,'runner21_assigned_jobs',lambda n:isinstance(n,ast.Raise)and call(n.exc,None,'RuntimeError')))]
+        for (filename,line,function),(origin,name,lines)in zip(frames,expected):
+            if function!=name or int(line)not in lines:return None
+            if origin is None:
+                if re.fullmatch('/proc/self/fd/[0-9]+',filename)is None or filename!=frames[0][0]:return None
+            elif filename!=origin:return None
+        prefix='RuntimeError: bounded complete active workflow-run frontier; observed='
+        last=text.splitlines()[-1]
+        if not last.startswith(prefix):return None
+        observed=json.loads(last[len(prefix):])
+        if not(type(observed)is dict and set(observed)=={'returned','run_ids','total_count'}and
+               type(observed['total_count'])is int and 0<=observed['total_count']<=100 and
+               type(observed['returned'])is int and 0<=observed['returned']<=100 and
+               observed['returned']!=observed['total_count']and type(observed['run_ids'])is list and
+               len(observed['run_ids'])==observed['returned']and
+               all(type(i)is int and i>0 for i in observed['run_ids'])):return None
+        return {'kind':'AUTHENTICATED_INITIAL_READONLY_FRONTIER_REFUSAL_V1',
+            'stderrPath':str(path),'stderrSHA256':sha(raw),'frames':frames,
+            'controllerCycleSHA256':sha(cycle),'controllerProbeSHA256':sha(probe),
+            'normalProbeSHA256':sha(normal),'observed':observed,'transportStarted':False}
+    except (OSError,ValueError,KeyError,TypeError,StopIteration,RuntimeError,SyntaxError):return None
+
+
 def reconcile_failed_live_renewal(policy,state,probe,now,probe_sha):
     """Release only a terminated renewal intent whose original owner is live.
 
-    Normal GRACEFUL_RENEW cannot materialize/submit a successor until its
-    original canonical row is CLOSED and its Listener/worker have exited.
-    A fresh complete probe proving that same original row/source/native unit
-    still live therefore rules out completed retirement or materialization.
+    Authenticate the retained initial read-only failure before any transport,
+    then prove the same original row/source/native unit is still live. A
+    local SSH exit or same live owner alone never proves remote closure.
     Keep the original failed/unknown outcome; this is not a retry of its nonce,
     a readiness publication, or a mutation of queue/source/lease/process state.
     """
@@ -969,11 +1027,12 @@ def reconcile_failed_live_renewal(policy,state,probe,now,probe_sha):
            probe['mainCommit']==c['sourceCommit']==policy['mainCommit']and
            probe['queueSourceSHA256']==c['queueSourceSHA256']==policy['queueSourceSHA256']and
            probe['controlBrokerSHA256']==policy['controlBrokerSHA256']):return None
-    # The source-verified canonical lifecycle, not an exception string or an
-    # absent process placeholder, establishes the still-current original owner.
+    before_transport=before_transport_frontier_failure(policy,old)
+    if before_transport is None:return None
     before=strict(canonical(state));record={'kind':'ROOT_FAILED_LIVE_RENEWAL_INTENT_DISPOSITION_V1',
         'atUnix':now,'before':before,'probeSHA256':probe_sha,
-        'originalJobId':c['jobId'],'queueMutation':False,'sourceMutation':False,
+        'originalJobId':c['jobId'],'beforeTransportEvidence':before_transport,
+        'queueMutation':False,'sourceMutation':False,
         'heartbeatPublished':False,'vmAdmission':False,
         'historicalOutcome':'ORIGINAL_FAILED_OR_UNKNOWN_PRESERVED'}
     raw=canonical(record);path=ROOT/('failed-live-renewal-'+nonce+'-'+sha(raw)[:16]+'.json')

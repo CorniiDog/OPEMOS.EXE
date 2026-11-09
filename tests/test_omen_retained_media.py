@@ -5232,12 +5232,14 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'unknown relevant active job runner assignment'):
             n.runner21_assigned_jobs(active,lambda path:page)
 
+    @unittest.skipUnless(os.geteuid()==0,'actual protected Root retained failure custody')
     def test_actual_run_cycle_reconciles_terminated_renewal_only_with_same_live_original(self):
         """Real normal bookkeeping; native/API facts modeled, not live acceptance."""
         from unittest import mock
         _,r=self.modules();policy,state,probe,_,_=self.pending(r);now=int(time.time())
         policy.update(controlBrokerSHA256='9'*64,priorControlBrokerSHA256='8'*64,
-                      renewalAuthorizedUntilUnix=state['epochExpiresUnix'])
+                      renewalAuthorizedUntilUnix=state['epochExpiresUnix'],expiresUnix=state['epochExpiresUnix'],
+                      renewLeadSeconds=19000,maxCycles=64,maxTotalCycles=4096,controllerCycleSHA256='2'*64)
         c=probe['control'];c.update(jobId='root-github-robot-control-'+'a'*32,state='running',terminalLifecycle=None,reservationRetained=True,
             leaseExpiresUnix=now+1000,**{k:True for k in('listenerAlive','controllerAlive','workerAlive','ownUnitBound')})
         probe.update(runnerOnline=True,runnerBusy=False,actionsInProgress=0,
@@ -5245,11 +5247,15 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
         state['lastOutcome']={'action':'GRACEFUL_RENEW','nonce':state['inflight'],
             'controlJobId':c['jobId'],'dispatcherNonce':'e'*32,
             'numeric':1,'reaped':True,'first':None,'stderrSHA256':'f'*64,'stdoutSHA256':r.sha(b'')}
+        fixture=Path(__file__).parent/'fixtures';failure=(fixture/'runner21-initial-readonly-frontier-traceback.txt').read_bytes()
+        sources={r.CYCLE:(SOURCE/'controller_cycle.py').read_bytes(),r.PROBE:(SOURCE/'controller_probe.py').read_bytes(),
+                 r.ROOT/'normal_probe.py':(fixture/'runner21-normal-probe-before-frontier-retry.py.txt').read_bytes()}
+        state['lastOutcome']['stderrSHA256']=r.sha(failure)
         before=copy.deepcopy(state)
         native={'reaped':True,'numeric':0,'eof':{'stdout':True,'stderr':True},
                 'first':None,'stdout':r.canonical(probe),'stderr':b''}
         with tempfile.TemporaryDirectory()as tmp,mock.patch.object(r,'ROOT',Path(tmp)), \
-             mock.patch.object(r,'load_code',return_value=b'authenticated normal probe'), \
+             mock.patch.object(r,'load_code',side_effect=lambda path,digest:next((v for k,v in sources.items()if k.name==path.name),b'authenticated normal probe')), \
              mock.patch.object(r,'start_held_python',return_value=object())as spawned, \
              mock.patch.object(r,'capture',return_value=native),mock.patch.object(r,'validate_probe'), \
              mock.patch.object(r,'reconcile_running_resume',return_value=None), \
@@ -5258,6 +5264,8 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
              mock.patch.object(r,'materialized_control_ready',return_value=False), \
              mock.patch.object(r,'refresh_current_presence',return_value=None), \
              mock.patch.object(r,'write_state')as saved:
+            trace=Path(tmp)/('normal-cycle-'+state['inflight']+'.stderr');trace.write_bytes(failure);trace.chmod(0o600)
+            state['lastOutcome']['stderrCapture']=str(trace);before=copy.deepcopy(state)
             result=r.run_cycle(policy,state,now)
             record=json.loads(next(Path(tmp).glob('failed-live-renewal-*.json')).read_bytes())
         self.assertEqual(result['decision'],'RECONCILED_FAILED_LIVE_RENEWAL_INTENT')
@@ -5266,6 +5274,23 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
         self.assertEqual(record['before'],before);self.assertFalse(record['queueMutation'])
         self.assertEqual(spawned.call_count,1,'only fresh readonly health child; no retry/retirement')
         saved.assert_called_once()
+        with tempfile.TemporaryDirectory()as tmp,mock.patch.object(r,'ROOT',Path(tmp)), \
+             mock.patch.object(r,'load_code',return_value=b'authenticated probe'), \
+             mock.patch.object(r,'start_held_python',return_value=object())as spawned, \
+             mock.patch.object(r,'capture',return_value=native),mock.patch.object(r,'validate_probe'), \
+             mock.patch.object(r,'reconcile_running_resume',return_value=None), \
+             mock.patch.object(r,'reconcile_materialized_pending',return_value=None), \
+             mock.patch.object(r,'reconcile_closed_inflight',return_value=None), \
+             mock.patch.object(r,'materialized_control_ready',return_value=False), \
+             mock.patch.object(r,'refresh_current_presence',return_value=None), \
+             mock.patch.object(r,'write_state')as saved:
+            unknown=copy.deepcopy(before);trace=Path(tmp)/('normal-cycle-'+unknown['inflight']+'.stderr')
+            transport_failure=b'Traceback (most recent call last):\n  File \"/proc/self/fd/4\", line 91, in run\nsubprocess.TimeoutExpired: effect-bearing SSH timed out\n'
+            trace.write_bytes(transport_failure);trace.chmod(0o600)
+            unknown['lastOutcome'].update(stderrCapture=str(trace),stderrSHA256=r.sha(transport_failure))
+            original=copy.deepcopy(unknown);result=r.run_cycle(policy,unknown,now)
+            self.assertEqual(result['decision'],'HOLD_INFLIGHT');self.assertEqual(unknown,original)
+            self.assertEqual(spawned.call_count,1);saved.assert_not_called()
         for fault in ('different-job','successor','cleanup','native','first','output','expired',
                       'listener','worker','binding','source','unknown','busy','assigned','guest','broker'):
             bad=copy.deepcopy(before);v=copy.deepcopy(probe)
