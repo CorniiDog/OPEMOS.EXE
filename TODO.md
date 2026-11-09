@@ -5380,3 +5380,11 @@ R121 publication: normal receive-pack returned server500 three times with ref ab
   branch work/exe-typed-cgroup-coverage-monitor-20261108, bounded e0 successor.
   The approved e0 source adoption and current6c/f6 job remain separate and intact;
   this follow-up is not a new prerequisite for either. No VM/GUI/USB/SteamOS pass.
+
+  6d443f2f hosted Linux128919684284/run42542292721 General386 failed at
+  the new real kernel regression: production preserves its original ValueError
+  carrying typed evidence through owned-FD unwinding. The fixture incorrectly
+  expected the wrapper exception class. Match the exact original ValueError and
+  message, then require the complete typed samples/FD/schema and strict monitor
+  result. No production change or broadened failure acceptance. Failed log is
+  preserved in the authenticated handoff; cause-changed hosted CI is required.

@@ -2184,13 +2184,15 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
         before=set(os.listdir('/proc/self/fd'))
         child=subprocess.Popen([sys.executable,'-I','-c','import time;time.sleep(30)'])
         try:
-            with self.assertRaises(ns['OwnedFDProofFailure'])as caught:
+            with self.assertRaises(ValueError)as caught:
                 with owned(io.open_dir(str(actual)),'actual-kernel-cgroup')as fd:
                     pids=ids(read(fd,'cgroup.procs'));self.assertIn(child.pid,pids)
                     child.terminate();child.wait(timeout=5)
                     tids=ids(read(fd,'cgroup.threads'));self.assertNotIn(child.pid,tids)
                     pop=populated(fd)
                     coverage(pids,tids,model_path,pop)
+            self.assertIs(type(caught.exception),ValueError)
+            self.assertEqual(str(caught.exception),'cgroup process/thread coverage')
             lower=caught.exception.evidence;typed=lower['firstFailure']
             self.assertEqual(typed['sampledPids'],pids);self.assertEqual(typed['sampledTids'],tids)
             self.assertEqual(typed['sampledPopulated'],pop.decode())
