@@ -536,6 +536,61 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                     RuntimeError,'after session read'):
             observer.gnome_screen_locked(102)
 
+    def test_native_control_reads_changed_provider_states_without_client_cache(self):
+        """Actual target/host reader, modeled AT-SPI cache and state transition.
+
+        GUI6 showed Review after selection, but its CONTROL probes were all
+        unavailable. Missing flags were not recorded, so cache is a candidate
+        cause, not claimed live proof. Preserve every positive-input guard.
+        """
+        import observer_guest as observer
+        import connection_control as control
+        from unittest import mock
+        live={'enabled':True,'cached_enabled':False,'cache':True}
+        states={k:k for k in ('enabled','sensitive','visible','showing','defunct','screen')}
+        def state():
+            enabled=live['cached_enabled']if live['cache']else live['enabled']
+            return types.SimpleNamespace(contains=lambda k:
+                False if k=='defunct'else enabled if k in ('enabled','sensitive')else True)
+        component=types.SimpleNamespace(get_extents=lambda _:types.SimpleNamespace(
+            x=10,y=10,width=80,height=20))
+        def node(name,children=()):
+            return types.SimpleNamespace(get_process_id=lambda:42,get_name=lambda:name,
+                get_role_name=lambda:'push button',get_child_count=lambda:len(children),
+                get_child_at_index=lambda i:children[i],get_state_set=state,
+                get_component_iface=lambda:component,get_attributes=lambda:[])
+        label='Review & Write Selected USB…';button=node(label);app=node('',[button])
+        desktop=types.SimpleNamespace(get_child_count=lambda:1,get_child_at_index=lambda _:app)
+        def cache(mask):
+            self.assertEqual(mask,0);live['cache']=False
+        desktop.set_cache_mask=cache
+        desktop.clear_cache=mock.Mock()
+        atspi=types.SimpleNamespace(get_desktop=lambda index:desktop,Cache=types.SimpleNamespace(NONE=0))
+        window={'pid':42,'window_id':456,'rect':[0,0,200,200]}
+        def observe():
+            return observer.observed_control(desktop,window,label,['push button'],states,
+                [1600,900],probe=True,hit_test=lambda *_:[456])
+        # The old cached read refuses the newly enabled button.
+        stale=observe();self.assertFalse(stale['available'])
+        self.assertFalse(stale['unavailableNativeStates'][0]['states']['sensitive'])
+        desktop=observer.uncached_native_desktop(atspi)
+        desktop.clear_cache.assert_called_once_with()
+        pipeline=control.Pipeline.__new__(control.Pipeline)
+        pipeline.app=window;pipeline.end=time.monotonic()+5;pipeline.q=mock.Mock()
+        pipeline.request=lambda *args,**kwargs:{'value':observe()}
+        actual=pipeline.target(label,['push button'])['value']
+        self.assertTrue(actual['enabled']);self.assertEqual(actual['point'],{'x':50,'y':20})
+        # A previously enabled cache must never authorize a now-disabled target.
+        live.update(cached_enabled=True,enabled=False)
+        refused=observe();self.assertFalse(refused['available'])
+        self.assertEqual(refused['unavailableNativeStates'],[{'role':'push button','states':{
+            'enabled':False,'sensitive':False,'visible':True,'showing':True,'defunct':False}}])
+        pipeline.q.call.assert_not_called()
+        live['enabled']=True
+        with self.assertRaisesRegex(RuntimeError,'occluded'):
+            observer.observed_control(desktop,window,label,['push button'],states,[1600,900],
+                probe=True,hit_test=lambda *_:[999])
+
     def test_native_child_control_requires_actual_original_app_ancestry(self):
         """Real process family and nonce checks; the accessible tree is modeled.
 
@@ -662,7 +717,9 @@ finally:
             box.get_state_set=lambda:types.SimpleNamespace(contains=lambda k:k not in('defunct','showing'))
             self.assertEqual(observer.observed_control(select_desktop,window,label,
                 ['list box'],states,[1600,900],probe=True,owner_check=owner),
-                {'available':False,'readOnlyObservation':True})
+                {'available':False,'readOnlyObservation':True,'unavailableNativeStates':[
+                    {'role':'list box','states':{'enabled':True,'sensitive':True,
+                        'visible':True,'showing':False,'defunct':False}}]})
             bad = []
             for key, value in [('pid', 0), ('window_pid', sibling.pid)]:
                 bad.append({**target, key: value})

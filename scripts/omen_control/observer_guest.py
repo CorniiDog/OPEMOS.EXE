@@ -290,6 +290,19 @@ def unlocked_control(read_locked,observe):
     return unavailable if locked()else value
 
 
+def uncached_native_desktop(atspi):
+    """Read current provider state, without changing the application or session.
+
+    This observer waits on its private request channel rather than running a
+    GLib event loop. A cached disabled Review button must not remain disabled
+    after real selection, nor may cached enabled state authorize later input.
+    """
+    desktop=atspi.get_desktop(0)
+    desktop.set_cache_mask(atspi.Cache.NONE)
+    desktop.clear_cache()
+    return desktop
+
+
 def observed_control(desktop,window,label,roles,states,screen,probe=False,hit_test=None,owner_check=None):
     """Fresh PID/window-owned native target geometry, without AX/DOM activation."""
     require(type(label)is str and 0<len(label)<=512 and roles
@@ -298,7 +311,7 @@ def observed_control(desktop,window,label,roles,states,screen,probe=False,hit_te
     require(type(window.get('pid'))is int and window['pid']>1
             and type(window.get('window_id'))is int and window['window_id']>0,
             'actual mapped native window/PID')
-    matches=[];count=desktop.get_child_count()
+    matches=[];unavailable_states=[];count=desktop.get_child_count()
     require(type(count)is int and 0<=count<=4096,'native desktop application bound')
     for index in range(count):
         app=desktop.get_child_at_index(index)
@@ -306,9 +319,12 @@ def observed_control(desktop,window,label,roles,states,screen,probe=False,hit_te
         for node in accessible_descendants(app,states['defunct']):
             if node.get_name()!=label or node.get_role_name()not in roles:continue
             state=node.get_state_set()
-            if not all(state.contains(states[k])for k in('enabled','sensitive','visible','showing')):
+            actual={k:state.contains(states[k])for k in('enabled','sensitive','visible','showing','defunct')}
+            require(all(type(v)is bool for v in actual.values()),'actual boolean native states')
+            if not all(actual[k]for k in('enabled','sensitive','visible','showing'))or actual['defunct']:
+                require(len(unavailable_states)<4,'finite matching unavailable native controls')
+                unavailable_states.append({'role':node.get_role_name(),'states':actual})
                 continue
-            if state.contains(states['defunct']):continue
             provider=node.get_process_id()
             ownership={'kind':'SAME_NATIVE_WINDOW_PROCESS','pid':provider}
             if provider!=window['pid']:
@@ -332,7 +348,10 @@ def observed_control(desktop,window,label,roles,states,screen,probe=False,hit_te
                 'nativeProcessOwner':ownership,
                 'nativeWindowHitChain':hit,'hitObservation':None if hit is None else 'native-same-control-unoccluded',
                 'enabled':True,'visible':True,'readOnlyObservation':True})
-    if probe and not matches:return {'available':False,'readOnlyObservation':True}
+    if probe and not matches:
+        value={'available':False,'readOnlyObservation':True}
+        if unavailable_states:value['unavailableNativeStates']=unavailable_states
+        return value
     require(len(matches)==1,'one genuine enabled PID/window-owned native control')
     return matches[0]
 
@@ -508,7 +527,7 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
     gi.require_version('Atspi','2.0')
     from gi.repository import Atspi,GLib
     expected={'bytes':cfg['native_executable_bytes'],'sha256':cfg['native_executable_sha256']}
-    desktop=Atspi.get_desktop(0);deadline=time.monotonic()+cfg['whole_seconds'];sequence=0
+    desktop=uncached_native_desktop(Atspi);deadline=time.monotonic()+cfg['whole_seconds'];sequence=0
     states={key:getattr(Atspi.StateType,name)for key,name in
             [('enabled','ENABLED'),('sensitive','SENSITIVE'),('visible','VISIBLE'),('showing','SHOWING'),('defunct','DEFUNCT'),('focused','FOCUSED'),('editable','EDITABLE')]}
     states['screen']=Atspi.CoordType.SCREEN
