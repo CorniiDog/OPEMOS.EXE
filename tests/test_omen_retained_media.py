@@ -48,7 +48,10 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
             self.assertFalse(observer.atspi_names_no_reply(error))
         nonce='a'*32;birth={'pid':101,'start_ticks':'7','exe_sha256':'b'*64,'inherited_nonce':nonce}
         app={'pid':101,'window_id':17,'transient_for':None};sent=[];errors=[];reads=[]
-        atspi=types.SimpleNamespace(get_desktop=lambda _:object(),
+        cache_calls=[]
+        desktop=types.SimpleNamespace(set_cache_mask=lambda mask:cache_calls.append(('mask',mask)),
+            clear_cache=lambda:cache_calls.append(('clear',)))
+        atspi=types.SimpleNamespace(get_desktop=lambda _:desktop,Cache=types.SimpleNamespace(NONE=0),
             StateType=types.SimpleNamespace(**{n:n for n in
                 ('ENABLED','SENSITIVE','VISIBLE','SHOWING','DEFUNCT','FOCUSED','EDITABLE')}),
             CoordType=types.SimpleNamespace(SCREEN='screen'))
@@ -95,6 +98,7 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                     left.close();worker.join(3)
                 self.assertFalse(worker.is_alive());self.assertEqual(errors,[])
             self.assertEqual(p.end,original_end)
+            self.assertEqual(cache_calls,[('mask',0),('clear',)])
             self.assertEqual([r['kind']for r in sent],['UI_STATE','UI_STATE','CLOSE'])
             self.assertEqual([r['sequence']for r in sent],[1,2,3])
 
