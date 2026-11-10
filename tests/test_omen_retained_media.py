@@ -172,7 +172,7 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                                 cfg={'labels':{}},request=reply)
         robot=control.RobotPipeline.__new__(control.RobotPipeline);robot.p=p
         with patch.object(control.time,'monotonic',side_effect=lambda:now[0]),\
-             self.assertRaisesRegex(RuntimeError,'deadline after native action-specific observation'):
+             self.assertRaisesRegex(RuntimeError,'original deadline after observation'):
             robot.after_state('chooser-open',{})
         self.assertEqual(p.end,100)
 

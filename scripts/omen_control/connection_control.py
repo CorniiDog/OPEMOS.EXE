@@ -883,9 +883,9 @@ class RobotPipeline:
         """Read native state after input; a QMP acknowledgement is insufficient."""
         p=self.p;end=min(p.end,time.monotonic()+25)
         while True:
-            need(time.monotonic()<end,'original deadline before native action-specific observation')
+            need(time.monotonic()<end,'actual action-specific native transition absent: '+name+'; original deadline before observation')
             raw=p.request('UI_STATE');windows=raw['value']['windows']
-            need(time.monotonic()<end,'original deadline after native action-specific observation')
+            need(time.monotonic()<end,'actual action-specific native transition absent: '+name+'; original deadline after observation')
             names=[n for w in raw['value']['namesByWindow']for n in w['names']]
             dialogs=[w for w in windows if w['dialog_type']and
                 (w['transient_for']==p.app['window_id']or w['pid']==p.app['pid'])]
