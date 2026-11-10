@@ -1080,30 +1080,44 @@ class Pipeline:
         self.q.close()
 
     def request(self,kind,**operands):
-        self.check()
         # Two declared paths may each contain512 characters; per-character
         # native consumption proofs share the existing32MiB/whole-clock bound.
-        remaining=self.end-time.monotonic();need(remaining>0 and self.sequence<4096,'original GUI operation clock/request bound')
-        process(self.binding);self.sequence+=1;self.observer.settimeout(remaining)
-        request={'nonce':self.binding['nonce'],'sequence':self.sequence,'kind':kind,**operands}
-        self.observer.sendall((json.dumps(request,separators=(',',':'))+'\n').encode())
-        response=observer_line(self.observer,1048576)
-        # Keep the bounded reply even if authentication rejects it. This is
-        # diagnostic data and never supplies an accepted native observation.
-        self.last_received_native_frame={'response':response,'diagnosticOnly':True,
-            'expected':{'nonce':request['nonce'],'sequence':self.sequence,
-                        'request_kind':kind,'process':self.ready['process']}}
-        need(time.monotonic()<self.end and response.get('kind')=='NATIVE_OBSERVATION' and
-             response.get('nonce')==request['nonce'] and response.get('sequence')==self.sequence and
-             response.get('request_kind')==kind and response.get('process')==self.ready['process'],
-             'ordered same native app observation within original clock')
-        path=self.root/('native-observation-'+str(self.sequence).zfill(3)+'.json')
-        pin=save(path,response);info=path.lstat()
-        self.observations.append(dict(pin,identity={k:getattr(info,k)for k in FULL9},
-            kind='native-observation'))
-        self.observation_bytes+=pin['bytes']
-        need(self.observation_bytes<=32*1024*1024,'complete bounded native observation history; first crossing retained')
-        return response
+        end=min(self.end,time.monotonic()+120)if kind=='UI_STATE'else self.end
+        unavailable_count=0
+        while True:
+            self.check()
+            remaining=end-time.monotonic();need(remaining>0 and self.sequence<4096,'original GUI operation clock/request bound')
+            process(self.binding);self.sequence+=1;self.observer.settimeout(remaining)
+            request={'nonce':self.binding['nonce'],'sequence':self.sequence,'kind':kind,**operands}
+            self.observer.sendall((json.dumps(request,separators=(',',':'))+'\n').encode())
+            response=observer_line(self.observer,1048576,end=end)
+            # Retain rejected frames as diagnostics, never accepted UI facts.
+            self.last_received_native_frame={'response':response,'diagnosticOnly':True,
+                'expected':{'nonce':request['nonce'],'sequence':self.sequence,
+                            'request_kind':kind,'process':self.ready['process']}}
+            unavailable=response.get('kind')=='NATIVE_OBSERVATION_UNAVAILABLE'
+            need(time.monotonic()<end and response.get('kind')in('NATIVE_OBSERVATION','NATIVE_OBSERVATION_UNAVAILABLE') and
+                 response.get('nonce')==request['nonce'] and response.get('sequence')==self.sequence and
+                 response.get('request_kind')==kind and response.get('process')==self.ready['process'],
+                 'ordered same native app observation within original clock')
+            if unavailable:
+                failure=response.get('failure',{})
+                need(kind=='UI_STATE'and response.get('readOnlyObservation')is True and type(failure)is dict and
+                     set(failure)=={'domain','code','message'}and failure['domain']=='atspi_error'and
+                     type(failure['code'])is int and failure['code']==1 and
+                     type(failure['message'])is str and len(failure['message'])<=1024 and
+                     failure['message'].startswith('Did not receive a reply.')and 'value'not in response,
+                     'only typed readonly AT-SPI names NoReply may be resampled')
+            path=self.root/(('native-unavailable-'if unavailable else'native-observation-')+str(self.sequence).zfill(3)+'.json')
+            pin=save(path,response);info=path.lstat()
+            self.observations.append(dict(pin,identity={k:getattr(info,k)for k in FULL9},
+                kind='native-observation-unavailable'if unavailable else'native-observation'))
+            self.observation_bytes+=pin['bytes']
+            need(self.observation_bytes<=32*1024*1024,'complete bounded native observation history; first crossing retained')
+            if not unavailable:return response
+            unavailable_count+=1
+            need(unavailable_count<3,'native AT-SPI names NoReply persisted; diagnostic history retained')
+            time.sleep(min(.2,max(0,end-time.monotonic())))
 
     def windows(self):return self.request('WINDOWS')['value']['windows']
 

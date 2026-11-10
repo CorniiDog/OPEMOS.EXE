@@ -338,6 +338,15 @@ def observed_names(desktop,window,states,owner_check=None):
     return {'names':names,'pid':window['pid'],'window_id':window['window_id'],'readOnlyObservation':True}
 
 
+def atspi_names_no_reply(error):
+    """Only the observed AT-SPI IPC NoReply; other errors remain fatal."""
+    return (getattr(error,'domain',None)=='atspi_error' and
+            type(getattr(error,'code',None))is int and error.code==1 and
+            type(getattr(error,'message',None))is str and
+            error.message.startswith('Did not receive a reply.') and
+            len(error.message)<=1024)
+
+
 def observed_chooser_location(desktop,window,declared,prefix_length,states,text_api,*,role='input_path',focus_chain):
     """Read only the focused native chooser entry for the declared target.
 
@@ -471,7 +480,7 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
     import select
     import gi
     gi.require_version('Atspi','2.0')
-    from gi.repository import Atspi
+    from gi.repository import Atspi,GLib
     expected={'bytes':cfg['native_executable_bytes'],'sha256':cfg['native_executable_sha256']}
     desktop=Atspi.get_desktop(0);deadline=time.monotonic()+cfg['whole_seconds'];sequence=0
     states={key:getattr(Atspi.StateType,name)for key,name in
@@ -546,9 +555,21 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
         elif kind=='UI_STATE':
             # Read the actual mapped main/companion/chooser windows. No app
             # command, DOM mutation or accessibility activation is permitted.
-            value={'windows':owned,'namesByWindow':[
-                {'window_id':w['window_id'],'names':observed_names(desktop,w,states,owner_check)['names']}
-                for w in owned]}
+            try:
+                value={'windows':owned,'namesByWindow':[
+                    {'window_id':w['window_id'],'names':observed_names(desktop,w,states,owner_check)['names']}
+                    for w in owned]}
+            except GLib.Error as error:
+                if not atspi_names_no_reply(error):raise
+                # No partial tree or cached names authorize progress/input.
+                # Reauthenticate the original app even for unavailability.
+                require(proc_identity(app['pid'],expected)==birth,
+                        'original app changed during unavailable native read')
+                emit({'kind':'NATIVE_OBSERVATION_UNAVAILABLE','nonce':nonce,
+                    'sequence':sequence,'request_kind':kind,'process':birth,
+                    'clock_ns':time.monotonic_ns(),'readOnlyObservation':True,
+                    'failure':{'domain':error.domain,'code':error.code,'message':error.message}})
+                continue
         elif kind=='NAMES':
             window=next((w for w in owned if w['window_id']==request['window_id']),None)
             require(window is not None,'original mapped app/native transient for visible names')

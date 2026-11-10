@@ -28,6 +28,137 @@ import types
 
 
 class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
+    def test_native_ui_names_no_reply_roundtrips_without_accepting_partial_state(self):
+        """Actual producer/consumer and private socket; AT-SPI/app facts modeled.
+
+        The real636 failure was an IPC NoReply during UI_STATE, after READY.
+        It must retain a negative reply and require a new complete observation,
+        with no input, changed identity, cached UI state or clock reset.
+        """
+        import socket, threading
+        import connection_control as control
+        import observer_guest as observer
+        from unittest.mock import patch
+        class IPCError(Exception):
+            def __init__(self,message,domain='atspi_error',code=1):
+                super().__init__(message);self.domain=domain;self.code=code;self.message=message
+        message='Did not receive a reply. Possible causes include: the remote application did not send a reply.'
+        for error in (IPCError(message,domain='other'),IPCError(message,code=0),
+                      IPCError(message,code=True),IPCError('Process is defunct')):
+            self.assertFalse(observer.atspi_names_no_reply(error))
+        nonce='a'*32;birth={'pid':101,'start_ticks':'7','exe_sha256':'b'*64,'inherited_nonce':nonce}
+        app={'pid':101,'window_id':17,'transient_for':None};sent=[];errors=[];reads=[]
+        atspi=types.SimpleNamespace(get_desktop=lambda _:object(),
+            StateType=types.SimpleNamespace(**{n:n for n in
+                ('ENABLED','SENSITIVE','VISIBLE','SHOWING','DEFUNCT','FOCUSED','EDITABLE')}),
+            CoordType=types.SimpleNamespace(SCREEN='screen'))
+        gi=types.ModuleType('gi');gi.require_version=lambda *args:None
+        repository=types.ModuleType('gi.repository');repository.Atspi=atspi
+        repository.GLib=types.SimpleNamespace(Error=IPCError)
+        def names(*args):
+            reads.append(True)
+            if len(reads)==1:raise IPCError(message)
+            return {'names':['MODELED complete current UI']}
+        left,right=socket.socketpair()
+        class Wire:
+            def __getattr__(self,name):return getattr(left,name)
+            def sendall(self,raw):sent.append(json.loads(raw));left.sendall(raw)
+        with tempfile.TemporaryDirectory()as temp:
+            p=control.Pipeline.__new__(control.Pipeline);p.root=Path(temp)
+            p.binding={'nonce':nonce};p.ready={'process':birth};p.sequence=0
+            p.end=time.monotonic()+10;original_end=p.end;p.observer=Wire()
+            p.check=lambda:None;p.observations=[];p.observation_bytes=0
+            cfg={'native_executable_bytes':1,'native_executable_sha256':'b'*64,
+                 'whole_seconds':10,'display':[1600,900]}
+            def serve():
+                try:observer.pipeline_requests(right.fileno(),
+                    types.SimpleNamespace(windows=lambda:[app]),app,birth,nonce,cfg)
+                except BaseException as error:errors.append(error)
+                finally:right.close()
+            worker=threading.Thread(target=serve)
+            with patch.dict(sys.modules,{'gi':gi,'gi.repository':repository}),\
+                 patch.object(observer,'proc_identity',return_value=birth),\
+                 patch.object(observer,'observed_names',side_effect=names),\
+                 patch.object(control,'process',return_value=None):
+                try:
+                    worker.start();reply=p.request('UI_STATE')
+                    self.assertEqual(reply['value']['namesByWindow'],
+                                     [{'window_id':17,'names':['MODELED complete current UI']}])
+                    self.assertEqual(p.sequence,2)
+                    self.assertEqual([r['kind']for r in p.observations],
+                                     ['native-observation-unavailable','native-observation'])
+                    unavailable=json.loads((p.root/'native-unavailable-001.json').read_bytes())
+                    self.assertNotIn('value',unavailable)
+                    self.assertEqual(unavailable['failure']['message'],message)
+                    p.request('CLOSE')
+                finally:
+                    left.close();worker.join(3)
+                self.assertFalse(worker.is_alive());self.assertEqual(errors,[])
+            self.assertEqual(p.end,original_end)
+            self.assertEqual([r['kind']for r in sent],['UI_STATE','UI_STATE','CLOSE'])
+            self.assertEqual([r['sequence']for r in sent],[1,2,3])
+
+    def test_native_unavailable_reply_keeps_identity_request_and_failure_guards(self):
+        import connection_control as control
+        from unittest.mock import patch
+        nonce='a'*32;birth={'pid':101,'start_ticks':'7'}
+        for case in ('nonce','sequence','process','domain','boolean-code','message','partial-value','control','malformed','expired'):
+            with self.subTest(case=case),tempfile.TemporaryDirectory()as temp:
+                class Wire:
+                    def __init__(self):self.sent=[];self.raw=b''
+                    def settimeout(self,value):pass
+                    def sendall(self,raw):
+                        r=json.loads(raw);self.sent.append(r)
+                        reply={'kind':'NATIVE_OBSERVATION_UNAVAILABLE','nonce':nonce,
+                            'sequence':r['sequence'],'request_kind':r['kind'],'process':birth,
+                            'readOnlyObservation':True,'failure':{'domain':'atspi_error','code':1,
+                            'message':'Did not receive a reply.'}}
+                        if case=='nonce':reply['nonce']='c'*32
+                        if case=='sequence':reply['sequence']+=1
+                        if case=='process':reply['process']={'pid':102,'start_ticks':'7'}
+                        if case=='domain':reply['failure']['domain']='other'
+                        if case=='boolean-code':reply['failure']['code']=True
+                        if case=='message':reply['failure']['message']='permission denied'
+                        if case=='partial-value':reply['value']={'namesByWindow':[]}
+                        if case=='malformed':reply['failure']=None
+                        self.raw=(json.dumps(reply)+'\n').encode()
+                    def recv(self,n):value=self.raw[:n];self.raw=self.raw[n:];return value
+                p=control.Pipeline.__new__(control.Pipeline);p.root=Path(temp)
+                p.binding={'nonce':nonce};p.ready={'process':birth};p.sequence=0
+                p.end=time.monotonic()+(-1 if case=='expired'else 10);p.observer=Wire()
+                p.check=lambda:None;p.observations=[];p.observation_bytes=0
+                reason=('clock/request bound'if case=='expired'else 'ordered same native app'if
+                        case in('nonce','sequence','process')else 'only typed readonly')
+                with patch.object(control,'process',return_value=None),self.assertRaisesRegex(RuntimeError,reason):
+                    p.request('CONTROL'if case=='control'else'UI_STATE')
+                self.assertEqual(len(p.observer.sent),0 if case=='expired'else 1)
+                self.assertEqual(p.observations,[])
+
+    def test_repeated_native_no_reply_stops_and_retains_every_negative_reply(self):
+        import connection_control as control
+        from unittest.mock import patch
+        nonce='a'*32;birth={'pid':101,'start_ticks':'7'}
+        class Wire:
+            def settimeout(self,value):pass
+            def sendall(self,raw):
+                request=json.loads(raw);self.raw=(json.dumps({
+                    'kind':'NATIVE_OBSERVATION_UNAVAILABLE','nonce':nonce,
+                    'sequence':request['sequence'],'request_kind':request['kind'],'process':birth,
+                    'readOnlyObservation':True,'failure':{'domain':'atspi_error','code':1,
+                    'message':'Did not receive a reply.'}})+'\n').encode()
+            def recv(self,n):value=self.raw[:n];self.raw=self.raw[n:];return value
+        with tempfile.TemporaryDirectory()as temp:
+            p=control.Pipeline.__new__(control.Pipeline);p.root=Path(temp)
+            p.binding={'nonce':nonce};p.ready={'process':birth};p.sequence=0
+            p.end=time.monotonic()+10;original_end=p.end;p.observer=Wire()
+            p.check=lambda:None;p.observations=[];p.observation_bytes=0
+            with patch.object(control,'process',return_value=None),patch.object(control.time,'sleep'),\
+                 self.assertRaisesRegex(RuntimeError,'NoReply persisted'):
+                p.request('UI_STATE')
+            self.assertEqual(p.sequence,3);self.assertEqual(p.end,original_end)
+            self.assertEqual(len(list(p.root.glob('native-unavailable-*.json'))),3)
+            self.assertFalse(list(p.root.glob('native-observation-*.json')))
+
     def test_completed_output_native_view_survives_cleared_progress_message(self):
         """Production consumer with the real 739 completed-view shape.
 
