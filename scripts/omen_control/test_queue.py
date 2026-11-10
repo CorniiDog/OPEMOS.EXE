@@ -3916,8 +3916,36 @@ def known_unit_cgroup_disappearance(error):
         len([r for r in evidence.get('recordedReservations',[])if r.get('unit')==unit and r.get('invocation')==invocation])==1)
 
 
+def readonly_pool_budget_field_transition(error):
+    """A closed failed read permits only the existing fresh readonly cut.
+
+    A retained VM partition's budget read failed during real teardown; a
+    later complete read succeeded. Absence is never budget or closure proof:
+    the second complete kernel observation must pass every original check.
+    """
+    if type(error)is not PoolAdmissionFailure:return False
+    evidence=error.evidence
+    if type(evidence)is not dict:return False
+    failure=evidence.get('firstFailure')
+    if type(failure)is not dict:return False
+    first=failure.get('firstFailure');opened=failure.get('currentOwnedDescriptor')
+    if (type(first)is not dict or set(first)!={'type','reason'} or
+            first['type']!='FileNotFoundError' or
+            first['reason']!="[Errno 2] No such file or directory: 'memory.max'" or
+            type(opened)is not dict or set(opened)!={'label','fdOpened'} or
+            opened['fdOpened']is not True or type(opened['label'])is not str):return False
+    prefix='/sys/fs/cgroup/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/'
+    if (not opened['label'].startswith(prefix) or
+            re.fullmatch('opemos-vm-pool-libvirt[0-9a-f]{32}\\.slice',
+                         opened['label'][len(prefix):])is None):return False
+    closes=failure.get('closeOutcomes')
+    return (type(closes)is list and any(type(c)is dict and
+            c.get('label')==opened['label'] and c.get('closed')is True and
+            c.get('UNKNOWN')is False for c in closes))
+
+
 def readonly_pool_membership_transition(error):
-    """Only a closed-descriptor kernel membership race may repeat a readonly cut."""
+    """Only closed failed observations may repeat the existing readonly cut."""
     if type(error)is not PoolAdmissionFailure:return False
     evidence=error.evidence
     if (type(evidence)is not dict or evidence.get('admitted')is not False or
@@ -3926,7 +3954,7 @@ def readonly_pool_membership_transition(error):
             evidence.get('unknownReservationsRetained')not in(None,[])):return False
     failure=evidence.get('firstFailure')
     if (type(failure)is not dict or failure.get('operationOrReleaseAuthorized')is not False or
-            (failure.get('firstFailure')!={'type':'ValueError','reason':'current group membership/populated race'} and not known_unit_cgroup_disappearance(error))):return False
+            (failure.get('firstFailure')!={'type':'ValueError','reason':'current group membership/populated race'} and not known_unit_cgroup_disappearance(error) and not readonly_pool_budget_field_transition(error))):return False
     closes=failure.get('closeOutcomes')
     return (type(closes)is list and 0<len(closes)<=1024 and
             all(type(c)is dict and c.get('closed')is True and c.get('UNKNOWN')is False

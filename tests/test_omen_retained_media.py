@@ -3585,6 +3585,92 @@ print(json.dumps({'uid':os.getresuid(),'results':result,'hookSourceJoin':True},s
                 self.assertEqual(cut.call_count,1)
         self.assertEqual(set(os.listdir('/proc/self/fd')),before)
 
+    def test_missing_pool_budget_field_repeats_only_one_complete_readonly_cut(self):
+        """Real failed FD read/Root formatter; cgroup label and pool are modeled."""
+        import ast,copy,zlib
+        from contextlib import contextmanager
+        from unittest.mock import patch
+        import test_queue as q
+        modern=q
+        original=zlib.decompress((Path(__file__).parent/
+            'fixtures/omen-ci-physical-a50-queue.py.zlib').read_bytes()).decode()
+        self.assertEqual(hashlib.sha256(original.encode()).hexdigest(),
+            'a50b1b9a979bf14abcd1ada631010fe3f3fc4ee4546cf08965612ac8d3973f90')
+        def functions(text):return {n.name:ast.get_source_segment(text,n)
+            for n in ast.parse(text).body if isinstance(n,ast.FunctionDef)}
+        prior=functions(original);current=functions((SOURCE/'test_queue.py').read_text())
+        old_predicate=prior['readonly_pool_membership_transition']
+        needle=' and not known_unit_cgroup_disappearance(error)'
+        self.assertEqual(old_predicate.count(needle),1)
+        new_predicate=old_predicate.replace(needle,needle+
+            ' and not readonly_pool_budget_field_transition(error)')
+        composed=original.replace(old_predicate,
+            current['readonly_pool_budget_field_transition']+'\n\n'+new_predicate)
+        after=functions(composed)
+        self.assertEqual(set(after)-set(prior),{'readonly_pool_budget_field_transition'})
+        self.assertEqual([name for name in prior if prior[name]!=after[name]],
+                         ['readonly_pool_membership_transition'])
+        physical=types.ModuleType('actual_A50_one_readonly_budget_retry')
+        physical.__file__=str(SOURCE/'test_queue.py')
+        exec(compile(composed,physical.__file__,'exec'),physical.__dict__)
+        # Exercise the exact minimal installed composition as well as current
+        # source. Old A50 helpers, Root proof and live-admission path stay intact.
+        self.assertEqual(physical.POOL_PROOF_SHA,modern.POOL_PROOF_SHA)
+        for q in(modern,physical):
+            with self.subTest(queue=q.__name__):
+                before=set(os.listdir('/proc/self/fd'))
+                native={'__name__':'actual_closed_pool_failure_formatter'}
+                self.assertEqual(hashlib.sha256(q.POOL_PROOF_SOURCE.encode()).hexdigest(),q.POOL_PROOF_SHA)
+                exec(compile(q.POOL_PROOF_SOURCE,'root_pool_proof_r1.py','exec'),native)
+                label='/sys/fs/cgroup/opemos.slice/opemos-vm.slice/opemos-vm-pool.slice/opemos-vm-pool-libvirt'+'a'*32+'.slice'
+                with tempfile.TemporaryDirectory(prefix='opemos-budget-field-')as tmp:
+                    io=native['KernelIO']();fd=io.open_dir(tmp)
+                    with self.assertRaises(native['OwnedFDProofFailure'])as actual:
+                        with contextmanager(native['owned_fd_evidence'])(fd,dict(label=label,fdOpened=True)):
+                            io.open_field(fd,'memory.max')
+                    with self.assertRaises(OSError):os.fstat(fd)
+                evidence=dict(admitted=False,reservationRetained=True,operationOrReleaseAuthorized=False,
+                              firstFailure=actual.exception.evidence)
+                backend=object.__new__(q.SystemdBackend)
+                def error(value=evidence):return q.PoolAdmissionFailure('actual closed missing field',copy.deepcopy(value))
+                # A new admission never retries this failure. Only existing read-only
+                # preparation can obtain one fully checked fresh kernel observation.
+                with patch.object(q,'_READONLY_BOUNDARY_PREPARATION',False),patch.object(backend,'_validate_pool_cut',side_effect=error(),create=True)as cut:
+                    with self.assertRaises(q.PoolAdmissionFailure):backend.validate_pool([])
+                    self.assertEqual(cut.call_count,1)
+                with patch.object(q,'_READONLY_BOUNDARY_PREPARATION',True):
+                    with patch.object(backend,'_validate_pool_cut',side_effect=[error(),{'fresh':True}],create=True)as cut:
+                        result=backend.validate_pool([])
+                        self.assertEqual(result,{'fresh':True,'readonlyMembershipTransition':evidence})
+                        self.assertEqual(cut.call_count,2)
+                        self.assertEqual(cut.call_args_list[0].args[1],cut.call_args_list[1].args[1])
+                    with patch.object(backend,'_validate_pool_cut',side_effect=[error(),error()],create=True)as cut:
+                        with self.assertRaises(q.PoolAdmissionFailure)as failed:backend.validate_pool([])
+                        self.assertEqual(cut.call_count,2)
+                        self.assertEqual(failed.exception.evidence['previousReadonlyPoolObservation'],evidence)
+                    variants=[]
+                    for path,value in (
+                            (('firstFailure','firstFailure','type'),'PermissionError'),
+                            (('firstFailure','firstFailure','reason'),"[Errno 2] No such file or directory: 'memory.swap.max'"),
+                            (('firstFailure','currentOwnedDescriptor','fdOpened'),False),
+                            (('firstFailure','currentOwnedDescriptor','label'),label.replace('opemos.slice','opemosXslice',1)),
+                            (('firstFailure','currentOwnedDescriptor','label'),label+'/foreign'),
+                            (('admitted',),True),(('operationOrReleaseAuthorized',),True),
+                            (('reservationRetained',),False),(('unknownReservationsRetained',),['foreign'])):
+                        bad=copy.deepcopy(evidence);target=bad
+                        for key in path[:-1]:target=target[key]
+                        target[path[-1]]=value;variants.append(bad)
+                    for key,value in(('closed',False),('UNKNOWN',True),('fd',None),('label','foreign')):
+                        bad=copy.deepcopy(evidence);bad['firstFailure']['closeOutcomes'][0][key]=value;variants.append(bad)
+                    for bad in variants:
+                        with self.subTest(bad=bad),patch.object(backend,'_validate_pool_cut',side_effect=error(bad),create=True)as cut:
+                            with self.assertRaises(q.PoolAdmissionFailure):backend.validate_pool([])
+                            self.assertEqual(cut.call_count,1)
+                    with patch.object(q.time,'monotonic',side_effect=[100.,101.,115.]),patch.object(backend,'_validate_pool_cut',side_effect=[error(),{}],create=True)as cut:
+                        with self.assertRaisesRegex(ValueError,'original whole pool observation deadline'):backend.validate_pool([])
+                        self.assertEqual([call.args[1]for call in cut.call_args_list],[115.,115.])
+                self.assertEqual(set(os.listdir('/proc/self/fd')),before)
+
     @unittest.skipUnless(os.geteuid() == 0 and sys.platform == 'linux', 'admitted Linux Root only')
     def test_whole_history_normal_record_to_real_issuer_beyond_metadata_leaf(self):
         import libvirt_producer as producer
