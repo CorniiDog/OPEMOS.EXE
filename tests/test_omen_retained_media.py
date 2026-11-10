@@ -5990,6 +5990,7 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
 
     @unittest.skipUnless(os.geteuid()==0,'actual Root private snapshot of UID1000 SQLite')
     def test_actual_full_health_private_snapshot_reaches_original_state_backend_without_live_SQL_write(self):
+        """Real retained SQLite >64MiB/>4096 rows; native pool facts MODELED."""
         from unittest import mock
         import importlib.util,sqlite3,contextlib
         spec=importlib.util.spec_from_file_location('full_health_actual_snapshot',SOURCE/'normal_probe.py')
@@ -6001,13 +6002,23 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             db.executescript('CREATE TABLE jobs(id TEXT,state TEXT,result TEXT);CREATE TABLE pool_unit_bindings(job_id TEXT,value TEXT);CREATE TABLE config(id INTEGER,value TEXT);')
             original={'terminalLifecycle':{'phase':'CLOSED','reservationRetained':False},'originalUnknown':'preserved'}
             db.execute('INSERT INTO jobs VALUES(?,?,?)',('actual-failed-original','failed',json.dumps(original)))
+            retained=json.dumps(dict(original,fixturePadding='p'*16384))
+            db.executemany('INSERT INTO jobs VALUES(?,?,?)',
+                           ((f'retained-{i}','failed',retained)for i in range(4097)))
             db.execute('INSERT INTO config VALUES(1,?)',(json.dumps({'manager':'system','fixture':'actual snapshot state'}),));db.commit();db.close()
-            os.chown(path,1000,1000);path.chmod(0o600);before=path.read_bytes();identity=n.full9(path.stat());calls=[]
+            os.chown(path,1000,1000);path.chmod(0o600)
+            self.assertGreater(path.stat().st_size,64*1024*1024)
+            before=n.sha(path.read_bytes());identity=n.full9(path.stat());calls=[]
             class Backend:
                 def __init__(self,root,cfg):
                     self_test.assertEqual(root,state);self_test.assertEqual(cfg['manager'],'system');calls.append(root)
                 def validate_pool(self,rows):
-                    self_test.assertEqual(rows,[{'id':'actual-failed-original','state':'failed','result':json.dumps(original)}])
+                    self_test.assertEqual(len(rows),4098)
+                    self_test.assertEqual(rows[0],{'id':'actual-failed-original','state':'failed','result':json.dumps(original)})
+                    self_test.assertEqual([r['id']for r in rows[1:]],
+                                          [f'retained-{i}'for i in range(4097)])
+                    self_test.assertTrue(all(r['state']=='failed'and r['result']==retained
+                                             for r in rows[1:]))
                     return {'admitted':True,'unknownReservationsRetained':[]}
             self_test=self
             q=types.SimpleNamespace(SystemdBackend=Backend,pool_rows=lambda db,rows:[dict(v)for v in rows])
@@ -6015,18 +6026,33 @@ class NormalRunnerMaterializationTests(unittest.TestCase):
             def selected(raw,pin):
                 self.assertEqual(raw,b'authenticated selected queue source');self.assertEqual(pin,{'fixture':'separately bound implementation'})
                 yield q
+            requests=[];actual_read=n.os.read
+            def chunk_read(fd,size):
+                requests.append(size)
+                return actual_read(fd,size)
             with mock.patch.object(n,'QUEUE',queue),mock.patch.object(n,'PRIVATE_DIR',private), \
-                 mock.patch.object(n,'health_queue',side_effect=selected):
+                 mock.patch.object(n,'health_queue',side_effect=selected), \
+                 mock.patch.object(n.os,'read',side_effect=chunk_read):
                 pool=[];rows,bindings,config=n.private_queue(b'authenticated selected queue source',
                     implementation_pin={'fixture':'separately bound implementation'},pool_capture=pool)
                 self.assertEqual(rows[0]['id'],'actual-failed-original');self.assertEqual(bindings,[])
                 self.assertEqual(pool,[{'admitted':True,'unknownReservationsRetained':[]}])
                 self.assertEqual(calls,[state]);self.assertEqual(list(private.iterdir()),[])
-                self.assertEqual((path.read_bytes(),n.full9(path.stat())),(before,identity))
+                self.assertLessEqual(max(requests),65536,'complete database copied/hashed in fixed chunks')
+                self.assertEqual((n.sha(path.read_bytes()),n.full9(path.stat())),(before,identity))
                 with mock.patch.object(Backend,'validate_pool',return_value={'admitted':False,'unknownReservationsRetained':['actual original refusal']}):
                     with self.assertRaisesRegex(RuntimeError,'canonical current whole-pool proof'):
                         n.private_queue(b'authenticated selected queue source',implementation_pin={'fixture':'separately bound implementation'})
-                self.assertEqual((path.read_bytes(),n.full9(path.stat())),(before,identity))
+                self.assertEqual((n.sha(path.read_bytes()),n.full9(path.stat())),(before,identity))
+                fds=set(os.listdir('/proc/self/fd'))
+                with mock.patch.object(n.os,'statvfs',return_value=types.SimpleNamespace(f_bavail=0,f_frsize=4096)):
+                    with self.assertRaisesRegex(RuntimeError,'actual private canonical snapshot free capacity'):
+                        n.private_queue(b'authenticated selected queue source',implementation_pin={'fixture':'separately bound implementation'})
+                with self.assertRaisesRegex(RuntimeError,'canonical snapshot original deadline'):
+                    n.private_snapshot_once(deadline=n.time.monotonic()-1)
+                self.assertEqual(set(os.listdir('/proc/self/fd')),fds)
+                self.assertEqual(list(private.iterdir()),[])
+                self.assertEqual((n.sha(path.read_bytes()),n.full9(path.stat())),(before,identity))
 
     @unittest.skipUnless(os.geteuid()==0,'actual Root snapshot of UID1000 SQLite sidecars')
     def test_full_health_snapshot_recopies_optional_sidecar_races_and_preserves_refusals(self):

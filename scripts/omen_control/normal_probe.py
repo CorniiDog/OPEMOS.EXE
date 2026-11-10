@@ -14,7 +14,7 @@ QUEUE=Path('/home/connor/.local/state/opemos-test-queue-r2')
 RUNNER=Path('/home/connor/.local/share/opemos-ci/github-runner')
 GH=['/usr/sbin/runuser','-u','connor','--','/usr/bin/env',
     'XDG_CONFIG_HOME=/home/connor/.config','/usr/bin/gh','api']
-MAX_DB=64*1024*1024
+SNAPSHOT_SECONDS=20
 PRIVATE_DIR=Path('/run')
 
 def need(ok,msg):
@@ -374,41 +374,89 @@ def queue_snapshot_file(path,cap,optional=False):
 def private_snapshot(validate=None):
     # Recopy the complete epoch on a known SQLite-data race only. All source,
     # owner, native, pool, SQL and UNKNOWN failures keep their original refusal.
-    end=time.monotonic()+2
+    start=time.monotonic();end=start+2;deadline=start+SNAPSHOT_SECONDS
     for attempt in range(3):
-        try:return private_snapshot_once(validate)
+        try:return private_snapshot_once(validate,deadline=deadline)
         except QueueSnapshotChanged:
             if attempt==2 or time.monotonic()>=end:raise
             time.sleep(min(.01,max(0,end-time.monotonic())))
             if time.monotonic()>=end:raise
 
 
-def private_snapshot_once(validate=None):
+def queue_database_snapshot(path,deadline,destination=None):
+    """Hash/copy the complete canonical epoch without buffering its history."""
+    need(time.monotonic()<deadline,'canonical snapshot original deadline')
+    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC);out=None
+    def custody(s):
+        need(stat.S_ISREG(s.st_mode)and s.st_nlink==1 and s.st_uid==1000 and
+             s.st_size>=0,'held current queue database custody '+str(path))
+    try:
+        before=os.fstat(fd);custody(before)
+        if destination is not None:
+            # This is a private working copy, not a new limit on retained
+            # canonical history. Reserve the already bounded sidecars too.
+            fs=os.statvfs(destination.parent)
+            need(before.st_size+17*1024*1024<=fs.f_bavail*fs.f_frsize,
+                 'actual private canonical snapshot free capacity')
+            out=os.open(destination,os.O_WRONLY|os.O_CREAT|os.O_EXCL|
+                        os.O_NOFOLLOW|os.O_CLOEXEC,0o600)
+            os.fchmod(out,0o600)
+        digest=hashlib.sha256();count=0
+        while True:
+            need(time.monotonic()<deadline,'canonical snapshot original deadline')
+            block=os.read(fd,65536)
+            if not block:break
+            count+=len(block)
+            if count>before.st_size:
+                raise QueueSnapshotChanged('canonical database grew during held copy')
+            digest.update(block)
+            if out is not None:
+                view=memoryview(block)
+                while view:
+                    need(time.monotonic()<deadline,'canonical snapshot original deadline')
+                    n=os.write(out,view);need(n>0,'private database copy short write')
+                    view=view[n:]
+        if out is not None:os.fsync(out)
+        after=os.fstat(fd);custody(after)
+        named=os.stat(path,follow_symlinks=False);custody(named)
+        if count!=before.st_size or full9(before)!=full9(after)or full9(before)!=full9(named):
+            raise QueueSnapshotChanged('canonical database epoch changed during held copy')
+        need(time.monotonic()<deadline,'canonical snapshot original deadline')
+        return {'full9':full9(before),'sha256':digest.hexdigest()}
+    finally:
+        try:
+            if out is not None:os.close(out)
+        finally:os.close(fd)
+
+
+def private_snapshot_once(validate=None,*,deadline=None):
     """One held canonical/WAL epoch; SQL is private-only and never writes live state."""
     state=QUEUE/'state'; names=['queue.sqlite3','queue.sqlite3-wal',
                                 'queue.sqlite3-shm','queue.sqlite3-journal']
-    limits=[MAX_DB,8*1024*1024,1024*1024,8*1024*1024]
-    initial={};payload={}
-    for name,limit in zip(names,limits):
-        path=state/name
-        value=queue_snapshot_file(path,limit,optional=name!='queue.sqlite3')
-        if value is None:initial[name]=None;continue
-        raw,identity=value
-        initial[name]={'full9':identity,'sha256':sha(raw)};payload[name]=raw
-    need(initial['queue.sqlite3'] is not None and
-         initial['queue.sqlite3-journal'] is None,
-         'current no-journal private queue snapshot')
-    # All byte reads precede private-only SQL. Any concurrent original change
-    # invalidates the snapshot, including sidecar appearance/disappearance.
-    for name,limit in zip(names,limits):
-        path=state/name
-        value=queue_snapshot_file(path,limit,optional=name!='queue.sqlite3')
-        current=None if value is None else {'full9':value[1],'sha256':sha(value[0])}
-        if current!=initial[name]:
-            raise QueueSnapshotChanged('queue source changed before private SQL')
+    limits=[None,8*1024*1024,1024*1024,8*1024*1024]
+    if deadline is None:deadline=time.monotonic()+SNAPSHOT_SECONDS
     temp=Path(tempfile.mkdtemp(prefix='runner21-probe-',dir=PRIVATE_DIR))
     try:
-        os.chmod(temp,0o700)
+        os.chmod(temp,0o700);initial={};payload={}
+        def cut(name,limit,destination=None):
+            need(time.monotonic()<deadline,'canonical snapshot original deadline')
+            if limit is None:
+                return queue_database_snapshot(state/name,deadline,destination)
+            value=queue_snapshot_file(state/name,limit,optional=True)
+            return None if value is None else {'full9':value[1],'sha256':sha(value[0])}
+        initial['queue.sqlite3']=cut(names[0],None,temp/names[0])
+        for name,limit in zip(names[1:],limits[1:]):
+            value=queue_snapshot_file(state/name,limit,optional=True)
+            if value is None:initial[name]=None;continue
+            raw,identity=value
+            initial[name]={'full9':identity,'sha256':sha(raw)};payload[name]=raw
+        need(initial['queue.sqlite3-journal'] is None,
+             'current no-journal private queue snapshot')
+        # All reads precede private-only SQL. Any concurrent original change,
+        # including a sidecar appearance/disappearance, invalidates the copy.
+        for name,limit in zip(names,limits):
+            if cut(name,limit)!=initial[name]:
+                raise QueueSnapshotChanged('queue source changed before private SQL')
         for name,raw in payload.items():
             path=temp/name
             fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
@@ -421,22 +469,26 @@ def private_snapshot_once(validate=None):
         db=sqlite3.connect('file:'+str(temp/'queue.sqlite3')+'?mode=ro',uri=True,timeout=2)
         db.row_factory=sqlite3.Row
         try:
+            db.set_progress_handler(lambda:int(time.monotonic()>=deadline),10000)
             db.execute('PRAGMA query_only=ON');db.execute('BEGIN')
-            rows=[dict(x) for x in db.execute('SELECT * FROM jobs ORDER BY rowid')]
-            bindings=[dict(x) for x in db.execute('SELECT * FROM pool_unit_bindings ORDER BY rowid')]
-            config=[dict(x) for x in db.execute('SELECT * FROM config ORDER BY rowid')]
-            need(db.total_changes==0 and len(rows)<=4096 and len(bindings)<=4096 and
-                 len(config)==1,'bounded canonical private queue relation')
+            def relation(sql):
+                values=[]
+                for row in db.execute(sql):
+                    need(time.monotonic()<deadline,'canonical snapshot original deadline')
+                    values.append(dict(row))
+                return values
+            rows=relation('SELECT * FROM jobs ORDER BY rowid')
+            bindings=relation('SELECT * FROM pool_unit_bindings ORDER BY rowid')
+            config=relation('SELECT * FROM config ORDER BY rowid')
+            need(db.total_changes==0 and len(config)==1,'canonical private queue relation')
             if validate is not None:validate(db,rows,bindings,config)
+            need(time.monotonic()<deadline,'canonical snapshot original deadline')
             db.rollback()
         finally:db.close()
+        for name,limit in zip(names,limits):
+            if cut(name,limit)!=initial[name]:
+                raise QueueSnapshotChanged('queue source changed after private SQL')
     finally:shutil.rmtree(temp)
-    for name,limit in zip(names,limits):
-        path=state/name
-        value=queue_snapshot_file(path,limit,optional=name!='queue.sqlite3')
-        current=None if value is None else {'full9':value[1],'sha256':sha(value[0])}
-        if current!=initial[name]:
-            raise QueueSnapshotChanged('queue source changed after private SQL')
     return rows,bindings,config
 
 def private_queue(source_raw,observer_capture=None,pool_capture=None,implementation_pin=None):
