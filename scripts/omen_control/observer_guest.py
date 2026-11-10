@@ -291,15 +291,15 @@ def unlocked_control(read_locked,observe):
 
 
 def uncached_native_desktop(atspi):
-    """Read current provider state, without changing the application or session.
+    """Keep structural metadata cached, while reading current provider states.
 
     This observer waits on its private request channel rather than running a
-    GLib event loop. A cached disabled Review button must not remain disabled
-    after real selection, nor may cached enabled state authorize later input.
+    GLib event loop. State changes must reach the input guard, but discarding
+    the whole tree also repeats synchronous name/role/child IPC during UI_STATE.
+    Preserve the normal structural cache without clearing its populated tree.
     """
     desktop=atspi.get_desktop(0)
-    desktop.set_cache_mask(atspi.Cache.NONE)
-    desktop.clear_cache()
+    desktop.set_cache_mask(atspi.Cache.DEFAULT & ~atspi.Cache.STATES)
     return desktop
 
 
@@ -523,14 +523,9 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
     host QMP sender, and no request can fabricate a stage or activate a control.
     """
     import select
-    import gi
-    gi.require_version('Atspi','2.0')
-    from gi.repository import Atspi,GLib
     expected={'bytes':cfg['native_executable_bytes'],'sha256':cfg['native_executable_sha256']}
-    desktop=uncached_native_desktop(Atspi);deadline=time.monotonic()+cfg['whole_seconds'];sequence=0
-    states={key:getattr(Atspi.StateType,name)for key,name in
-            [('enabled','ENABLED'),('sensitive','SENSITIVE'),('visible','VISIBLE'),('showing','SHOWING'),('defunct','DEFUNCT'),('focused','FOCUSED'),('editable','EDITABLE')]}
-    states['screen']=Atspi.CoordType.SCREEN
+    desktop=None;states=None;deadline=time.monotonic()+cfg['whole_seconds'];sequence=0
+    first_ui_state=False
     def owner_check(pid,window_pid):
         # Keep the existing exact-PID rule for separately owned native chooser
         # transients. Child-provider support is confined to the verified app.
@@ -542,6 +537,12 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
     def emit(value):
         wire=(json.dumps(value,sort_keys=True,separators=(',',':'))+'\n').encode()
         require(len(wire)<=1048576 and os.write(port,wire)==len(wire),'bounded native observation channel')
+    def progress(phase):
+        # Diagnostic only: the host retains these under the original request
+        # deadline and still requires a separate complete native observation.
+        emit({'kind':'NATIVE_OBSERVATION_PROGRESS','nonce':nonce,'sequence':sequence,
+              'request_kind':kind,'phase':phase,'process':birth,
+              'clock_ns':time.monotonic_ns(),'readOnlyObservation':True})
     def file_observation(key):
         require(key in('input_path','output_path'),'declared guest image role only')
         if key=='output_path'and not cfg.get('output_path'):
@@ -583,8 +584,20 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
         request=json.loads(line);sequence+=1
         require(request['nonce']==nonce and request['sequence']==sequence,'exact ordered native operation request')
         require(proc_identity(app['pid'],expected)==birth,'original app PID/start/executable/nonce unchanged')
+        kind=request['kind']
+        if desktop is None and kind in('CONTROL','CHOOSER_LOCATION','UI_STATE','NAMES'):
+            progress('atspi-import')
+            import gi
+            gi.require_version('Atspi','2.0')
+            from gi.repository import Atspi,GLib
+            progress('atspi-desktop')
+            desktop=uncached_native_desktop(Atspi)
+            states={key:getattr(Atspi.StateType,name)for key,name in
+                    [('enabled','ENABLED'),('sensitive','SENSITIVE'),('visible','VISIBLE'),('showing','SHOWING'),('defunct','DEFUNCT'),('focused','FOCUSED'),('editable','EDITABLE')]}
+            states['screen']=Atspi.CoordType.SCREEN
+            progress('atspi-ready')
         current=x.windows();owned=[w for w in current if w['pid']==app['pid']or w['transient_for']==app['window_id']]
-        kind=request['kind'];value={}
+        value={}
         if kind=='CONTROL':
             window=next((w for w in owned if w['window_id']==request['window_id']),None)
             require(window is not None,'mapped original app or native transient window')
@@ -601,16 +614,20 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
         elif kind=='UI_STATE':
             # Read the actual mapped main/companion/chooser windows. No app
             # command, DOM mutation or accessibility activation is permitted.
+            diagnose=not first_ui_state;first_ui_state=True
+            if diagnose:progress('ui-state-read')
             try:
                 value={'windows':owned,'namesByWindow':[
                     {'window_id':w['window_id'],'names':observed_names(desktop,w,states,owner_check)['names']}
                     for w in owned]}
+                if diagnose:progress('ui-state-complete')
             except GLib.Error as error:
                 if not atspi_names_no_reply(error):raise
                 # No partial tree or cached names authorize progress/input.
                 # Reauthenticate the original app even for unavailability.
                 require(proc_identity(app['pid'],expected)==birth,
                         'original app changed during unavailable native read')
+                if diagnose:progress('ui-state-unavailable')
                 emit({'kind':'NATIVE_OBSERVATION_UNAVAILABLE','nonce':nonce,
                     'sequence':sequence,'request_kind':kind,'process':birth,
                     'clock_ns':time.monotonic_ns(),'readOnlyObservation':True,

@@ -51,7 +51,7 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
         cache_calls=[]
         desktop=types.SimpleNamespace(set_cache_mask=lambda mask:cache_calls.append(('mask',mask)),
             clear_cache=lambda:cache_calls.append(('clear',)))
-        atspi=types.SimpleNamespace(get_desktop=lambda _:desktop,Cache=types.SimpleNamespace(NONE=0),
+        atspi=types.SimpleNamespace(get_desktop=lambda _:desktop,Cache=types.SimpleNamespace(DEFAULT=127,STATES=16),
             StateType=types.SimpleNamespace(**{n:n for n in
                 ('ENABLED','SENSITIVE','VISIBLE','SHOWING','DEFUNCT','FOCUSED','EDITABLE')}),
             CoordType=types.SimpleNamespace(SCREEN='screen'))
@@ -88,8 +88,10 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                     self.assertEqual(reply['value']['namesByWindow'],
                                      [{'window_id':17,'names':['MODELED complete current UI']}])
                     self.assertEqual(p.sequence,2)
-                    self.assertEqual([r['kind']for r in p.observations],
+                    self.assertEqual([r['kind']for r in p.observations if r['kind']!='native-observation-progress'],
                                      ['native-observation-unavailable','native-observation'])
+                    self.assertEqual(p.native_progress,['atspi-import','atspi-desktop','atspi-ready',
+                                                       'ui-state-read','ui-state-unavailable'])
                     unavailable=json.loads((p.root/'native-unavailable-001.json').read_bytes())
                     self.assertNotIn('value',unavailable)
                     self.assertEqual(unavailable['failure']['message'],message)
@@ -98,9 +100,69 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                     left.close();worker.join(3)
                 self.assertFalse(worker.is_alive());self.assertEqual(errors,[])
             self.assertEqual(p.end,original_end)
-            self.assertEqual(cache_calls,[('mask',0),('clear',)])
+            self.assertEqual(cache_calls,[('mask',111)])
             self.assertEqual([r['kind']for r in sent],['UI_STATE','UI_STATE','CLOSE'])
             self.assertEqual([r['sequence']for r in sent],[1,2,3])
+
+    def test_native_progress_timeout_retains_actual_stage_without_resubmit_or_input(self):
+        """Real private socket; progress cannot complete a UI_STATE or reset its clock."""
+        import socket,threading
+        import connection_control as control
+        from unittest import mock
+        nonce='a'*32;birth={'pid':101,'start_ticks':'7','inherited_nonce':nonce}
+        left,right=socket.socketpair();right.settimeout(2);release=threading.Event();requests=[];errors=[]
+        with tempfile.TemporaryDirectory()as temp:
+            p=control.Pipeline.__new__(control.Pipeline);p.root=Path(temp)
+            p.binding={'nonce':nonce};p.ready={'process':birth};p.sequence=0;p.actions=[]
+            p.end=time.monotonic()+1;original_end=p.end;p.observer=left
+            p.check=lambda:None;p.observations=[];p.observation_bytes=0;p.q=mock.Mock()
+            def serve():
+                try:
+                    raw=bytearray()
+                    while not raw.endswith(b'\n'):raw.extend(right.recv(1))
+                    request=json.loads(raw);requests.append(request)
+                    for phase in ('atspi-import','atspi-desktop'):
+                        right.sendall((json.dumps({'kind':'NATIVE_OBSERVATION_PROGRESS','nonce':nonce,
+                            'sequence':request['sequence'],'request_kind':'UI_STATE','phase':phase,
+                            'process':birth,'clock_ns':time.monotonic_ns(),'readOnlyObservation':True})+'\n').encode())
+                    release.wait(2)
+                except BaseException as error:errors.append(error)
+                finally:right.close()
+            worker=threading.Thread(target=serve)
+            with mock.patch.object(control,'process',return_value=None):
+                try:
+                    worker.start()
+                    with self.assertRaisesRegex((TimeoutError,RuntimeError),
+                            'timed out|original native observer deadline (before|after) receive'):
+                        p.request('UI_STATE')
+                finally:release.set();left.close();worker.join(2)
+            self.assertFalse(worker.is_alive());self.assertEqual(errors,[])
+            self.assertEqual(len(requests),1);self.assertEqual(p.sequence,1)
+            self.assertEqual(p.end,original_end);self.assertEqual(p.actions,[]);p.q.call.assert_not_called()
+            self.assertEqual(p.last_received_native_frame['response']['phase'],'atspi-desktop')
+            self.assertTrue(p.last_received_native_frame['diagnosticOnly'])
+            self.assertEqual([r['kind']for r in p.observations],['native-observation-progress']*2)
+            self.assertTrue(all('value'not in json.loads(Path(r['path']).read_bytes())for r in p.observations))
+
+    def test_native_progress_rejects_identity_order_and_positive_value_substitution(self):
+        import connection_control as control
+        from unittest import mock
+        nonce='a'*32;birth={'pid':101,'start_ticks':'7','inherited_nonce':nonce}
+        frame={'kind':'NATIVE_OBSERVATION_PROGRESS','nonce':nonce,'sequence':1,
+               'request_kind':'UI_STATE','phase':'atspi-import','process':birth,
+               'clock_ns':1,'readOnlyObservation':True}
+        for delta in ({'nonce':'b'*32},{'sequence':2},{'sequence':True},{'request_kind':'CONTROL'},
+                      {'process':dict(birth,pid=102)},{'clock_ns':True},
+                      {'phase':'ui-state-complete'},{'value':{'available':True}}):
+            with self.subTest(delta=delta),tempfile.TemporaryDirectory()as temp:
+                p=control.Pipeline.__new__(control.Pipeline);p.root=Path(temp)
+                p.binding={'nonce':nonce};p.ready={'process':birth};p.sequence=0
+                p.end=time.monotonic()+3;p.observer=mock.Mock();p.check=lambda:None
+                p.observations=[];p.observation_bytes=0;p.q=mock.Mock()
+                with mock.patch.object(control,'process',return_value=None),mock.patch.object(
+                        control,'observer_line',return_value=dict(frame,**delta)),self.assertRaises(RuntimeError):
+                    p.request('UI_STATE')
+                self.assertEqual(p.observations,[]);p.q.call.assert_not_called()
 
     def test_native_unavailable_reply_keeps_identity_request_and_failure_guards(self):
         import connection_control as control
@@ -550,7 +612,7 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
         import observer_guest as observer
         import connection_control as control
         from unittest import mock
-        live={'enabled':True,'cached_enabled':False,'cache':True}
+        live={'enabled':True,'cached_enabled':False,'cache':True,'mask':127}
         states={k:k for k in ('enabled','sensitive','visible','showing','defunct','screen')}
         def state():
             enabled=live['cached_enabled']if live['cache']else live['enabled']
@@ -558,18 +620,21 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                 False if k=='defunct'else enabled if k in ('enabled','sensitive')else True)
         component=types.SimpleNamespace(get_extents=lambda _:types.SimpleNamespace(
             x=10,y=10,width=80,height=20))
+        def cached(flag,value):
+            self.assertTrue(live['mask']&flag,'structural provider cache must remain available')
+            return value
         def node(name,children=()):
-            return types.SimpleNamespace(get_process_id=lambda:42,get_name=lambda:name,
-                get_role_name=lambda:'push button',get_child_count=lambda:len(children),
-                get_child_at_index=lambda i:children[i],get_state_set=state,
+            return types.SimpleNamespace(get_process_id=lambda:42,get_name=lambda:cached(4,name),
+                get_role_name=lambda:cached(32,'push button'),get_child_count=lambda:cached(2,len(children)),
+                get_child_at_index=lambda i:cached(2,children[i]),get_state_set=state,
                 get_component_iface=lambda:component,get_attributes=lambda:[])
         label='Review & Write Selected USB…';button=node(label);app=node('',[button])
         desktop=types.SimpleNamespace(get_child_count=lambda:1,get_child_at_index=lambda _:app)
         def cache(mask):
-            self.assertEqual(mask,0);live['cache']=False
+            live['mask']=mask;live['cache']=bool(mask&16)
         desktop.set_cache_mask=cache
         desktop.clear_cache=mock.Mock()
-        atspi=types.SimpleNamespace(get_desktop=lambda index:desktop,Cache=types.SimpleNamespace(NONE=0))
+        atspi=types.SimpleNamespace(get_desktop=lambda index:desktop,Cache=types.SimpleNamespace(DEFAULT=127,STATES=16))
         window={'pid':42,'window_id':456,'rect':[0,0,200,200]}
         def observe():
             return observer.observed_control(desktop,window,label,['push button'],states,
@@ -578,6 +643,8 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
         stale=observe();self.assertFalse(stale['available'])
         self.assertFalse(stale['unavailableNativeStates'][0]['states']['sensitive'])
         desktop=observer.uncached_native_desktop(atspi)
+        desktop.clear_cache.assert_not_called()
+        self.assertEqual(observer.observed_names(desktop,window,states)['names'],[label])
         desktop.clear_cache.assert_called_once_with()
         pipeline=control.Pipeline.__new__(control.Pipeline)
         pipeline.app=window;pipeline.end=time.monotonic()+5;pipeline.q=mock.Mock()

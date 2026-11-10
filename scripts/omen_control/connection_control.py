@@ -1066,6 +1066,7 @@ class Pipeline:
     def __init__(self,binding,config,q,observer,ready,root):
         self.binding=binding;self.cfg=config;self.q=q;self.observer=observer;self.ready=ready
         self.root=root;self.sequence=0;self.actions=[];self.observations=[];self.observation_bytes=0
+        self.native_progress=[]
         self.end=time.monotonic()+config['whole_seconds'];self.app=ready['app'];self.check=lambda:None;self.robot_click=None
         need(binding['nonce']==config['nonce']==ready['nonce'] and
              binding['artifact_source']==config['source_commit'] and
@@ -1092,7 +1093,39 @@ class Pipeline:
             process(self.binding);self.sequence+=1;self.observer.settimeout(remaining)
             request={'nonce':self.binding['nonce'],'sequence':self.sequence,'kind':kind,**operands}
             self.observer.sendall((json.dumps(request,separators=(',',':'))+'\n').encode())
-            response=observer_line(self.observer,1048576,end=end)
+            while True:
+                try:response=observer_line(self.observer,1048576,end=end)
+                except TimeoutError as error:
+                    phases=getattr(self,'native_progress',[])
+                    phase=phases[-1]if phases else'no-native-progress'
+                    raise TimeoutError('native '+kind+' response timed out; last phase='+phase)from error
+                if response.get('kind')!='NATIVE_OBSERVATION_PROGRESS':break
+                self.last_received_native_frame={'response':response,'diagnosticOnly':True,
+                    'expected':{'nonce':request['nonce'],'sequence':self.sequence,
+                                'request_kind':kind,'process':self.ready['process']}}
+                need(time.monotonic()<end and set(response)=={
+                    'kind','nonce','sequence','request_kind','phase','process','clock_ns','readOnlyObservation'}and
+                    response['nonce']==request['nonce']and type(response['sequence'])is int and response['sequence']==self.sequence and
+                    response['request_kind']==kind and response['process']==self.ready['process']and
+                    response['readOnlyObservation']is True and type(response['clock_ns'])is int and response['clock_ns']>0,
+                    'ordered same-app diagnostic progress within original clock')
+                phases=getattr(self,'native_progress',[])
+                expected_phases=('atspi-import','atspi-desktop','atspi-ready','ui-state-read')
+                index=len(phases)
+                need(index<5 and ((index<4 and response['phase']==expected_phases[index])or
+                    (index==4 and response['phase']in('ui-state-complete','ui-state-unavailable'))),
+                    'finite ordered native startup diagnostics, never readiness')
+                need(kind in('CONTROL','CHOOSER_LOCATION','UI_STATE','NAMES')and
+                     (index<3 or kind=='UI_STATE'),'native diagnostic request role')
+                path=self.root/('native-progress-'+str(index+1).zfill(3)+'.json')
+                pin=save(path,response);info=path.lstat()
+                self.observations.append(dict(pin,identity={k:getattr(info,k)for k in FULL9},
+                    kind='native-observation-progress'))
+                self.native_progress=phases+[response['phase']]
+                self.observation_bytes+=pin['bytes']
+                need(self.observation_bytes<=32*1024*1024,'complete bounded native observation history; first crossing retained')
+                # Keep reading this SAME request; progress neither resubmits it
+                # nor extends its clock or supplies any positive UI value.
             # Retain rejected frames as diagnostics, never accepted UI facts.
             self.last_received_native_frame={'response':response,'diagnosticOnly':True,
                 'expected':{'nonce':request['nonce'],'sequence':self.sequence,
