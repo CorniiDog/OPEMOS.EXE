@@ -16,8 +16,9 @@ test("native progress close always confirms both QEMU managers stopped", () => {
 });
 
 test("late x86 startup results are discarded after cancellation", () => {
+  assert.match(appliance, /let prepared = prepare_nvidia_build_session/);
+  assert.match(installer, /let prepared = prepare_nvidia_installer_appliance\(&working_image, &cancel\);/);
   for (const source of [appliance, installer]) {
-    assert.match(source, /let prepared = prepare_nvidia_build_session/);
     assert.match(source, /if cancel\.load\(Ordering::Relaxed\) \{[\s\S]{0,180}drop\(prepared\);[\s\S]{0,220}manager\.starting = false;/);
   }
 });

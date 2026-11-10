@@ -34,6 +34,12 @@
   tests are not run on this controller. Only the seven listed implementation,
   regression and TODO files are included. No protected-Main/PR-cap change,
   merge, publication or runtime adoption is authorized by that source push.
+- Actual first source CI `42749906456` frontend job `129610816003` preserved:
+  its cancellation source assertion expected the old installer preparation
+  function name. The installer now calls the bounded preparation function with
+  the same cancellation flag; both original late-result drop/starting-reset
+  assertions remain. Correct that exact call-site assertion before the next
+  source-check successor; no runtime guard or expected failure is broadened.
 
 ## Actual GUI3 host acquisition/network join — 2026-11-09
 
