@@ -159,6 +159,23 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
             self.assertEqual(len(list(p.root.glob('native-unavailable-*.json'))),3)
             self.assertFalse(list(p.root.glob('native-observation-*.json')))
 
+    def test_native_resampling_cannot_accept_a_late_action_transition(self):
+        """A complete chooser after the original25s cut is still too late."""
+        import connection_control as control
+        from unittest.mock import patch
+        now=[0.0]
+        def reply(kind):
+            now[0]=26.0
+            return {'value':{'windows':[{'window_id':18,'pid':101,
+                'dialog_type':True,'transient_for':17}], 'namesByWindow':[]}}
+        p=types.SimpleNamespace(end=100,app={'window_id':17,'pid':101},
+                                cfg={'labels':{}},request=reply)
+        robot=control.RobotPipeline.__new__(control.RobotPipeline);robot.p=p
+        with patch.object(control.time,'monotonic',side_effect=lambda:now[0]),\
+             self.assertRaisesRegex(RuntimeError,'deadline after native action-specific observation'):
+            robot.after_state('chooser-open',{})
+        self.assertEqual(p.end,100)
+
     def test_completed_output_native_view_survives_cleared_progress_message(self):
         """Production consumer with the real 739 completed-view shape.
 
