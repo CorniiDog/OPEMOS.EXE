@@ -5020,6 +5020,7 @@ print(json.dumps({'ordinaryUID1000':True,'isolatedInstalledQueue':True,'runtimeM
                         # A live kernel Unix socket is never a closed leftover node.
                         with acl.Held(c['run'])as directory:
                             with self.assertRaisesRegex(Exception,'no current kernel socket'):acl.runtime_socket(directory.fd,c['run'],'CLOSED')
+                        socket_inode=os.fstat(vnc.fileno()).st_ino
                         vnc.close();os.chown(nvram,0,0) # MODEL of libvirt's own owner restoration; no host effect.
                         # close() releases our real descriptor; the kernel's
                         # Unix-socket inventory can still expose its teardown.
@@ -5033,9 +5034,29 @@ print(json.dumps({'ordinaryUID1000':True,'isolatedInstalledQueue':True,'runtimeM
                                     if str(error)!='closed VNC node has no current kernel socket':raise
                                     if time.monotonic()>=socket_deadline:
                                         error.add_note('real fixture VNC teardown did not complete within two seconds')
+                                        node_inode=Path(c['run'],'vnc.sock').stat().st_ino
+                                        matched=[line for line in Path('/proc/net/unix').read_text().splitlines()[1:]
+                                            if len(line.split())>=7 and(line.split()[6]in(str(socket_inode),str(node_inode))or
+                                                len(line.split())>7 and line.split()[7]==c['run']+'/vnc.sock')]
+                                        error.add_note(json.dumps({'filesystemNodeInode':node_inode,
+                                            'originalSocketFDKernelInode':socket_inode,'actualMatchingRows':matched}))
                                         raise
                                     time.sleep(min(.02,max(0,socket_deadline-time.monotonic())))
                                 else:break
+                            # Preserve the genuine current inventory; add only
+                            # an explicit MODEL of an unrelated sockfs inode
+                            # numerically equal to the real filesystem node.
+                            # Never hide a live VNC path or fake its absence.
+                            from unittest import mock
+                            inventory=Path('/proc/net/unix').read_bytes()
+                            node_inode=Path(c['run'],'vnc.sock').stat().st_ino
+                            unrelated=(f'0000000000000000: 00000002 00000000 00000000 0001 01 {node_inode} '
+                                f'/run/opemos-unrelated-socket-{nonce}\n').encode()
+                            def socket_inventory(path,mode):
+                                self.assertEqual((path,mode),('/proc/net/unix','rb'))
+                                return io.BytesIO(inventory.rstrip(b'\n')+b'\n'+unrelated)
+                            with mock.patch.object(acl,'open',socket_inventory,create=True):
+                                self.assertTrue(acl.runtime_socket(directory.fd,c['run'],'CLOSED')['kernelSocketAbsent'])
                         closed={'domainAbsent':True,'originalPIDStartAbsent':True,'cgroupEmpty':True,
                             'VFIOFDsAbsent':True,'hostRestored':True,'unknown':[],
                             'qemuExitStatus':None,'controllerWaitpidClaimed':False,'explicitNativeClosureModel':True}

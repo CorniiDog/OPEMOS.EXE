@@ -1,5 +1,29 @@
 # OPEMOS.EXE — Product Checklist
 
+## VNC socket inventory identity — actual 405f Root CI, 2026-11-10
+
+- Current Linux job129623878486 failed one of four real installed-entry
+  deployment cases: the CLOSED predicate still found a current Unix socket
+  after the fixture closed its descriptor. The full failed log is retained;
+  its matched kernel row was not emitted, so the historical unique cause
+  remains unproven. No teardown-clock or expected-refusal waiver is applied.
+- The demonstrated source defect compares a filesystem pathname inode to a
+  sockfs inode from `/proc/net/unix`. The correction keeps the exact declared
+  live pathname refusal and all existing Root/full9/UID/network namespace and
+  closure guards, removing only that invalid cross-filesystem equality.
+  Current access bytes/hash, standalone adapter and embedded queue copy stay
+  coherent; immutable deployed generations and original-source pins remain.
+- The same real socket fixture retains its live-negative and actual-close
+  checks, adds a modeled unrelated kernel row sharing the real node's numeric
+  inode without hiding any genuine inventory, and records real matched rows
+  plus both inode identities if actual teardown fails again. AST and diff
+  checks only locally; project tests and source/effects review remain required.
+- This bounded Root/libvirt repair is local and unadopted. It must not cancel
+  or duplicate the already running 405f automatic native Ubuntu package path,
+  whose application/source effects have independent Core approval. Root-only
+  applicable source CI must be classified without an unnecessary duplicate
+  AppImage VM build; no merge, source activation or required-check bypass.
+
 ## Cold offline-installer prerequisites — actual GUI5, 2026-11-10
 
 - Normal Actions42686271276/5 actually booted Ubuntu, opened native65 and

@@ -322,7 +322,9 @@ def runtime_socket(directory,run,phase):
   st=os.fstat(fd);value={'path':run+'/vnc.sock','identity':p.ident(st)};p.need(stat.S_ISSOCK(st.st_mode)and st.st_uid==UID and st.st_nlink==1,'same domain owned VNC socket type/UID/link')
   if phase=='CLOSED':
    with open('/proc/net/unix','rb')as inventory:raw=inventory.read(1048577)
-   p.need(len(raw)<=1048576,'bounded current UNIX socket inventory');rows=[line.split()for line in raw.decode().splitlines()[1:]];p.need(all(len(row)>=7 for row in rows),'complete current UNIX socket rows');p.need(not any(row[6]==str(st.st_ino)or len(row)>7 and row[7]==value['path']for row in rows),'closed VNC node has no current kernel socket');value.update(kernelSocketAbsent=True,networkNamespace=os.readlink('/proc/self/ns/net'))
+   # proc/net/unix reports sockfs socket inodes, not this O_PATH filesystem
+   # node's inode. An unrelated socket may have the same numeric inode.
+   p.need(len(raw)<=1048576,'bounded current UNIX socket inventory');rows=[line.split()for line in raw.decode().splitlines()[1:]];p.need(all(len(row)>=7 for row in rows),'complete current UNIX socket rows');p.need(not any(len(row)>7 and row[7]==value['path']for row in rows),'closed VNC node has no current kernel socket');value.update(kernelSocketAbsent=True,networkNamespace=os.readlink('/proc/self/ns/net'))
   p.need(p.ident(st)==p.ident(os.stat('vnc.sock',dir_fd=directory,follow_symlinks=False))==p.ident(os.fstat(fd)),'held and named VNC socket epoch');return value
  finally:os.close(fd)
 
