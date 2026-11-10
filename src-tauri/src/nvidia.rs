@@ -4736,16 +4736,38 @@ pub(crate) fn run_guest_command_logged(
     log_path: &Path,
     cancel: Option<&AtomicBool>,
 ) -> Result<(), String> {
+    run_guest_command_logged_scoped(session, command, log_path, cancel, None)
+}
+
+pub(crate) fn run_guest_command_logged_with_timeout(
+    session: &impl GuestConnection,
+    command: &str,
+    log_path: &Path,
+    cancel: Option<&AtomicBool>,
+    timeout: Duration,
+) -> Result<(), String> {
+    run_guest_command_logged_scoped(session, command, log_path, cancel, Some(timeout))
+}
+
+fn run_guest_command_logged_scoped(
+    session: &impl GuestConnection,
+    command: &str,
+    log_path: &Path,
+    cancel: Option<&AtomicBool>,
+    timeout: Option<Duration>,
+) -> Result<(), String> {
+    if timeout.is_some_and(|value| value.is_zero()) {
+        return Err("NVIDIA appliance command deadline expired before startup.".into());
+    }
     #[cfg(windows)]
     {
-        const LOGGED_COMMAND_TIMEOUT: Duration = Duration::from_secs(30 * 60);
         const LOGGED_COMMAND_OUTPUT_LIMIT: usize = 16 * 1024 * 1024;
         let status = crate::windows_ssh::run_logged_command(
             session.ssh_port(),
             session.ssh_key(),
             command,
             log_path,
-            LOGGED_COMMAND_TIMEOUT,
+            timeout.unwrap_or(Duration::from_secs(30 * 60)),
             LOGGED_COMMAND_OUTPUT_LIMIT,
             cancel,
         )?;
@@ -4767,26 +4789,69 @@ pub(crate) fn run_guest_command_logged(
         let log_err = log
             .try_clone()
             .map_err(|e| format!("Could not prepare the NVIDIA target-build log: {e}"))?;
-        let mut child = ssh_command(session)?
+        let mut invocation = ssh_command(session)?;
+        invocation
             .arg(command)
             .stdin(Stdio::null())
             .stdout(Stdio::from(log))
-            .stderr(Stdio::from(log_err))
+            .stderr(Stdio::from(log_err));
+        if timeout.is_some() {
+            isolate_process_group(&mut invocation);
+        }
+        let deadline = match timeout {
+            Some(value) => Some(
+                Instant::now()
+                    .checked_add(value)
+                    .ok_or("NVIDIA appliance command deadline overflowed.")?,
+            ),
+            None => None,
+        };
+        let mut child = invocation
             .spawn()
             .map_err(|e| format!("Could not start the NVIDIA target build: {e}"))?;
         let status = loop {
             if cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed)) {
-                let _ = child.kill();
+                if timeout.is_some() {
+                    kill_owned_process_group(&child);
+                } else {
+                    let _ = child.kill();
+                }
                 let _ = child.wait();
                 return Err("NVIDIA target build cancelled.".into());
             }
-            if let Some(status) = child
-                .try_wait()
-                .map_err(|e| format!("Could not inspect the NVIDIA target build: {e}"))?
-            {
+            if deadline.is_some_and(|end| Instant::now() >= end) {
+                kill_owned_process_group(&child);
+                let _ = child.wait();
+                return Err("NVIDIA appliance command exceeded its original deadline.".into());
+            }
+            let observed = match child.try_wait() {
+                Ok(value) => value,
+                Err(error) => {
+                    if timeout.is_some() {
+                        kill_owned_process_group(&child);
+                        let _ = child.wait();
+                    }
+                    return Err(format!(
+                        "Could not inspect the NVIDIA target build: {error}"
+                    ));
+                }
+            };
+            if let Some(status) = observed {
+                if deadline.is_some_and(|end| Instant::now() >= end) {
+                    return Err(
+                        "NVIDIA appliance command completed after its original deadline.".into(),
+                    );
+                }
                 break status;
             }
-            thread::sleep(Duration::from_millis(500));
+            thread::sleep(
+                deadline
+                    .map(|end| {
+                        Duration::from_millis(500)
+                            .min(end.saturating_duration_since(Instant::now()))
+                    })
+                    .unwrap_or(Duration::from_millis(500)),
+            );
         };
         if status.success() {
             return Ok(());

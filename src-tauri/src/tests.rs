@@ -3910,6 +3910,94 @@ esac
     }
 
     #[test]
+    fn installer_dependency_acquisition_cannot_start_with_a_steamos_target() {
+        let refused = prepare_nvidia_session(
+            Some(Path::new("/must-not-open-this-target")),
+            NvidiaNetworkRole::InstallerDependencyAcquisition,
+        );
+        assert!(
+            matches!(refused, Err(message) if message == "Dependency acquisition cannot attach a SteamOS target.")
+        );
+        for role in [
+            NvidiaNetworkRole::Offline,
+            NvidiaNetworkRole::InstallerDependencyAcquisition,
+        ] {
+            let mut command = Command::new("qemu-system-x86_64");
+            configure_nvidia_appliance_network(&mut command, 2222, role);
+            let args: Vec<_> = command
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect();
+            assert_eq!(
+                &args[..3],
+                ["-device", "virtio-net-pci,netdev=net0", "-netdev"]
+            );
+            let fields: Vec<_> = args[3].split(',').collect();
+            assert_eq!(
+                fields.contains(&"restrict=on"),
+                role == NvidiaNetworkRole::Offline
+            );
+            assert_eq!(
+                fields
+                    .iter()
+                    .filter(|value| value.starts_with("hostfwd="))
+                    .count(),
+                1
+            );
+            assert!(fields.contains(&"hostfwd=tcp:127.0.0.1:2222-:22"));
+            assert!(!args.iter().any(|arg| arg.contains("steamos-target")
+                || arg.contains("9p")
+                || arg.contains("virtfs")));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn offline_installer_checks_installed_tools_without_package_network_access() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!(
+            "opemos-offline-install-tools-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        let tools = ["bsdtar", "gpg", "python3", "depmod", "modinfo", "pacman"];
+        for tool in tools {
+            let path = root.join(tool);
+            fs::write(&path, b"#!/bin/sh\nexit 0\n").unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let dnf = root.join("dnf");
+        fs::write(&dnf, b"#!/bin/sh\necho unexpected-dnf >&2\nexit 99\n").unwrap();
+        fs::set_permissions(&dnf, fs::Permissions::from_mode(0o700)).unwrap();
+        let check = || {
+            Command::new("/bin/bash")
+                .args(["-eu", "-c", offline_nvidia_installer_prerequisites()])
+                .env("PATH", &root)
+                .output()
+                .unwrap()
+        };
+        let ready = check();
+        assert!(
+            ready.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ready.stderr)
+        );
+        assert!(!String::from_utf8_lossy(&ready.stderr).contains("unexpected-dnf"));
+        fs::remove_file(root.join("pacman")).unwrap();
+        let absent = check();
+        assert!(!absent.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&absent.stderr).trim(),
+            "Offline installer prerequisite is missing: pacman"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn native_appliance_uses_exact_tcg_device_credentials_only() {
         let runtime_disk = Path::new("/tmp/native appliance,root.qcow2");
         let kvm = native_appliance_qemu_arguments("kvm", runtime_disk)

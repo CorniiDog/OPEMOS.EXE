@@ -743,6 +743,64 @@ finally:
             runtime=workspace/'cache/tauri/runtime-x86_64';runtime.unlink();runtime.symlink_to(download)
             with self.assertRaises(OSError):guest.offline_appimage_environment(workspace)
 
+    def test_source_tool_connection_reset_discards_partial_before_bounded_retry(self):
+        import io
+        import stat
+        import urllib.error
+        spec=importlib.util.spec_from_file_location('reset_source_tool',SOURCE.parent/'prepare_ubuntu_source_inputs.py')
+        producer=importlib.util.module_from_spec(spec);spec.loader.exec_module(producer)
+        class Response(io.BytesIO):
+            headers={'Content-Length':'8'}
+            def __init__(self,fail=False):super().__init__(b'complete');self.fail=fail;self.reads=0
+            def read(self,n=-1):
+                self.reads+=1
+                if self.fail and self.reads==1:return b'bad'
+                if self.fail:raise urllib.error.URLError(ConnectionResetError(104,'peer reset'))
+                return super().read(n)
+        attempts=[];pauses=[];messages=[]
+        def opener(url,timeout):
+            attempts.append((url,timeout));return Response(fail=len(attempts)==1)
+        with tempfile.TemporaryDirectory()as temporary:
+            target=Path(temporary)/'runtime-x86_64'
+            producer.download_packaging_tool('https://example.invalid/existing-tool',target,
+                opener=opener,sleeper=pauses.append,output=messages.append)
+            self.assertEqual(target.read_bytes(),b'complete')
+            self.assertEqual(target.stat().st_nlink,1)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode),0o700)
+            self.assertFalse(target.with_name('.runtime-x86_64.partial').exists())
+            self.assertEqual(len(attempts),2);self.assertEqual(pauses,[1])
+            self.assertIn('3 bytes',messages[0]);self.assertTrue(all(0<x[1]<=60 for x in attempts))
+            with self.assertRaisesRegex(ValueError,'fresh packaging tool destination'):
+                producer.download_packaging_tool('https://example.invalid/existing-tool',target,opener=opener)
+            self.assertEqual(target.read_bytes(),b'complete');self.assertEqual(len(attempts),2)
+            interrupted=[];failed=Path(temporary)/'repeated-reset'
+            def always_reset(url,timeout):interrupted.append(url);return Response(fail=True)
+            with self.assertRaises(urllib.error.URLError):
+                producer.download_packaging_tool('https://example.invalid/existing-tool',failed,
+                    opener=always_reset,sleeper=lambda delay:None,output=lambda text:None)
+            self.assertEqual(len(interrupted),3);self.assertFalse(failed.exists())
+            self.assertFalse(failed.with_name('.repeated-reset.partial').exists())
+
+    def test_source_tool_permanent_or_expired_response_never_retries_or_publishes(self):
+        import io
+        import urllib.error
+        spec=importlib.util.spec_from_file_location('refused_source_tool',SOURCE.parent/'prepare_ubuntu_source_inputs.py')
+        producer=importlib.util.module_from_spec(spec);spec.loader.exec_module(producer)
+        calls=[]
+        def denied(url,timeout):
+            calls.append(url);raise urllib.error.HTTPError(url,403,'denied',{},None)
+        class Response(io.BytesIO):headers={'Content-Length':'2'}
+        with tempfile.TemporaryDirectory()as temporary:
+            target=Path(temporary)/'tool'
+            with self.assertRaises(urllib.error.HTTPError):
+                producer.download_packaging_tool('https://example.invalid/tool',target,opener=denied)
+            self.assertEqual(len(calls),1);self.assertFalse(target.exists())
+            times=iter((0.,0.,0.,0.,181.))
+            with self.assertRaisesRegex(ValueError,'deadline after read'):
+                producer.download_packaging_tool('https://example.invalid/tool',target,
+                    opener=lambda *a,**k:Response(b'ok'),clock=lambda:next(times))
+            self.assertFalse(target.exists());self.assertFalse(target.with_name('.tool.partial').exists())
+
     def test_actual_node_cli_relative_module_survives_producer_and_guest_extraction(self):
         """Real tar and Node execution; no npm download or guest acceptance."""
         import tarfile

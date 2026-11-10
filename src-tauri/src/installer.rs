@@ -456,6 +456,94 @@ pub(crate) fn validate_on_demand_build_plan(session: &ApplianceSession) -> Resul
     })
 }
 
+const INSTALLER_DEPENDENCY_PREPARATION_TIMEOUT: Duration = Duration::from_secs(600);
+
+pub(crate) fn offline_nvidia_installer_prerequisites() -> &'static str {
+    r#"for tool in bsdtar gpg python3 depmod modinfo pacman; do
+  if ! command -v "$tool" >/dev/null; then
+    printf 'Offline installer prerequisite is missing: %s\n' "$tool" >&2
+    exit 1
+  fi
+done"#
+}
+
+fn prepare_nvidia_installer_appliance(
+    working_image: &Path,
+    cancel: &AtomicBool,
+) -> Result<NvidiaBuildSession, String> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err("NVIDIA installer dependency preparation cancelled.".into());
+    }
+    let qemu_img = find_binary("qemu-img").ok_or("qemu-img is required.")?;
+    let working_image = validate_nvidia_target_image(working_image, &qemu_img)?;
+    let deadline = Instant::now() + INSTALLER_DEPENDENCY_PREPARATION_TIMEOUT;
+    let (mut session, offline_restart) = prepare_nvidia_installer_dependency_session()?;
+    // This local session is deliberately not published as a ready installer.
+    // Its Drop guard closes the owned child on every failure or cancellation.
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("NVIDIA installer dependency preparation cancelled.".into());
+        }
+        if Instant::now() >= deadline {
+            return Err(
+                "NVIDIA installer dependency preparation exceeded its original deadline.".into(),
+            );
+        }
+        if let Some(status) = session
+            .child
+            .try_wait()
+            .map_err(|error| format!("Could not inspect dependency-appliance startup: {error}"))?
+        {
+            return Err(format!(
+                "Installer dependency appliance exited before readiness: {status}"
+            ));
+        }
+        if let Ok(output) = handshake(&session) {
+            if output == READY_MARKER {
+                let health = collect_guest_health(&session)?;
+                if health.architecture != "x86_64" {
+                    return Err("Installer dependency appliance has the wrong architecture.".into());
+                }
+                verify_nvidia_guest_device_timeout(&session)?;
+                break;
+            }
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    let command_budget = remaining
+        .checked_sub(Duration::from_secs(30))
+        .filter(|value| !value.is_zero())
+        .ok_or("Installer dependency deadline leaves no safe shutdown time.")?;
+    // Existing Fedora distro repositories, keys and signature policy only.
+    // No signature switch, key or repository is added or disabled. The
+    // SteamOS target and all NVIDIA/installer payloads are still absent.
+    let command = format!(
+        r#"set -euo pipefail
+sudo dnf --repo=fedora --repo=updates --setopt=install_weak_deps=False --setopt=retries=2 --setopt=timeout=30 install -y bsdtar gnupg2 python3 kmod pacman
+{prerequisites}
+for tool in bsdtar gpg python3 depmod modinfo pacman; do
+  rpm -q --whatprovides "$(command -v "$tool")"
+done
+sync"#,
+        prerequisites = offline_nvidia_installer_prerequisites(),
+    );
+    run_guest_command_logged_with_timeout(
+        &session,
+        &command,
+        &session.runtime_dir.join("installer-dependencies.log"),
+        Some(cancel),
+        command_budget,
+    )?;
+    if cancel.load(Ordering::Relaxed) || Instant::now() >= deadline {
+        return Err(
+            "Installer dependency preparation cancelled or exceeded its original deadline.".into(),
+        );
+    }
+    restart_nvidia_installer_offline(&mut session, offline_restart, &working_image, deadline)?;
+    Ok(session)
+}
+
 pub(crate) fn start_nvidia_install_appliance_blocking(
     app: tauri::AppHandle,
 ) -> Result<NvidiaBuildStatus, String> {
@@ -517,7 +605,7 @@ pub(crate) fn start_nvidia_install_appliance_blocking(
             .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
         manager.cancel_build.clone()
     };
-    let prepared = prepare_nvidia_build_session(Some(&working_image));
+    let prepared = prepare_nvidia_installer_appliance(&working_image, &cancel);
     let mut manager = build_manager_state
         .lock()
         .map_err(|_| "NVIDIA build-appliance state lock is unavailable.")?;
@@ -3193,7 +3281,7 @@ if test ! -d "$ROOT/usr/lib/holo/pacmandb/local"; then
   echo 'The selected SteamOS recovery root lacks its expected /usr/lib/holo/pacmandb/local package database; refusing NVIDIA mutation.' >&2
   exit 1
 fi
-sudo dnf install -y bsdtar gnupg2 python3 kmod pacman
+{offline_prerequisites}
 test -d /var/tmp
 test "$(findmnt -rn -T /var/tmp -o FSTYPE)" != tmpfs
 test -f "$WORK/support/{keyring_path}"
@@ -3221,6 +3309,7 @@ trap - EXIT INT TERM"#,
                 userspace_arguments = userspace_arguments,
                 compression_profile = NVIDIA_COMPRESSION_PROFILE,
                 installer_permissions = installer_permissions,
+                offline_prerequisites = offline_nvidia_installer_prerequisites(),
             );
             let execution_result = run_guest_command_logged(
                 &connection,

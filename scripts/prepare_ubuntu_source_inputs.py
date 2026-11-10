@@ -7,6 +7,7 @@ Root controller admits a source-build guest. No Actions token enters it.
 """
 import argparse
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -15,12 +16,15 @@ import shutil
 import stat
 import subprocess
 import tarfile
+import time
+import urllib.error
 import urllib.request
 
 PACKAGES = ('build-essential','ca-certificates','curl','file','genisoimage','git',
             'libayatana-appindicator3-dev','librsvg2-dev','libssl-dev',
             'libwebkit2gtk-4.1-dev','openssh-client','ovmf','patchelf',
             'pkg-config','python3','qemu-system-x86','qemu-utils','xdg-utils','xz-utils')
+TOOL_DOWNLOAD_MAX_BYTES = 200000000
 
 
 def need(ok, why):
@@ -36,6 +40,65 @@ def digest(path):
     with Path(path).open('rb') as source:
         while block := source.read(1048576): h.update(block)
     return h.hexdigest()
+
+
+def download_packaging_tool(url, destination, *, opener=None, clock=time.monotonic,
+                            sleeper=time.sleep, output=print):
+    """Retry an interrupted public download, never reuse incomplete tool bytes."""
+    opener = urllib.request.urlopen if opener is None else opener
+    destination = Path(destination)
+    need(not os.path.lexists(destination), 'fresh packaging tool destination required')
+    partial = destination.with_name('.'+destination.name+'.partial')
+    deadline = clock()+180
+    for attempt in range(1, 4):
+        owned = None; size = 0
+        try:
+            need(clock() < deadline, 'packaging tool acquisition deadline expired')
+            with opener(url, timeout=min(60, deadline-clock())) as source:
+                fd = os.open(partial, os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW, 0o600)
+                owned = os.fstat(fd)
+                with os.fdopen(fd, 'wb') as stream:
+                    declared = source.headers.get('Content-Length')
+                    declared = None if declared is None else int(declared)
+                    need(declared is None or 0 < declared <= TOOL_DOWNLOAD_MAX_BYTES,
+                         'bounded packaging tool response length')
+                    while True:
+                        need(clock() < deadline, 'original packaging tool deadline before read')
+                        block = source.read(1048576)
+                        need(clock() < deadline, 'original packaging tool deadline after read')
+                        if not block: break
+                        size += len(block)
+                        need(size <= TOOL_DOWNLOAD_MAX_BYTES, 'bounded packaging tool download')
+                        stream.write(block)
+                    if declared is not None and size != declared:
+                        raise http.client.IncompleteRead(b'', max(0, declared-size))
+                    need(size > 0, 'empty packaging tool download')
+                    stream.flush(); os.fchmod(stream.fileno(), 0o700); os.fsync(stream.fileno())
+            actual = partial.lstat()
+            need((actual.st_dev,actual.st_ino)==(owned.st_dev,owned.st_ino) and
+                 stat.S_ISREG(actual.st_mode) and actual.st_uid==os.getuid() and
+                 actual.st_nlink==1, 'same owned completed tool partial')
+            # Unlike replace/rename, link refuses any pre-existing destination.
+            os.link(partial, destination, follow_symlinks=False)
+            partial.unlink(); owned = None
+            return
+        except (urllib.error.URLError, ConnectionError, TimeoutError,
+                http.client.IncompleteRead) as error:
+            if isinstance(error, urllib.error.HTTPError):
+                transient = error.code in (408,429,500,502,503,504)
+            elif isinstance(error, urllib.error.URLError):
+                transient = isinstance(error.reason, (ConnectionError,TimeoutError))
+            else: transient = True
+            if not transient or attempt == 3 or clock() >= deadline: raise
+            output(f'Packaging tool {destination.name}: attempt {attempt} interrupted at {size} bytes ({type(error).__name__}); retrying fresh bytes')
+            sleeper(min(attempt, max(0, deadline-clock())))
+        finally:
+            if owned is not None:
+                actual = partial.lstat()
+                need((actual.st_dev,actual.st_ino)==(owned.st_dev,owned.st_ino) and
+                     stat.S_ISREG(actual.st_mode) and actual.st_uid==os.getuid() and
+                     actual.st_nlink==1, 'same owned interrupted tool partial')
+                partial.unlink()
 
 
 def safe_tree(output, path, name, member, base=None, parents=(), preserve_file_links=False):
@@ -106,13 +169,7 @@ def main():
         'linuxdeploy-plugin-appimage.AppImage':'https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage',
         'runtime-x86_64':'https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64'}
     for name,url in tools.items():
-        with urllib.request.urlopen(url,timeout=60) as source, (tauri/name).open('xb') as output:
-            size = 0
-            while block := source.read(1048576):
-                size += len(block); need(size <= 200000000, 'bounded packaging tool download')
-                output.write(block)
-            need(size > 0, 'empty packaging tool download')
-        (tauri/name).chmod(0o700)
+        download_packaging_tool(url, tauri/name)
     archive = args.output/'ubuntu-source-inputs.tar'
     expanded = 0; count = 0
     def member(info):

@@ -1,5 +1,40 @@
 # OPEMOS.EXE — Product Checklist
 
+## Cold offline-installer prerequisites — actual GUI5, 2026-11-10
+
+- Normal Actions42686271276/5 actually booted Ubuntu, opened native65 and
+  pointer-selected the source/output and clicked Build. The real Fedora
+  installer reached validation, then its unconditional `dnf install` failed
+  DNS inside the deliberately restricted appliance. Retained original log
+  `0debb9e6…` proves the failure precedes the pinned Core installer. GUI4de is
+  failed/CLOSED/released; no completed image, USB or SteamOS result is claimed.
+- The bounded repair provisions only the five existing Fedora prerequisites
+  before any target or NVIDIA/installer input is attached. Normal child shutdown
+  precedes one restricted restart of the same private COW; only that second
+  readiness permits existing target hotplug and offline validation. Default
+  builder isolation, original inputs, Core trust and the normal whole-job clock
+  remain. Preparation has one finite deadline and the existing cancellation,
+  command, watchdog and cleanup paths. Its diagnostics survive normal cleanup.
+- The separate actual cd904 hosted source-input failure was a public Tauri
+  download connection reset. Its existing downloader now retries only transient
+  transport/server errors within one finite deadline, discards only its own
+  incomplete bytes, and retains the same URLs, size bound and artifact identity.
+- Meaningful network-role/target refusal, offline-tool and interrupted-source
+  regressions are added but unrun locally. Required source CI, exact Core review,
+  an actual new OMEN-native package and a normal cause-changed GUI run remain.
+  The original log inspection's busy-unmount failure stays preserved; the exact
+  owned remaining association was subsequently detached by approved normal
+  maintenance, with the full raw hash unchanged and same12c listener/two natural
+  heartbeat advances. Receipts are under scheduler
+  `normal-automatic-GUI42686271276-attempt5-currentcd904-native65`.
+- Necessary lead source push: the bounded
+  `work/exe-offline-installer-dependency-preparation-20261110` branch targets
+  verified `https://github.com/CorniiDog/OPEMOS.EXE.git`, based on `cd904efe`.
+  Remote Checks and the OMEN-native package producer are required; project
+  tests are not run on this controller. Only the seven listed implementation,
+  regression and TODO files are included. No protected-Main/PR-cap change,
+  merge, publication or runtime adoption is authorized by that source push.
+
 ## Actual GUI3 host acquisition/network join — 2026-11-09
 
 - Actual normal Actions42642945013 attempt3/job129335571982 booted Ubuntu

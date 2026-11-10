@@ -12,6 +12,35 @@ pub(crate) fn configure_offline_appliance_network(command: &mut Command, ssh_por
         ));
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NvidiaNetworkRole {
+    Offline,
+    InstallerDependencyAcquisition,
+}
+
+// Only the fixed distro-prerequisite phase may use this uplink. It has no
+// SteamOS target or NVIDIA/installer inputs. The same owned COW is subsequently
+// restarted with the ordinary restricted backend before target hotplug.
+pub(crate) fn configure_nvidia_appliance_network(
+    command: &mut Command,
+    ssh_port: u16,
+    role: NvidiaNetworkRole,
+) {
+    if role == NvidiaNetworkRole::Offline {
+        configure_offline_appliance_network(command, ssh_port);
+    } else {
+        command
+            .args(["-device", "virtio-net-pci,netdev=net0"])
+            .arg("-netdev")
+            .arg(format!("user,id=net0,hostfwd=tcp:127.0.0.1:{ssh_port}-:22"));
+    }
+}
+
+pub(crate) struct NvidiaOfflineRestart {
+    program: PathBuf,
+    arguments: Vec<std::ffi::OsString>,
+}
+
 // The bundled template can be read-only (notably after Windows ISO transfer).
 // Only the session-owned pflash copy is writable; never alter the template.
 pub(crate) fn copy_writable_uefi_vars(template: &Path, destination: &Path) -> Result<(), String> {
@@ -1076,6 +1105,14 @@ pub(crate) fn archive_and_remove_nvidia_build_runtime(
         ("NVIDIA BUILD", runtime_dir.join("nvidia-build.log")),
         ("BUILD RESULT", runtime_dir.join("nvidia-build-result.json")),
         ("NVIDIA INSTALL", runtime_dir.join("nvidia-install.log")),
+        (
+            "INSTALLER DEPENDENCIES",
+            runtime_dir.join("installer-dependencies.log"),
+        ),
+        (
+            "INSTALLER NETWORK TRANSITION",
+            runtime_dir.join("installer-network-transition.json"),
+        ),
         (
             "NVIDIA INSTALL MUTATION",
             runtime_dir.join("nvidia-install-mutation.log"),
@@ -2262,6 +2299,51 @@ pub(crate) fn prepare_session_with_output(
 pub(crate) fn prepare_nvidia_build_session(
     target_working_image: Option<&Path>,
 ) -> Result<NvidiaBuildSession, String> {
+    prepare_nvidia_session(target_working_image, NvidiaNetworkRole::Offline)
+        .map(|(session, _)| session)
+}
+
+pub(crate) fn prepare_nvidia_installer_dependency_session(
+) -> Result<(NvidiaBuildSession, NvidiaOfflineRestart), String> {
+    prepare_nvidia_session(None, NvidiaNetworkRole::InstallerDependencyAcquisition)
+}
+
+pub(crate) fn validate_nvidia_target_image(
+    path: &Path,
+    qemu_img: &Path,
+) -> Result<PathBuf, String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|e| format!("Could not inspect the handoff working image: {e}"))?;
+    if !metadata.file_type().is_file() {
+        return Err("The handoff working image is not a safe regular file.".into());
+    }
+    let path = fs::canonicalize(path)
+        .map_err(|e| format!("Could not resolve the handoff working image: {e}"))?;
+    let output = child_command(qemu_img)
+        .args(["info", "--output=json"])
+        .arg(&path)
+        .output()
+        .map_err(|e| format!("Could not inspect the handoff qcow2: {e}"))?;
+    if !output.status.success() {
+        return Err("The handoff working image failed qemu-img inspection.".into());
+    }
+    let info: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("The handoff qemu-img report is invalid JSON: {e}"))?;
+    if info.get("format").and_then(|value| value.as_str()) != Some("qcow2") {
+        return Err("The handoff working image is not qcow2.".into());
+    }
+    Ok(path)
+}
+
+pub(crate) fn prepare_nvidia_session(
+    target_working_image: Option<&Path>,
+    network_role: NvidiaNetworkRole,
+) -> Result<(NvidiaBuildSession, NvidiaOfflineRestart), String> {
+    if network_role == NvidiaNetworkRole::InstallerDependencyAcquisition
+        && target_working_image.is_some()
+    {
+        return Err("Dependency acquisition cannot attach a SteamOS target.".into());
+    }
     current_host_qemu(std::env::consts::ARCH, "x86_64")?;
     if cfg!(target_os = "linux") {
         linux_host_prerequisites()?;
@@ -2288,29 +2370,7 @@ pub(crate) fn prepare_nvidia_build_session(
         purpose: "x86 build-appliance runtime and handoff staging",
     }])?;
     let attached_working_image = target_working_image
-        .map(|path| -> Result<PathBuf, String> {
-            let metadata = fs::symlink_metadata(path)
-                .map_err(|e| format!("Could not inspect the handoff working image: {e}"))?;
-            if !metadata.file_type().is_file() {
-                return Err("The handoff working image is not a safe regular file.".into());
-            }
-            let path = fs::canonicalize(path)
-                .map_err(|e| format!("Could not resolve the handoff working image: {e}"))?;
-            let output = child_command(&qemu_img)
-                .args(["info", "--output=json"])
-                .arg(&path)
-                .output()
-                .map_err(|e| format!("Could not inspect the handoff qcow2: {e}"))?;
-            if !output.status.success() {
-                return Err("The handoff working image failed qemu-img inspection.".into());
-            }
-            let info: serde_json::Value = serde_json::from_slice(&output.stdout)
-                .map_err(|e| format!("The handoff qemu-img report is invalid JSON: {e}"))?;
-            if info.get("format").and_then(|value| value.as_str()) != Some("qcow2") {
-                return Err("The handoff working image is not qcow2.".into());
-            }
-            Ok(path)
-        })
+        .map(|path| validate_nvidia_target_image(path, &qemu_img))
         .transpose()?;
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2398,7 +2458,7 @@ pub(crate) fn prepare_nvidia_build_session(
 
     let guest_vcpus = resources.guest_vcpus.to_string();
     let guest_memory_mib = resources.guest_memory_mib.to_string();
-    let mut qemu_command = child_command(qemu);
+    let mut qemu_command = child_command(&qemu);
     qemu_command
         .args([
             "-name",
@@ -2443,11 +2503,27 @@ pub(crate) fn prepare_nvidia_build_session(
         "-device",
         "virtio-rng-pci",
     ]);
-    configure_offline_appliance_network(&mut qemu_command, ssh_port);
-    let mut child = qemu_command
+    configure_nvidia_appliance_network(&mut qemu_command, ssh_port, network_role);
+    qemu_command
         .arg("-qmp")
         .arg(format!("tcp:127.0.0.1:{qmp_port},server=on,wait=off"))
-        .args(["-display", "none", "-monitor", "none", "-serial", "stdio"])
+        .args(["-display", "none", "-monitor", "none", "-serial", "stdio"]);
+    let online = format!("user,id=net0,hostfwd=tcp:127.0.0.1:{ssh_port}-:22");
+    let offline = format!("user,id=net0,restrict=on,hostfwd=tcp:127.0.0.1:{ssh_port}-:22");
+    let offline_restart = NvidiaOfflineRestart {
+        program: qemu,
+        arguments: qemu_command
+            .get_args()
+            .map(|arg| {
+                if arg == std::ffi::OsStr::new(&online) {
+                    std::ffi::OsString::from(&offline)
+                } else {
+                    arg.to_os_string()
+                }
+            })
+            .collect(),
+    };
+    let mut child = qemu_command
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(log_err))
@@ -2470,23 +2546,131 @@ pub(crate) fn prepare_nvidia_build_session(
     };
 
     runtime_guard.armed = false;
-    Ok(NvidiaBuildSession {
-        child,
-        watchdog,
-        runtime_dir,
-        ssh_key,
-        ssh_port,
-        qmp_port,
-        started_at: Instant::now(),
-        state: "booting".into(),
-        message: if acceleration == "tcg" {
-            "x86_64 Fedora build appliance is booting under software emulation.".into()
-        } else {
-            "x86_64 Fedora build appliance is booting.".into()
+    Ok((
+        NvidiaBuildSession {
+            child,
+            watchdog,
+            runtime_dir,
+            ssh_key,
+            ssh_port,
+            qmp_port,
+            started_at: Instant::now(),
+            state: "booting".into(),
+            message: if acceleration == "tcg" {
+                "x86_64 Fedora build appliance is booting under software emulation.".into()
+            } else {
+                "x86_64 Fedora build appliance is booting.".into()
+            },
+            acceleration: acceleration.into(),
+            attached_working_image,
         },
-        acceleration: acceleration.into(),
-        attached_working_image,
-    })
+        offline_restart,
+    ))
+}
+
+pub(crate) fn restart_nvidia_installer_offline(
+    session: &mut NvidiaBuildSession,
+    launch: NvidiaOfflineRestart,
+    working_image: &Path,
+    preparation_deadline: Instant,
+) -> Result<(), String> {
+    if session.attached_working_image.is_some() {
+        return Err("Dependency acquisition already has an attached target.".into());
+    }
+    let offline = format!(
+        "user,id=net0,restrict=on,hostfwd=tcp:127.0.0.1:{}-:22",
+        session.ssh_port
+    );
+    if launch
+        .arguments
+        .iter()
+        .filter(|arg| *arg == std::ffi::OsStr::new(&offline))
+        .count()
+        != 1
+    {
+        return Err("Installer restart lacks its exact restricted network backend.".into());
+    }
+    let qemu_img = find_binary("qemu-img").ok_or("qemu-img is required.")?;
+    let target = validate_nvidia_target_image(working_image, &qemu_img)?;
+    let original_pid = session.child.id();
+    stop_nvidia_build_process(session)?;
+    let status = session
+        .child
+        .try_wait()
+        .map_err(|error| format!("Could not verify dependency-appliance closure: {error}"))?
+        .ok_or("Dependency appliance remains live; refusing installer restart.")?;
+    if !status.success() {
+        return Err(format!(
+            "Dependency appliance did not shut down cleanly: {status}"
+        ));
+    }
+    if Instant::now() >= preparation_deadline {
+        return Err(
+            "Installer dependency preparation exceeded its original deadline before restart."
+                .into(),
+        );
+    }
+    let log = OpenOptions::new()
+        .append(true)
+        .open(session.runtime_dir.join("qemu.log"))
+        .map_err(|error| format!("Could not retain the installer restart log: {error}"))?;
+    let log_err = log
+        .try_clone()
+        .map_err(|error| format!("Could not retain installer restart stderr: {error}"))?;
+    let mut command = child_command(&launch.program);
+    command
+        .args(&launch.arguments)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(log_err));
+    isolate_process_group(&mut command);
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Could not start the restricted installer appliance: {error}"))?;
+    if let Err(error) = fs::write(session.runtime_dir.join("qemu.pid"), child.id().to_string()) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!(
+            "Could not record the restricted installer PID: {error}"
+        ));
+    }
+    let watchdog = match spawn_qemu_watchdog(child.id()) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+    };
+    let transition = serde_json::to_vec_pretty(&serde_json::json!({
+        "preparationPid": original_pid, "preparationExit": status.code(),
+        "installerPid": child.id(), "network": "restricted-offline",
+        "arguments": launch.arguments.iter().map(|v| v.to_string_lossy()).collect::<Vec<_>>(),
+        "sameOwnedRuntime": session.runtime_dir.to_string_lossy(), "targetHotplugPending": true,
+    }));
+    let written = transition
+        .map_err(|error| format!("Could not encode installer transition: {error}"))
+        .and_then(|raw| {
+            fs::write(
+                session
+                    .runtime_dir
+                    .join("installer-network-transition.json"),
+                raw,
+            )
+            .map_err(|error| format!("Could not retain installer network transition: {error}"))
+        });
+    if let Err(error) = written {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    session.child = child;
+    session.watchdog = watchdog;
+    session.attached_working_image = Some(target);
+    session.started_at = Instant::now(); // a distinct, actual second boot
+    session.state = "booting".into();
+    session.message = "Prepared x86_64 installer is booting with isolated networking.".into();
+    Ok(())
 }
 
 pub(crate) trait GuestConnection {
@@ -4881,9 +5065,7 @@ pub(crate) fn stop_session(session: &mut ApplianceSession) -> Result<Option<Path
     archive_and_remove_runtime(&session.runtime_dir)
 }
 
-pub(crate) fn stop_nvidia_build_session(
-    session: &mut NvidiaBuildSession,
-) -> Result<Option<PathBuf>, String> {
+pub(crate) fn stop_nvidia_build_process(session: &mut NvidiaBuildSession) -> Result<(), String> {
     if session
         .child
         .try_wait()
@@ -4934,6 +5116,13 @@ pub(crate) fn stop_nvidia_build_session(
         }
     }
     session.watchdog.finish();
+    Ok(())
+}
+
+pub(crate) fn stop_nvidia_build_session(
+    session: &mut NvidiaBuildSession,
+) -> Result<Option<PathBuf>, String> {
+    stop_nvidia_build_process(session)?;
     archive_and_remove_nvidia_build_runtime(&session.runtime_dir)
 }
 
