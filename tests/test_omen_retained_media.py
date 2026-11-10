@@ -176,6 +176,37 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
             robot.after_state('chooser-open',{})
         self.assertEqual(p.end,100)
 
+    def test_native_control_target_has_one_original_action_deadline(self):
+        """Unavailable controls cannot occupy the remaining two-hour job clock."""
+        import connection_control as control
+        from unittest.mock import patch
+        p=control.Pipeline.__new__(control.Pipeline)
+        p.app={'window_id':17};p.end=7200;now=[0.0];calls=[]
+        def unavailable(kind,**operands):
+            calls.append((kind,operands));return {'value':{'available':False}}
+        def sleep(seconds):now[0]+=seconds
+        p.request=unavailable
+        with patch.object(control.time,'monotonic',side_effect=lambda:now[0]),\
+             patch.object(control.time,'sleep',side_effect=sleep),\
+             self.assertRaisesRegex(RuntimeError,'native control did not become available'):
+            p.target('Detected removable USB drives',['list box'])
+        self.assertEqual(now[0],25)
+        self.assertLessEqual(len(calls),13)
+        self.assertEqual(p.end,7200)
+        # A late positive reply cannot escape the same deadline.
+        now[0]=0
+        def late(*_,**__):
+            now[0]=26;return {'value':{'available':True}}
+        p.request=late
+        with patch.object(control.time,'monotonic',side_effect=lambda:now[0]),\
+             self.assertRaisesRegex(RuntimeError,'original deadline after observation'):
+            p.target('Detected removable USB drives',['list box'])
+        now[0]=0;p.end=0;p.request=unavailable;calls.clear()
+        with patch.object(control.time,'monotonic',side_effect=lambda:now[0]),\
+             self.assertRaisesRegex(RuntimeError,'original deadline before observation'):
+            p.target('Detected removable USB drives',['list box'])
+        self.assertEqual(calls,[])
+
     def test_completed_output_native_view_survives_cleared_progress_message(self):
         """Production consumer with the real 739 completed-view shape.
 
@@ -521,9 +552,9 @@ finally:
             states = {key: key for key in ('enabled', 'sensitive', 'visible', 'showing', 'defunct', 'screen')}
             component = types.SimpleNamespace(get_extents=lambda _: types.SimpleNamespace(
                 x=10, y=10, width=80, height=20))
-            def accessible(pid, label, children=()):
+            def accessible(pid, label, children=(), role='push button'):
                 return types.SimpleNamespace(get_process_id=lambda: pid, get_name=lambda: label,
-                    get_role_name=lambda: 'push button', get_child_count=lambda: len(children),
+                    get_role_name=lambda: role, get_child_count=lambda: len(children),
                     get_child_at_index=lambda i: children[i],
                     get_state_set=lambda: types.SimpleNamespace(contains=lambda k: k != 'defunct'),
                     get_component_iface=lambda: component, get_attributes=lambda: [])
@@ -538,6 +569,59 @@ finally:
             self.assertEqual(target['window_pid'], parent.pid)
             self.assertEqual(target['point'], {'x': 50, 'y': 20})
             self.assertEqual(control.native_control_bound(target, window, birth), proof)
+            # Actual shipped select[size=3] is a listbox (HTML-AAM), unlike a
+            # single-row combobox. Exercise the production build->selector
+            # consumer and native producer together, with a real process family.
+            # Accessibility/geometry are modeled; this is not a GUI/USB pass.
+            from html.parser import HTMLParser
+            class Select(HTMLParser):
+                attrs=None
+                def handle_starttag(self,tag,attrs):
+                    attrs=dict(attrs)
+                    if tag=='select'and attrs.get('id')=='usb-target':self.attrs=attrs
+            html=Select();html.feed((SOURCE.parent.parent/'src/index.html').read_text())
+            self.assertEqual(html.attrs['size'],'3')
+            label=html.attrs['aria-label']
+            box=accessible(child,label,role='list box')
+            select_app=accessible(parent.pid,'',[box])
+            select_desktop=types.SimpleNamespace(get_child_count=lambda:1,
+                get_child_at_index=lambda _:select_app)
+            self.assertEqual(observer.observed_control(select_desktop,window,label,
+                ['combo box','list item'],states,[1600,900],probe=True,
+                hit_test=lambda *_:[456],owner_check=owner),
+                {'available':False,'readOnlyObservation':True})
+            class SelectorMatched(RuntimeError):pass
+            selector=control.Pipeline.__new__(control.Pipeline)
+            selector.app=window;selector.binding={'nonce':nonce};selector.end=time.monotonic()+60
+            selector.cfg={'input_path':'/original.img','output_directory':'/output',
+                'input_sha256':'a'*64,'usb_bytes':8400003072,
+                'labels':{'choose_input':'Choose Image…','open':'Open',
+                    'choose_output':'Choose…','select_folder':'Open','build':'Build NVIDIA Image',
+                    'build_success':'complete','usb_target':label}}
+            selector.wait_builder_ready=lambda:None
+            selector.choose=lambda *args:None
+            selector.wait_built_output=lambda *args:{'value':{'path':'/output/built.img'}}
+            def request(kind,**operands):
+                if kind=='FILE':return {'value':{'sha256':'a'*64}}
+                if kind=='USB':return {'value':{'serial':'opemos-'+nonce,'bytes':8400003072}}
+                self.assertEqual(kind,'CONTROL')
+                return {'value':observer.observed_control(select_desktop,window,
+                    operands['label'],operands['roles'],states,[1600,900],probe=True,
+                    hit_test=lambda *_:[456],owner_check=owner)}
+            selector.request=request
+            def click(name,label,roles=('push button',)):
+                if name=='Build':return
+                self.assertEqual(name,'virtualUSB-select')
+                value=selector.target(label,list(roles))['value']
+                self.assertEqual(value['role'],'list box')
+                self.assertEqual(control.native_control_bound(value,window,birth),proof)
+                raise SelectorMatched('actual native target before pointer boundary')
+            selector.click=click
+            with self.assertRaises(SelectorMatched):selector.build_write()
+            box.get_state_set=lambda:types.SimpleNamespace(contains=lambda k:k not in('defunct','showing'))
+            self.assertEqual(observer.observed_control(select_desktop,window,label,
+                ['list box'],states,[1600,900],probe=True,owner_check=owner),
+                {'available':False,'readOnlyObservation':True})
             bad = []
             for key, value in [('pid', 0), ('window_pid', sibling.pid)]:
                 bad.append({**target, key: value})

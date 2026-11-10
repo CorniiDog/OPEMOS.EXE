@@ -1125,10 +1125,13 @@ class Pipeline:
 
     def target(self,label,roles,window=None):
         window=self.app if window is None else window
+        end=min(self.end,time.monotonic()+25)
         while True:
+            need(time.monotonic()<end,'native control did not become available: original deadline before observation')
             response=self.request('CONTROL',window_id=window['window_id'],label=label,roles=roles,probe=True)
+            need(time.monotonic()<end,'native control did not become available: original deadline after observation')
             if response['value'].get('available')is not False:return response
-            remaining=self.end-time.monotonic();need(remaining>0,'native control did not become available')
+            remaining=end-time.monotonic();need(remaining>0,'native control did not become available')
             time.sleep(min(2,remaining))
 
     def click(self,name,label,roles=('push button',),window=None):
@@ -1297,7 +1300,7 @@ class Pipeline:
         usb=self.request('USB')['value']
         need(usb['serial']=='opemos-'+self.binding['nonce']and usb['bytes']==self.cfg['usb_bytes'],
              'actual same-guest emulated USB identity')
-        self.click('virtualUSB-select',labels['usb_target'],('combo box','list item'))
+        self.click('virtualUSB-select',labels['usb_target'],('combo box','list box','list item'))
         choices=[name for name in self.names()if ' · '+usb['path']+' · 'in name]
         need(len(choices)==1,'one native device option for the actually observed emulated USB')
         self.click('virtualUSB-device',choices[0],('list item','menu item','text'))

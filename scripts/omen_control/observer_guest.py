@@ -267,7 +267,7 @@ def accessible_descendants(root,defunct_state):
 def observed_control(desktop,window,label,roles,states,screen,probe=False,hit_test=None,owner_check=None):
     """Fresh PID/window-owned native target geometry, without AX/DOM activation."""
     require(type(label)is str and 0<len(label)<=512 and roles
-            and set(roles)<={'push button','entry','text','check box','list item','menu item','combo box'},
+            and set(roles)<={'push button','entry','text','check box','list item','menu item','combo box','list box'},
             'finite declared native label/roles')
     require(type(window.get('pid'))is int and window['pid']>1
             and type(window.get('window_id'))is int and window['window_id']>0,
