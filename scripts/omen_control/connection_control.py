@@ -1099,10 +1099,11 @@ class Pipeline:
                     phases=getattr(self,'native_progress',[])
                     phase=phases[-1]if phases else'no-native-progress'
                     raise TimeoutError('native '+kind+' response timed out; last phase='+phase)from error
-                if response.get('kind')!='NATIVE_OBSERVATION_PROGRESS':break
+                # Retain every raw frame before classifying or rejecting it.
                 self.last_received_native_frame={'response':response,'diagnosticOnly':True,
                     'expected':{'nonce':request['nonce'],'sequence':self.sequence,
                                 'request_kind':kind,'process':self.ready['process']}}
+                if response.get('kind')!='NATIVE_OBSERVATION_PROGRESS':break
                 need(time.monotonic()<end and set(response)=={
                     'kind','nonce','sequence','request_kind','phase','process','clock_ns','readOnlyObservation'}and
                     response['nonce']==request['nonce']and type(response['sequence'])is int and response['sequence']==self.sequence and
@@ -1126,10 +1127,6 @@ class Pipeline:
                 need(self.observation_bytes<=32*1024*1024,'complete bounded native observation history; first crossing retained')
                 # Keep reading this SAME request; progress neither resubmits it
                 # nor extends its clock or supplies any positive UI value.
-            # Retain rejected frames as diagnostics, never accepted UI facts.
-            self.last_received_native_frame={'response':response,'diagnosticOnly':True,
-                'expected':{'nonce':request['nonce'],'sequence':self.sequence,
-                            'request_kind':kind,'process':self.ready['process']}}
             unavailable=response.get('kind')=='NATIVE_OBSERVATION_UNAVAILABLE'
             need(time.monotonic()<end and response.get('kind')in('NATIVE_OBSERVATION','NATIVE_OBSERVATION_UNAVAILABLE') and
                  response.get('nonce')==request['nonce'] and response.get('sequence')==self.sequence and

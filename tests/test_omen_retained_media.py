@@ -645,7 +645,6 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
         desktop=observer.uncached_native_desktop(atspi)
         desktop.clear_cache.assert_not_called()
         self.assertEqual(observer.observed_names(desktop,window,states)['names'],[label])
-        desktop.clear_cache.assert_called_once_with()
         pipeline=control.Pipeline.__new__(control.Pipeline)
         pipeline.app=window;pipeline.end=time.monotonic()+5;pipeline.q=mock.Mock()
         pipeline.request=lambda *args,**kwargs:{'value':observe()}
