@@ -402,7 +402,10 @@ xrandr --output "$display_output" --mode "${display_width}x${display_height}" >>
 phase=guest_prerequisites
 '''+('sudo -n /usr/bin/python3 -I -B /usr/local/bin/opemos-source-build-'+nonce+'.py --install-prerequisites > \"$owned/prerequisites.json\" 2> \"$owned/app.log\"\npython3 -I -B \"$media/ubuntu_guest_build.py\" --verify-kvm '+nonce+' >> \"$owned/prerequisites.json\" 2>> \"$owned/app.log\"\n'if 'prerequisites'in candidate else'')+'''phase=native_app_and_observer
 "$app" --appimage-extract-and-run > "$owned/app.log" 2>&1 &
-DISPLAY="${DISPLAY:-:0}" python3 "$media/observer_guest.py" "$nonce" 'OPEMOS EXE' --pipeline "$media/operation.json" '''+shlex.quote(hashlib.sha256(operation_raw).hexdigest())+''' > "$owned/observer.log" 2>&1
+# Hold only GNOME's idle inhibition for this existing observer's lifetime.
+# It releases automatically when the command exits; no persistent settings,
+# host session changes or password/lock bypass is involved.
+DISPLAY="${DISPLAY:-:0}" /usr/bin/gnome-session-inhibit --app-id org.opemos.TestGUI --inhibit idle --reason "OPEMOS finite owned GUI operation $nonce" -- python3 "$media/observer_guest.py" "$nonce" 'OPEMOS EXE' --pipeline "$media/operation.json" '''+shlex.quote(hashlib.sha256(operation_raw).hexdigest())+''' > "$owned/observer.log" 2>&1
 '''
     create_file(root/'start.sh',start.encode(),0o444)
     iso=root/'observer.iso'
