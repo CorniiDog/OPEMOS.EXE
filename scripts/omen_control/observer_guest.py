@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import subprocess
 import sys
 import time
 
@@ -262,6 +263,31 @@ def accessible_descendants(root,defunct_state):
         for index in range(children-1,-1,-1):
             child=node.get_child_at_index(index)
             if child is not None:pending.append((child,depth+1))
+
+
+def gnome_screen_locked(deadline):
+    """Read only the owned guest session; never unlock or change settings."""
+    remaining=deadline-time.monotonic()
+    require(remaining>0,'original guest observation deadline before session read')
+    done=subprocess.run(['/usr/bin/gdbus','call','--session','--dest','org.gnome.ScreenSaver',
+        '--object-path','/org/gnome/ScreenSaver','--method','org.gnome.ScreenSaver.GetActive',
+        '--timeout','1'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+        timeout=min(2,remaining),check=False)
+    require(time.monotonic()<deadline,'original guest observation deadline after session read')
+    require(done.returncode==0 and not done.stderr and done.stdout.strip()in(b'(true,)',b'(false,)'),
+            'actual GNOME session lock observation unavailable')
+    return done.stdout.strip()==b'(true,)'
+
+
+def unlocked_control(read_locked,observe):
+    """Cached X11/AT-SPI visibility cannot authorize input over GNOME lock."""
+    def locked():
+        value=read_locked();require(type(value)is bool,'actual boolean session lock observation')
+        return value
+    unavailable={'available':False,'readOnlyObservation':True,'sessionLocked':True}
+    if locked():return unavailable
+    value=observe()
+    return unavailable if locked()else value
 
 
 def observed_control(desktop,window,label,roles,states,screen,probe=False,hit_test=None,owner_check=None):
@@ -543,8 +569,9 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
         if kind=='CONTROL':
             window=next((w for w in owned if w['window_id']==request['window_id']),None)
             require(window is not None,'mapped original app or native transient window')
-            value=observed_control(desktop,window,request['label'],request['roles'],states,cfg['display'],
-                probe=request.get('probe')is True,hit_test=x.hit_window_chain,owner_check=owner_check)
+            value=unlocked_control(lambda:gnome_screen_locked(deadline),lambda:
+                observed_control(desktop,window,request['label'],request['roles'],states,cfg['display'],
+                    probe=request.get('probe')is True,hit_test=x.hit_window_chain,owner_check=owner_check))
         elif kind=='WINDOWS':value={'windows':owned}
         elif kind=='CHOOSER_LOCATION':
             window=next((w for w in owned if w['window_id']==request['window_id']),None)

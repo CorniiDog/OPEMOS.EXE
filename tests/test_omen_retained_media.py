@@ -495,6 +495,47 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'native client inside actual frame'):
                 control.painted_client(value, {'rect': [205, 9, 1255, height]})
 
+    def test_session_lock_refuses_stale_native_control_before_and_after_read(self):
+        """Actual guard path; GNOME replies and cached accessibility are modeled."""
+        from unittest import mock
+        import observer_guest as observer
+        control={'visible':True,'enabled':True,'point':{'x':496,'y':728}}
+        for states,reads in (([True],0),([False,True],1)):
+            with self.subTest(states=states):
+                native=mock.Mock(return_value=control)
+                value=observer.unlocked_control(mock.Mock(side_effect=states),native)
+                self.assertFalse(value['available']);self.assertTrue(value['sessionLocked'])
+                self.assertEqual(native.call_count,reads)
+        self.assertIs(observer.unlocked_control(lambda:False,lambda:control),control)
+        with self.assertRaisesRegex(RuntimeError,'boolean session lock'):
+            observer.unlocked_control(lambda:None,lambda:control)
+        with self.assertRaisesRegex(ValueError,'actual unknown session'):
+            observer.unlocked_control(mock.Mock(side_effect=ValueError('actual unknown session')),lambda:control)
+        with self.assertRaisesRegex(ValueError,'actual native failure'):
+            observer.unlocked_control(lambda:False,mock.Mock(side_effect=ValueError('actual native failure')))
+        def response(stdout=b'(false,)\n',stderr=b'',numeric=0):
+            return types.SimpleNamespace(stdout=stdout,stderr=stderr,returncode=numeric)
+        for active in(True,False):
+            with mock.patch.object(observer.subprocess,'run',return_value=response(
+                    b'(true,)\n'if active else b'(false,)\n'))as run:
+                self.assertEqual(observer.gnome_screen_locked(time.monotonic()+2),active)
+                argv=run.call_args.args[0]
+                self.assertEqual(argv[0],'/usr/bin/gdbus')
+                self.assertEqual(argv[argv.index('--method')+1],'org.gnome.ScreenSaver.GetActive')
+                self.assertLessEqual(run.call_args.kwargs['timeout'],2)
+        for result in(response(numeric=1),response(stderr=b'unknown'),response(stdout=b'unknown')):
+            with mock.patch.object(observer.subprocess,'run',return_value=result),self.assertRaisesRegex(
+                    RuntimeError,'lock observation unavailable'):
+                observer.gnome_screen_locked(time.monotonic()+2)
+        with mock.patch.object(observer.time,'monotonic',return_value=103),mock.patch.object(
+                observer.subprocess,'run')as run,self.assertRaisesRegex(RuntimeError,'before session read'):
+            observer.gnome_screen_locked(102)
+        run.assert_not_called()
+        with mock.patch.object(observer.time,'monotonic',side_effect=[100,103]),mock.patch.object(
+                observer.subprocess,'run',return_value=response()),self.assertRaisesRegex(
+                    RuntimeError,'after session read'):
+            observer.gnome_screen_locked(102)
+
     def test_native_child_control_requires_actual_original_app_ancestry(self):
         """Real process family and nonce checks; the accessible tree is modeled.
 
