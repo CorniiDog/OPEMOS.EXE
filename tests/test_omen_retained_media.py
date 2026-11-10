@@ -28,6 +28,62 @@ import types
 
 
 class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
+    def test_completed_output_native_view_survives_cleared_progress_message(self):
+        """Production consumer with the real 739 completed-view shape.
+
+        UI/FILE replies are modeled here; the actual guest observed this shape
+        after exporting its image. This test does not claim a guest or USB pass.
+        """
+        import connection_control as control
+        from unittest.mock import patch
+        root='/home/opemosgui/opemos-robot-'+'a'*32+'/output'
+        output={'path':root+'/steamdeck-repair-latest-nvidia-575.64.05.img',
+                'bytes':8121049088,'sha256':'b'*64}
+        p=control.Pipeline.__new__(control.Pipeline)
+        p.app={'window_id':17};p.cfg={'output_directory':root,'input_path':'/media/original.img'}
+        p.end=time.monotonic()+60;calls=[]
+        pending={'value':{'namesByWindow':[{'window_id':17,'names':['USB Imaging']}]}}
+        complete={'value':{'namesByWindow':[{'window_id':17,'names':[
+            'Build summary','USB Imaging',output['path'],'Detected removable USB drives']} ]}}
+        replies=iter([pending,complete,{'value':output}])
+        def request(kind,**operands):
+            calls.append((kind,operands));return next(replies)
+        p.request=request
+        with patch.object(control.time,'sleep'):
+            self.assertEqual(p.wait_built_output('NVIDIA-mutated image created and retained: '),
+                             {'value':output})
+        self.assertEqual(calls,[('UI_STATE',{}),('UI_STATE',{}),('FILE',{'role':'output_path'})])
+
+    def test_completed_output_view_keeps_file_window_and_failure_guards(self):
+        import connection_control as control
+        root='/home/opemosgui/opemos-robot-'+'a'*32+'/output'
+        wanted=root+'/built.img'
+        for case in ('wrong-file','outside-output','bad-hash','wrong-window','build-failed','legacy'):
+            with self.subTest(case=case):
+                p=control.Pipeline.__new__(control.Pipeline)
+                p.app={'window_id':17};p.cfg={'output_directory':root,'input_path':'/media/original.img'}
+                p.end=time.monotonic()+60;calls=[]
+                if case=='wrong-window':p.end=time.monotonic()-1
+                names=['Build summary','USB Imaging',wanted]
+                if case=='build-failed':names+=['Build failed']
+                if case=='legacy':names=['NVIDIA-mutated image created and retained: '+wanted]
+                ui={'value':{'namesByWindow':[{'window_id':99 if case=='wrong-window'else 17,
+                                             'names':names}]}}
+                value={'path':root+'/other.img'if case=='wrong-file'else
+                       '/media/original.img'if case=='outside-output'else wanted,
+                       'bytes':8121049088,'sha256':'invalid'if case=='bad-hash'else'b'*64}
+                def request(kind,**operands):
+                    calls.append(kind);return ui if kind=='UI_STATE'else{'value':value}
+                p.request=request
+                if case=='legacy':
+                    self.assertEqual(p.wait_built_output('NVIDIA-mutated image created and retained: '),
+                                     {'value':value})
+                else:
+                    with self.assertRaises(RuntimeError):
+                        p.wait_built_output('NVIDIA-mutated image created and retained: ')
+                self.assertEqual(calls,['UI_STATE']if case in('wrong-window','build-failed')
+                                 else['UI_STATE','FILE'])
+
     def test_real_robot_child_fd_closure_waits_for_parent_observation_socket(self):
         """Actual click orchestration/Popen/FD guard; guest and RF facts MODELED.
 

@@ -1236,6 +1236,38 @@ class Pipeline:
             if 'Experimental Linux host ready'in names:return raw
             time.sleep(min(.2,max(0,end-time.monotonic())))
 
+    def wait_built_output(self,success):
+        """Observe the durable completed-output view, then hash its actual file.
+
+        The main UI validates/selects the exported image and clears the earlier
+        completion message. A transient progress message cannot be the only
+        producer/consumer join for proceeding to USB Imaging.
+        """
+        while True:
+            raw=self.request('UI_STATE');rows=raw['value']['namesByWindow']
+            names=[name for row in rows for name in row['names']]
+            errors=[name for name in names if name.startswith(('Build failed','Image build failed','USB write failed','Error:'))]
+            need(not errors,'actual application failure: '+repr(errors))
+            main=[row['names']for row in rows if row['window_id']==self.app['window_id']]
+            need(len(main)<=1,'one original app completed-output view')
+            visible=main[0]if main else []
+            displayed=[name for name in visible if name.startswith(self.cfg['output_directory']+'/')]
+            completed=('Build summary'in visible and 'USB Imaging'in visible and len(displayed)==1)
+            legacy=any(name.startswith(success)for name in names)
+            if completed or legacy:
+                output=self.request('FILE',role='output_path');value=output['value']
+                path=Path(value['path'])
+                need(path.parent==Path(self.cfg['output_directory'])and path.suffix=='.img'and
+                     value['path']!=self.cfg['input_path']and type(value['bytes'])is int and
+                     0<value['bytes']<=60_000_000_000 and
+                     type(value['sha256'])is str and re.fullmatch('[0-9a-f]{64}',value['sha256']),
+                     'actual declared completed output file/hash')
+                need(not completed or displayed==[value['path']],
+                     'native validated selected output matches actual hashed file')
+                return output
+            remaining=self.end-time.monotonic();need(remaining>0,'actual application completion absent')
+            time.sleep(min(30,remaining))
+
     def build_write(self):
         labels=self.cfg['labels']
         self.wait_builder_ready()
@@ -1245,8 +1277,7 @@ class Pipeline:
         need(input_image['value']['sha256']==self.cfg['input_sha256'],'actual selected original image hash')
         self.selected_input=input_image
         self.click('Build',labels['build'])
-        self.wait_text(labels['build_success'],prefix=True)
-        output=self.request('FILE',role='output_path')
+        output=self.wait_built_output(labels['build_success'])
         usb=self.request('USB')['value']
         need(usb['serial']=='opemos-'+self.binding['nonce']and usb['bytes']==self.cfg['usb_bytes'],
              'actual same-guest emulated USB identity')
