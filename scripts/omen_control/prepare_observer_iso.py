@@ -405,7 +405,7 @@ phase=guest_prerequisites
 # Hold only GNOME's idle inhibition for this existing observer's lifetime.
 # It releases automatically when the command exits; no persistent settings,
 # host session changes or password/lock bypass is involved.
-DISPLAY="${DISPLAY:-:0}" /usr/bin/gnome-session-inhibit --app-id org.opemos.TestGUI --inhibit idle --reason "OPEMOS finite owned GUI operation $nonce" -- python3 "$media/observer_guest.py" "$nonce" 'OPEMOS EXE' --pipeline "$media/operation.json" '''+shlex.quote(hashlib.sha256(operation_raw).hexdigest())+''' > "$owned/observer.log" 2>&1
+DISPLAY="${DISPLAY:-:0}" /usr/bin/gnome-session-inhibit --app-id org.opemos.TestGUI --inhibit idle --reason "OPEMOS finite owned GUI operation $nonce" python3 "$media/observer_guest.py" "$nonce" 'OPEMOS EXE' --pipeline "$media/operation.json" '''+shlex.quote(hashlib.sha256(operation_raw).hexdigest())+''' > "$owned/observer.log" 2>&1
 '''
     create_file(root/'start.sh',start.encode(),0o444)
     iso=root/'observer.iso'

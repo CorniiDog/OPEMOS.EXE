@@ -1412,6 +1412,17 @@ class UbuntuCandidateDiscLayout(unittest.TestCase):
                 on_disc = subprocess.run(['isoinfo', '-R', '-i', iso, '-x', '/start.sh'],
                                          capture_output=True, check=True).stdout.decode()
                 self.assertEqual(on_disc, script)
+                # GNOME46 passes its first nonoption straight to execvp;
+                # unlike newer GLib parsing, it does not consume a -- token.
+                # Check the actual generated medium's launch ABI.
+                launch=next(line for line in on_disc.splitlines()
+                    if '/usr/bin/gnome-session-inhibit 'in line)
+                argv=shlex.split(launch)[2:]
+                for option in('--app-id','--inhibit','--reason'):
+                    self.assertEqual(argv[0],option)
+                    if option=='--inhibit':self.assertEqual(argv[1],'idle')
+                    argv=argv[2:]
+                self.assertEqual(argv[:3],['python3','$media/observer_guest.py','$nonce'])
                 # Execute the generated export stanza with a benign child.
                 # Port/package/native checks remain production requirements;
                 # this proves inherited launch ABI, not a guest/GUI pass.
