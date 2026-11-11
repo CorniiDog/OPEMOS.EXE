@@ -241,25 +241,26 @@ class X11:
         return chain
 
 
-def accessible_descendants(root,defunct_state):
+def accessible_descendants(root,defunct_state,read_states=None):
     """Existing native accessibility observation, bounded; never invoke actions."""
     pending=[(root,0)];seen=0
+    state_set=read_states or (lambda node:node.get_state_set())
     while pending:
         node,depth=pending.pop();seen+=1
         require(seen<=4096 and depth<=32,'native accessibility tree bound')
         # Closed GTK/WebKit objects can remain in the native cache. Never
         # expand or return an object the provider explicitly marks defunct.
-        if node.get_state_set().contains(defunct_state):continue
+        if state_set(node).contains(defunct_state):continue
         children=node.get_child_count()
         if type(children)is not int or not 0<=children<=4096:
             # The object may have been disposed during the read. A live or
             # unclassified invalid count still refuses; retain its actual value.
-            if node.get_state_set().contains(defunct_state):continue
+            if state_set(node).contains(defunct_state):continue
             require(False,'native child count: '+repr(children)[:80]+
                     '; depth='+str(depth)+'; visited='+str(seen))
-        if node.get_state_set().contains(defunct_state):continue
+        if state_set(node).contains(defunct_state):continue
         yield node
-        if node.get_state_set().contains(defunct_state):continue
+        if state_set(node).contains(defunct_state):continue
         for index in range(children-1,-1,-1):
             child=node.get_child_at_index(index)
             if child is not None:pending.append((child,depth+1))
@@ -291,16 +292,44 @@ def unlocked_control(read_locked,observe):
 
 
 def uncached_native_desktop(atspi):
-    """Keep structural metadata cached, while reading current provider states.
-
-    This observer waits on its private request channel rather than running a
-    GLib event loop. State changes must reach the input guard, but discarding
-    the whole tree also repeats synchronous name/role/child IPC during UI_STATE.
-    Preserve the normal structural cache without clearing its populated tree.
-    """
+    """Keep structural caching between explicit current state observations."""
     desktop=atspi.get_desktop(0)
-    desktop.set_cache_mask(atspi.Cache(atspi.Cache.DEFAULT & ~atspi.Cache.STATES))
+    desktop.set_cache_mask(atspi.Cache.DEFAULT)
     return desktop
+
+
+class NativeStateObservation:
+    """One complete provider state vector; contains performs no additional IPC."""
+    def __init__(self,values):
+        require(type(values)in(list,tuple)and len(values)<=512,'bounded native state vector')
+        self.values=frozenset(values)
+
+    def contains(self,state):return state in self.values
+
+
+def current_native_state_set(atspi,desktop,node):
+    """Refresh this node, then let its structural getters reuse that state.
+
+    libatspi's structural cache test itself asks whether a node is TRANSIENT.
+    Leaving STATES uncached therefore adds GetState IPC to every name, role
+    and child lookup, as well as each StateSet.contains call. Exclude STATES
+    only for the explicit provider read; restore the normal mask on every path
+    and populate its current state before structural traversal continues.
+    No state set is reused across these observation calls or requests.
+    """
+    desktop.set_cache_mask(atspi.Cache(atspi.Cache.DEFAULT & ~atspi.Cache.STATES))
+    try:current=NativeStateObservation(node.get_state_set().get_states())
+    finally:desktop.set_cache_mask(atspi.Cache.DEFAULT)
+    # Populate the normal client cache for structural getters, but never use
+    # that cached value as authority: a failed forced read can return a local
+    # DEFUNCT set while leaving an older enabled set in libatspi's cache.
+    node.get_state_set()
+    return current
+
+
+def native_state_set(node,states):
+    reader=states.get('read_states')
+    return node.get_state_set()if reader is None else reader(node)
 
 
 def observed_control(desktop,window,label,roles,states,screen,probe=False,hit_test=None,owner_check=None):
@@ -316,9 +345,9 @@ def observed_control(desktop,window,label,roles,states,screen,probe=False,hit_te
     for index in range(count):
         app=desktop.get_child_at_index(index)
         if app is None or app.get_process_id()!=window['pid']:continue
-        for node in accessible_descendants(app,states['defunct']):
+        for node in accessible_descendants(app,states['defunct'],states.get('read_states')):
             if node.get_name()!=label or node.get_role_name()not in roles:continue
-            state=node.get_state_set()
+            state=native_state_set(node,states)
             actual={k:state.contains(states[k])for k in('enabled','sensitive','visible','showing','defunct')}
             require(all(type(v)is bool for v in actual.values()),'actual boolean native states')
             if not all(actual[k]for k in('enabled','sensitive','visible','showing'))or actual['defunct']:
@@ -363,13 +392,13 @@ def observed_names(desktop,window,states,owner_check=None):
     for index in range(count):
         app=desktop.get_child_at_index(index)
         if app is None or app.get_process_id()!=window['pid']:continue
-        for node in accessible_descendants(app,states['defunct']):
+        for node in accessible_descendants(app,states['defunct'],states.get('read_states')):
             if node.get_role_name()in('password text','entry'):continue
             provider=node.get_process_id()
             if provider!=window['pid']:
                 if owner_check is None:continue
                 owner_check(provider,window['pid'])
-            state=node.get_state_set()
+            state=native_state_set(node,states)
             if not state.contains(states['visible'])or not state.contains(states['showing'])or state.contains(states['defunct']):continue
             component=node.get_component_iface()
             if component is None:continue
@@ -418,9 +447,9 @@ def observed_chooser_location(desktop,window,declared,prefix_length,states,text_
     for index in range(count):
         app=desktop.get_child_at_index(index)
         if app is None or app.get_process_id()!=window['pid']:continue
-        for node in accessible_descendants(app,states['defunct']):
+        for node in accessible_descendants(app,states['defunct'],states.get('read_states')):
             if node.get_process_id()!=window['pid']or node.get_role_name()not in('entry','text'):continue
-            state=node.get_state_set()
+            state=native_state_set(node,states)
             if state.contains(states['defunct'])or not all(state.contains(states[k])for k in('visible','showing','focused','editable')):continue
             component=node.get_component_iface()
             if component is None:continue
@@ -595,6 +624,7 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
             states={key:getattr(Atspi.StateType,name)for key,name in
                     [('enabled','ENABLED'),('sensitive','SENSITIVE'),('visible','VISIBLE'),('showing','SHOWING'),('defunct','DEFUNCT'),('focused','FOCUSED'),('editable','EDITABLE')]}
             states['screen']=Atspi.CoordType.SCREEN
+            states['read_states']=lambda node:current_native_state_set(Atspi,desktop,node)
             progress('atspi-ready')
         current=x.windows();owned=[w for w in current if w['pid']==app['pid']or w['transient_for']==app['window_id']]
         value={}
@@ -615,7 +645,13 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
             # Read the actual mapped main/companion/chooser windows. No app
             # command, DOM mutation or accessibility activation is permitted.
             diagnose=not first_ui_state;first_ui_state=True
-            if diagnose:progress('ui-state-read')
+            if diagnose:
+                progress('ui-state-read')
+                # One bounded stack diagnostic identifies the actual Python
+                # call if a native provider blocks. It grants no progress,
+                # retries, input, or extra time beyond the host's original read.
+                import faulthandler
+                faulthandler.dump_traceback_later(60,repeat=False,file=sys.stderr)
             try:
                 value={'windows':owned,'namesByWindow':[
                     {'window_id':w['window_id'],'names':observed_names(desktop,w,states,owner_check)['names']}
@@ -633,6 +669,8 @@ def pipeline_requests(port,x,app,birth,nonce,cfg):
                     'clock_ns':time.monotonic_ns(),'readOnlyObservation':True,
                     'failure':{'domain':error.domain,'code':error.code,'message':error.message}})
                 continue
+            finally:
+                if diagnose:faulthandler.cancel_dump_traceback_later()
         elif kind=='NAMES':
             window=next((w for w in owned if w['window_id']==request['window_id']),None)
             require(window is not None,'original mapped app/native transient for visible names')

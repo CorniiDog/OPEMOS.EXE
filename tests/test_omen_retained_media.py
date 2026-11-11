@@ -49,13 +49,23 @@ class Desktop:
         if not isinstance(mask,Atspi.Cache):
             raise TypeError('Expected a Atspi.Cache, but got '+type(mask).__name__)
         calls.append(mask)
+        self.mask=mask
 desktop=Desktop()
 provider=types.SimpleNamespace(get_desktop=lambda _:desktop,Cache=Atspi.Cache)
 assert observer_guest.uncached_native_desktop(provider) is desktop
 assert len(calls)==1 and isinstance(calls[0],Atspi.Cache)
-assert int(calls[0])==int(Atspi.Cache.DEFAULT)&~int(Atspi.Cache.STATES)
-assert not int(calls[0])&int(Atspi.Cache.STATES)
-print(json.dumps({'typed':True,'mask':int(calls[0]),
+assert int(calls[0])==int(Atspi.Cache.DEFAULT)
+reads=[]
+state=types.SimpleNamespace(get_states=lambda:[Atspi.StateType.ENABLED])
+def read_states():
+    reads.append(int(desktop.mask))
+    return state
+observed=observer_guest.current_native_state_set(provider,desktop,
+    types.SimpleNamespace(get_state_set=read_states))
+assert observed.contains(Atspi.StateType.ENABLED)
+assert not observed.contains(Atspi.StateType.DEFUNCT)
+assert reads==[111,127] and [int(mask)for mask in calls]==[127,111,127]
+print(json.dumps({'typed':True,'masks':[int(mask)for mask in calls],'reads':reads,
     'originalArithmeticType':type(Atspi.Cache.DEFAULT&~Atspi.Cache.STATES).__name__}))
 '''
         result = subprocess.run(['/usr/bin/python3','-I','-B','-c',script,str(SOURCE)],
@@ -66,7 +76,7 @@ print(json.dumps({'typed':True,'mask':int(calls[0]),
             self.skipTest(result.stderr.decode().strip())
         self.assertEqual(result.returncode,0,result.stderr.decode())
         self.assertEqual({k:v for k,v in json.loads(result.stdout).items()
-            if k!='originalArithmeticType'},{'typed':True,'mask':111})
+            if k!='originalArithmeticType'},{'typed':True,'masks':[127,111,127],'reads':[111,127]})
 
     def test_native_ui_names_no_reply_roundtrips_without_accepting_partial_state(self):
         """Actual producer/consumer and private socket; AT-SPI/app facts modeled.
@@ -145,7 +155,7 @@ print(json.dumps({'typed':True,'mask':int(calls[0]),
                     left.close();worker.join(3)
                 self.assertFalse(worker.is_alive());self.assertEqual(errors,[])
             self.assertEqual(p.end,original_end)
-            self.assertEqual(cache_calls,[('mask',111)])
+            self.assertEqual(cache_calls,[('mask',127)])
             self.assertEqual([r['kind']for r in sent],['UI_STATE','UI_STATE','CLOSE'])
             self.assertEqual([r['sequence']for r in sent],[1,2,3])
 
@@ -660,13 +670,17 @@ print(json.dumps({'typed':True,'mask':int(calls[0]),
         live={'enabled':True,'cached_enabled':False,'cache':True,'mask':127}
         states={k:k for k in ('enabled','sensitive','visible','showing','defunct','screen')}
         def state():
+            if not live['cache']:live['cached_enabled']=live['enabled']
             enabled=live['cached_enabled']if live['cache']else live['enabled']
-            return types.SimpleNamespace(contains=lambda k:
-                False if k=='defunct'else enabled if k in ('enabled','sensitive')else True)
+            values=[k for k in states if k not in('defunct','screen','read_states')and
+                    (enabled if k in('enabled','sensitive')else True)]
+            return types.SimpleNamespace(contains=lambda k:k in values,get_states=lambda:values)
         component=types.SimpleNamespace(get_extents=lambda _:types.SimpleNamespace(
             x=10,y=10,width=80,height=20))
         def cached(flag,value):
             self.assertTrue(live['mask']&flag,'structural provider cache must remain available')
+            self.assertTrue(live['mask']&16,
+                'libatspi TRANSIENT cache check must not trigger per-property state IPC')
             return value
         def node(name,children=()):
             return types.SimpleNamespace(get_process_id=lambda:42,get_name=lambda:cached(4,name),
@@ -691,6 +705,7 @@ print(json.dumps({'typed':True,'mask':int(calls[0]),
         stale=observe();self.assertFalse(stale['available'])
         self.assertFalse(stale['unavailableNativeStates'][0]['states']['sensitive'])
         desktop=observer.uncached_native_desktop(atspi)
+        states['read_states']=lambda node:observer.current_native_state_set(atspi,desktop,node)
         desktop.clear_cache.assert_not_called()
         self.assertEqual(observer.observed_names(desktop,window,states)['names'],[label])
         pipeline=control.Pipeline.__new__(control.Pipeline)
@@ -708,6 +723,21 @@ print(json.dumps({'typed':True,'mask':int(calls[0]),
         with self.assertRaisesRegex(RuntimeError,'occluded'):
             observer.observed_control(desktop,window,label,['push button'],states,[1600,900],
                 probe=True,hit_test=lambda *_:[999])
+        failed=mock.Mock(get_state_set=mock.Mock(side_effect=RuntimeError('provider failed')))
+        with self.assertRaisesRegex(RuntimeError,'provider failed'):
+            observer.current_native_state_set(atspi,desktop,failed)
+        self.assertEqual(live['mask'],127,'normal cache restored after a refused provider read')
+        self.assertEqual(failed.get_state_set.call_count,1,'failure never returns a cached positive')
+        # libatspi can return a local DEFUNCT set without clearing its older
+        # cached enabled state. Only the forced-read vector may authorize.
+        failed_read=types.SimpleNamespace(get_states=lambda:['defunct'])
+        stale_positive=types.SimpleNamespace(get_states=lambda:['enabled','sensitive'])
+        retiring=mock.Mock(get_state_set=mock.Mock(side_effect=[failed_read,stale_positive]))
+        negative=observer.current_native_state_set(atspi,desktop,retiring)
+        self.assertTrue(negative.contains('defunct'))
+        self.assertFalse(negative.contains('enabled'))
+        self.assertEqual(live['mask'],127)
+        pipeline.q.call.assert_not_called()
 
     def test_native_child_control_requires_actual_original_app_ancestry(self):
         """Real process family and nonce checks; the accessible tree is modeled.
