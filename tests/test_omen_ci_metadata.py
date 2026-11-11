@@ -525,6 +525,16 @@ class LosslessHistoryRepack(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'All retained history generations'):
                 q.history_archive_migrate(self.root,self.uid,'terminal-history-rollback-third',self.gate(pins))
         self.assertFalse((self.root/'terminal-history-rollback-third').exists())
+        # A refused automatic tick must not litter another empty rollback
+        # directory when even the existing metadata/directory floor cannot fit.
+        before_names=set(os.listdir(self.root))
+        with mock.patch.object(q,'HISTORY_ARCHIVE_STAGE_MAX',
+                all_retained+q.HISTORY_METADATA_MAX+4096-1):
+            for suffix in ('floor-first','floor-second'):
+                with self.assertRaisesRegex(ValueError,'Retained history staging floor before mkdir'):
+                    q.history_archive_migrate(self.root,self.uid,
+                        'terminal-history-rollback-'+suffix,self.gate(pins))
+                self.assertEqual(set(os.listdir(self.root)),before_names)
         with q.history_directory(self.root,self.uid)as fd:
             self.assertEqual(set(os.listdir(fd)),{q.HISTORY_ARCHIVE_INDEX,q.HISTORY_ARCHIVE_DATA})
             archive=q.history_archive_index(fd,self.uid)

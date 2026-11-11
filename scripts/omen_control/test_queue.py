@@ -1556,7 +1556,7 @@ HISTORY_FIELDS = ('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_s
 HISTORY_ARCHIVE_INDEX = 'lossless-history-index.json'
 HISTORY_ARCHIVE_DATA = 'lossless-history-data.zlib'
 HISTORY_ARCHIVE_KIND = 'OPEMOS_LOSSLESS_HISTORY_ARCHIVE_R1'
-HISTORY_ARCHIVE_STAGE_MAX = 400 * 1024**2
+HISTORY_ARCHIVE_STAGE_MAX = 1024**3
 
 def history_close_owned(fd):
     active=sys.exc_info()[1]
@@ -1747,6 +1747,8 @@ def history_archive_migrate(root,uid,stage,gate,*,writer=None):
     try:
         rootid=os.fstat(rootfd);require(rootid.st_uid==uid and stat.S_IMODE(rootid.st_mode)==0o700 and os.getuid()==os.geteuid()==uid,'Owned offline migration root')
         retained_before=history_retained_allocation(rootfd,uid)
+        require(retained_before+HISTORY_METADATA_MAX+4096<=HISTORY_ARCHIVE_STAGE_MAX,
+                'Retained history staging floor before mkdir')
         os.mkdir(stage,0o700,dir_fd=rootfd);os.fsync(rootfd)
         staged=os.open(stage,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=rootfd)
         try:
