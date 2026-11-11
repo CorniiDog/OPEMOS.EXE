@@ -299,7 +299,7 @@ def uncached_native_desktop(atspi):
     Preserve the normal structural cache without clearing its populated tree.
     """
     desktop=atspi.get_desktop(0)
-    desktop.set_cache_mask(atspi.Cache.DEFAULT & ~atspi.Cache.STATES)
+    desktop.set_cache_mask(atspi.Cache(atspi.Cache.DEFAULT & ~atspi.Cache.STATES))
     return desktop
 
 

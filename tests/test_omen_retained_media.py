@@ -28,6 +28,46 @@ import types
 
 
 class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
+    def test_native_cache_mask_preserves_real_gi_flag_type(self):
+        """Real GI flags with a modeled desktop; no display or input required."""
+        if not Path('/usr/bin/python3').is_file():
+            self.skipTest('Linux system GI runtime')
+        script = '''
+import json,sys,types
+try:
+    import gi
+    gi.require_version('Atspi','2.0')
+    from gi.repository import Atspi
+except (ImportError,ValueError) as error:
+    print(str(error),file=sys.stderr)
+    sys.exit(77)
+sys.path.insert(0,sys.argv[1])
+import observer_guest
+calls=[]
+class Desktop:
+    def set_cache_mask(self,mask):
+        if not isinstance(mask,Atspi.Cache):
+            raise TypeError('Expected a Atspi.Cache, but got '+type(mask).__name__)
+        calls.append(mask)
+desktop=Desktop()
+provider=types.SimpleNamespace(get_desktop=lambda _:desktop,Cache=Atspi.Cache)
+assert observer_guest.uncached_native_desktop(provider) is desktop
+assert len(calls)==1 and isinstance(calls[0],Atspi.Cache)
+assert int(calls[0])==int(Atspi.Cache.DEFAULT)&~int(Atspi.Cache.STATES)
+assert not int(calls[0])&int(Atspi.Cache.STATES)
+print(json.dumps({'typed':True,'mask':int(calls[0]),
+    'originalArithmeticType':type(Atspi.Cache.DEFAULT&~Atspi.Cache.STATES).__name__}))
+'''
+        result = subprocess.run(['/usr/bin/python3','-I','-B','-c',script,str(SOURCE)],
+            capture_output=True,timeout=15)
+        if result.returncode == 77:
+            if os.geteuid() == 0:
+                self.fail('Declared protected Root GI dependency missing: '+result.stderr.decode())
+            self.skipTest(result.stderr.decode().strip())
+        self.assertEqual(result.returncode,0,result.stderr.decode())
+        self.assertEqual({k:v for k,v in json.loads(result.stdout).items()
+            if k!='originalArithmeticType'},{'typed':True,'mask':111})
+
     def test_native_ui_names_no_reply_roundtrips_without_accepting_partial_state(self):
         """Actual producer/consumer and private socket; AT-SPI/app facts modeled.
 
@@ -49,9 +89,14 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
         nonce='a'*32;birth={'pid':101,'start_ticks':'7','exe_sha256':'b'*64,'inherited_nonce':nonce}
         app={'pid':101,'window_id':17,'transient_for':None};sent=[];errors=[];reads=[]
         cache_calls=[]
-        desktop=types.SimpleNamespace(set_cache_mask=lambda mask:cache_calls.append(('mask',mask)),
+        class Cache(int):pass
+        Cache.DEFAULT=Cache(127);Cache.STATES=Cache(16)
+        def set_mask(mask):
+            self.assertIsInstance(mask,Cache)
+            cache_calls.append(('mask',mask))
+        desktop=types.SimpleNamespace(set_cache_mask=set_mask,
             clear_cache=lambda:cache_calls.append(('clear',)))
-        atspi=types.SimpleNamespace(get_desktop=lambda _:desktop,Cache=types.SimpleNamespace(DEFAULT=127,STATES=16),
+        atspi=types.SimpleNamespace(get_desktop=lambda _:desktop,Cache=Cache,
             StateType=types.SimpleNamespace(**{n:n for n in
                 ('ENABLED','SENSITIVE','VISIBLE','SHOWING','DEFUNCT','FOCUSED','EDITABLE')}),
             CoordType=types.SimpleNamespace(SCREEN='screen'))
@@ -630,11 +675,14 @@ class GuestPrerequisiteFailureDiagnostics(unittest.TestCase):
                 get_component_iface=lambda:component,get_attributes=lambda:[])
         label='Review & Write Selected USB…';button=node(label);app=node('',[button])
         desktop=types.SimpleNamespace(get_child_count=lambda:1,get_child_at_index=lambda _:app)
+        class Cache(int):pass
+        Cache.DEFAULT=Cache(127);Cache.STATES=Cache(16)
         def cache(mask):
+            self.assertIsInstance(mask,Cache)
             live['mask']=mask;live['cache']=bool(mask&16)
         desktop.set_cache_mask=cache
         desktop.clear_cache=mock.Mock()
-        atspi=types.SimpleNamespace(get_desktop=lambda index:desktop,Cache=types.SimpleNamespace(DEFAULT=127,STATES=16))
+        atspi=types.SimpleNamespace(get_desktop=lambda index:desktop,Cache=Cache)
         window={'pid':42,'window_id':456,'rect':[0,0,200,200]}
         def observe():
             return observer.observed_control(desktop,window,label,['push button'],states,
